@@ -20,7 +20,7 @@ jobs:
     env:
       SUPABASE_URL: ${{ vars.SUPABASE_URL }}
       SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
-      ENTRYPOINT: ${{ vars.DEPLOY_ENTRYPOINT || 'resource_standalone.html' }}
+      ENTRYPOINT: ${{ vars.DEPLOY_ENTRYPOINT || 'index.html' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5

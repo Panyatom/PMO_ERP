@@ -16,11 +16,7 @@ database schema as migrations and injects browser configuration at deploy time.
 
 2. Serve the folder through a local web server (do not open it directly as a
    `file://` URL).
-3. Open `resource_standalone.html` for the currently complete Resource PoC.
-
-The main `index.html` currently refers to view modules that are not present in
-this repository. See [Deployment guide](docs/DEPLOYMENT.md) before switching the
-deployed entrypoint to the full app.
+3. Open `index.html` for the complete PMO Dashboard V0.2 application.
 
 ## Database
 
@@ -40,6 +36,6 @@ Supabase Auth and organization-based RLS are the next security milestone.
 
 ## Deployment
 
-GitHub Pages deployment is defined in `.github/workflows/deploy-pages.yml`.
+GitHub Pages deploys `index.html` through `.github/workflows/deploy-pages.yml`.
 Repository variables and rollout details are documented in
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
