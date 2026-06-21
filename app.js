@@ -2,11 +2,15 @@
 // Supabase client + storage layer
 // Replaces localStorage for memos, licenses, devices
 // ─────────────────────────────────────────
-const SUPA_URL = 'https://wokqtivoytzgfuelgeho.supabase.co';
-const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indva3F0aXZveXR6Z2Z1ZWxnZWhvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkyNTU1NjIsImV4cCI6MjA5NDgzMTU2Mn0.oGoGLusBPA-P3dIDANOrqdgV9aqiAdPhVE9dGcE0H-Q';
+const PMO_CONFIG = window.__PMO_CONFIG__ || {};
+const SUPA_URL = String(PMO_CONFIG.supabaseUrl || '').replace(/\/$/, '');
+const SUPA_KEY = String(PMO_CONFIG.supabaseAnonKey || '');
 
 // ── Supabase REST helper ──
 async function supaFetch(table, method='GET', body=null, query='') {
+  if(!SUPA_URL || !SUPA_KEY) {
+    throw new Error('Supabase is not configured. Generate config.js from config.example.js.');
+  }
   const url = SUPA_URL + '/rest/v1/' + table + query;
   const headers = {
     'apikey': SUPA_KEY,
