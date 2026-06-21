@@ -1,0 +1,13 @@
+# Generated runtime configuration (contains public environment-specific values)
+config.js
+
+# Supabase CLI local state
+.supabase/
+supabase/.temp/
+
+# Build output and local tooling
+dist/
+node_modules/
+.env
+.env.*
+!.env.example
