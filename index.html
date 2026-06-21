@@ -1790,7 +1790,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
       </div>
 
       <!-- ════ RESOURCE: Detail Drawer ════ -->
-      <div id="resource-detail-drawer" style="position:fixed;top:0;right:0;width:420px;max-width:95vw;height:100vh;background:var(--surface);box-shadow:-4px 0 24px rgba(0,0,0,0.12);z-index:200;transform:translateX(100%);transition:transform 0.25s ease;overflow-y:auto;padding:24px">
+      <div id="resource-detail-drawer" aria-hidden="true" style="position:fixed;top:0;right:0;width:420px;max-width:95vw;height:100vh;background:var(--surface);box-shadow:-4px 0 24px rgba(0,0,0,0.12);transition:transform 0.25s ease;overflow-y:auto;padding:24px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
           <span style="font-size:14px;font-weight:700">Resource Request Detail</span>
           <button class="btn-sm" onclick="closeResDetail()" style="padding:4px 10px">✕</button>
@@ -1821,7 +1821,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
 <script src="views/resource.js"></script>
 <script src="views/cost.js"></script>
 <style>
-  #resource-detail-drawer.open { transform: translateX(0); }
+  #resource-detail-drawer { transform:translateX(100%);visibility:hidden;z-index:1100; }
+  #resource-detail-drawer.open { transform:translateX(0);visibility:visible; }
   .badge-purple { background:#E9D5FF; color:#6B21A8; }
   .badge-teal   { background:#CCFBF1; color:#115E59; }
   .badge-yellow { background:#FEF9C3; color:#854D0E; }
