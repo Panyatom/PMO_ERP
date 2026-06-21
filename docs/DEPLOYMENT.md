@@ -45,26 +45,14 @@ In repository **Settings → Secrets and variables → Actions → Variables**, 
 | --- | --- |
 | `SUPABASE_URL` | `https://<project-ref>.supabase.co` |
 | `SUPABASE_ANON_KEY` | Supabase public anon key |
-| `DEPLOY_ENTRYPOINT` | `resource_standalone.html` for the present PoC |
+| `DEPLOY_ENTRYPOINT` | `index.html` for PMO Dashboard V0.2 |
 
 In **Settings → Pages**, select **GitHub Actions** as the source. A push to
 `main` or a manual run then builds and publishes the site. The workflow refuses
 to deploy if required configuration or the selected entrypoint is missing.
 
-The current default is `resource_standalone.html`, because it is self-contained
-and functional. Change `DEPLOY_ENTRYPOINT` to `index.html` only after restoring
-these referenced modules:
-
-- `views/create.js`
-- `views/pending.js`
-- `views/history.js`
-- `views/budget.js`
-- `views/license.js`
-- `views/device.js`
-- `views/bulk_import.js`
-- `views/settings.js`
-- `views/resource.js`
-- `views/cost.js`
+The deployed `index.html` loads the versioned modules under `views/`. Keep those
+files in the same release artifact whenever the dashboard is deployed.
 
 ## 3. Rollback
 
