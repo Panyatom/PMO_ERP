@@ -833,23 +833,26 @@ async function _doDeleteResource(id) {
 // ── Detail drawer ──
 // สร้าง drawer เองถ้า index.html ไม่มี (กันปุ่ม "จัดการ" กดแล้วเงียบ)
 function ensureDetailDrawer() {
-  if(document.getElementById('resource-detail-drawer')) return;
   if(!document.getElementById('res-drawer-style')) {
     const st = document.createElement('style');
     st.id = 'res-drawer-style';
     st.textContent = `
       #res-drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .2s;z-index:1099}
       #res-drawer-overlay.open{opacity:1;pointer-events:auto}
-      #resource-detail-drawer{position:fixed;top:0;right:0;height:100vh;width:440px;max-width:92vw;background:var(--surface,#fff);border-left:1px solid var(--border,#e5e7eb);box-shadow:-8px 0 24px rgba(0,0,0,.12);transform:translateX(100%);transition:transform .22s ease;z-index:1100;overflow:auto}
-      #resource-detail-drawer.open{transform:translateX(0)}`;
+      #resource-detail-drawer{position:fixed;top:0;right:0;height:100vh;width:440px;max-width:92vw;background:var(--surface,#fff);border-left:1px solid var(--border,#e5e7eb);box-shadow:-8px 0 24px rgba(0,0,0,.12);transform:translateX(100%);visibility:hidden;transition:transform .22s ease,visibility 0s linear .22s;z-index:1100;overflow:auto}
+      #resource-detail-drawer.open{transform:translateX(0);visibility:visible;transition-delay:0s}`;
     document.head.appendChild(st);
   }
-  const ov = document.createElement('div');
-  ov.id = 'res-drawer-overlay';
-  ov.addEventListener('click', closeResDetail);
-  document.body.appendChild(ov);
+  if(!document.getElementById('res-drawer-overlay')) {
+    const ov = document.createElement('div');
+    ov.id = 'res-drawer-overlay';
+    ov.addEventListener('click', closeResDetail);
+    document.body.appendChild(ov);
+  }
+  if(document.getElementById('resource-detail-drawer')) return;
   const dr = document.createElement('div');
   dr.id = 'resource-detail-drawer';
+  dr.setAttribute('aria-hidden', 'true');
   dr.innerHTML = `
     <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
       <span style="font-size:14px;font-weight:700">รายละเอียด</span>
@@ -917,11 +920,21 @@ function openResDetail(id) {
     </div>`;
 
 
-  document.getElementById('resource-detail-drawer').classList.add('open');
+  const drawer = document.getElementById('resource-detail-drawer');
+  drawer.classList.add('open');
+  drawer.setAttribute('aria-hidden', 'false');
+  drawer.style.transform = 'translateX(0)';
+  drawer.style.visibility = 'visible';
   document.getElementById('res-drawer-overlay')?.classList.add('open');
 }
 function closeResDetail() {
-  document.getElementById('resource-detail-drawer')?.classList.remove('open');
+  const drawer = document.getElementById('resource-detail-drawer');
+  drawer?.classList.remove('open');
+  drawer?.setAttribute('aria-hidden', 'true');
+  if(drawer) {
+    drawer.style.transform = 'translateX(100%)';
+    drawer.style.visibility = 'hidden';
+  }
   document.getElementById('res-drawer-overlay')?.classList.remove('open');
 }
 
