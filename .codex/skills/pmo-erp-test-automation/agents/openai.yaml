@@ -1,0 +1,4 @@
+interface:
+  display_name: "PMO ERP Test Automation"
+  short_description: "Automate and verify PMO ERP regression workflows"
+  default_prompt: "Use $pmo-erp-test-automation to automate these approved PMO ERP test cases and verify the results."
