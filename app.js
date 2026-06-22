@@ -559,8 +559,52 @@ function openMemoPdf(memoNo) {
   downloadMemoPdf(memo);
 }
 
+// ── Micro interactions ──
+function initMicroInteractions() {
+  if(window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  const rippleSelector = [
+    'button', '.btn-primary', '.btn-ghost', '.btn-sm', '.btn-export',
+    '.btn-approve', '.btn-reject', '.add-btn', '.rm-btn', '.type-btn',
+    '.cost-stab', '.sb-item', '.sb-sub-item', '[role="button"]'
+  ].join(',');
+
+  document.addEventListener('click', event => {
+    const target = event.target.closest(rippleSelector);
+    if(!target || target.disabled || target.getAttribute('aria-disabled') === 'true') return;
+
+    const rect = target.getBoundingClientRect();
+    const ripple = document.createElement('span');
+    ripple.className = 'motion-ripple';
+    ripple.setAttribute('aria-hidden', 'true');
+    const keyboardClick = event.detail === 0;
+    ripple.style.left = `${keyboardClick ? rect.width / 2 : event.clientX - rect.left}px`;
+    ripple.style.top = `${keyboardClick ? rect.height / 2 : event.clientY - rect.top}px`;
+    target.classList.add('motion-ripple-host');
+    target.appendChild(ripple);
+    ripple.addEventListener('animationend', () => ripple.remove(), { once:true });
+  });
+
+  const animateAddedNodes = new MutationObserver(records => {
+    records.forEach(record => record.addedNodes.forEach(node => {
+      if(!(node instanceof HTMLElement)) return;
+      const items = node.matches('.item-row, .row-name, .pend-card')
+        ? [node]
+        : [...node.querySelectorAll('.item-row, .row-name, .pend-card')];
+      items.forEach(item => {
+        item.classList.remove('motion-enter');
+        void item.offsetWidth;
+        item.classList.add('motion-enter');
+        item.addEventListener('animationend', () => item.classList.remove('motion-enter'), { once:true });
+      });
+    }));
+  });
+  animateAddedNodes.observe(document.body, { childList:true, subtree:true });
+}
+
 // ── Init ──
 function initApp() {
+  initMicroInteractions();
   syncThemeControl();
   ['f-date','f-signdate','f-apprdate','sl-ratedate'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = todayISO;
