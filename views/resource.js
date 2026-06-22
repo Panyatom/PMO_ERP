@@ -923,6 +923,7 @@ function openResDetail(id) {
   const drawer = document.getElementById('resource-detail-drawer');
   drawer.classList.add('open');
   drawer.setAttribute('aria-hidden', 'false');
+  drawer.style.transition = 'none';
   drawer.style.transform = 'translateX(0)';
   drawer.style.visibility = 'visible';
   document.getElementById('res-drawer-overlay')?.classList.add('open');
@@ -932,6 +933,7 @@ function closeResDetail() {
   drawer?.classList.remove('open');
   drawer?.setAttribute('aria-hidden', 'true');
   if(drawer) {
+    drawer.style.transition = 'none';
     drawer.style.transform = 'translateX(100%)';
     drawer.style.visibility = 'hidden';
   }
