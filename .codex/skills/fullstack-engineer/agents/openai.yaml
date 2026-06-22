@@ -1,0 +1,4 @@
+interface:
+  display_name: "Full-Stack Engineer"
+  short_description: "Build and improve PMO ERP across the full stack"
+  default_prompt: "Use $fullstack-engineer to implement and verify this PMO ERP feature end to end."

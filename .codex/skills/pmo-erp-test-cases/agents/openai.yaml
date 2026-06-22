@@ -1,0 +1,4 @@
+interface:
+  display_name: "PMO ERP Test Cases"
+  short_description: "Design traceable test cases for PMO ERP workflows"
+  default_prompt: "Use $pmo-erp-test-cases to design complete test cases for this PMO ERP requirement."

@@ -180,6 +180,31 @@ function thaiDate(d) { return `${d.getDate()} ${MONTHS_TH[d.getMonth()]} ${d.get
 const TODAY = thaiDate(new Date());
 const todayISO = new Date().toISOString().slice(0,10);
 
+const THEME_KEY = 'pmo-color-theme';
+function currentTheme() {
+  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+}
+function syncThemeControl() {
+  const theme = currentTheme();
+  const button = document.getElementById('theme-toggle');
+  if(!button) return;
+  const nextLabel = theme === 'dark' ? 'เปลี่ยนเป็นโหมดสว่าง' : 'เปลี่ยนเป็นโหมดมืด';
+  button.setAttribute('aria-label', nextLabel);
+  button.setAttribute('aria-pressed', String(theme === 'dark'));
+  button.title = nextLabel;
+  const label = button.querySelector('.theme-toggle-label');
+  if(label) label.textContent = theme === 'dark' ? 'Dark' : 'Light';
+}
+function setTheme(theme) {
+  const next = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem(THEME_KEY, next); } catch(e) {}
+  syncThemeControl();
+}
+function toggleTheme() {
+  setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+}
+
 // ── Shared utils ──
 function esc(v) { return String(v ?? '').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch])); }
 function val(sel, root=document) { return root.querySelector(sel)?.value?.trim() || ''; }
@@ -536,6 +561,7 @@ function openMemoPdf(memoNo) {
 
 // ── Init ──
 function initApp() {
+  syncThemeControl();
   ['f-date','f-signdate','f-apprdate','sl-ratedate'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = todayISO;
   });
