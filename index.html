@@ -776,12 +776,14 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <span class="theme-toggle-track" aria-hidden="true">
             <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
             <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.2 15.3A8.7 8.7 0 0 1 8.7 3.8 8.8 8.8 0 1 0 20.2 15.3Z"/></svg>
+            <span class="theme-toggle-cloud"></span>
             <span class="theme-toggle-thumb"></span>
           </span>
           <span class="theme-toggle-label">Dark</span>
         </button>
-        <button class="topbar-btn" title="Notifications">
+        <button class="topbar-btn notification-btn notification-btn--active" title="Notifications" aria-label="Notifications, 1 unread">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="notification-badge">1</span>
         </button>
       </div>
     </div>
@@ -1689,7 +1691,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
       <div id="view-resource" class="view">
 
         <!-- KPI cards -->
-        <div class="metric-row" id="res-kpi" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px"></div>
+        <div class="metric-row" id="res-kpi" style="grid-template-columns:repeat(auto-fit,minmax(128px,1fr));margin-bottom:14px"></div>
 
         <!-- Filter row -->
         <div class="filter-row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">
@@ -1710,9 +1712,9 @@ svg.icon { display: inline-block; vertical-align: middle; }
           </select>
           <select id="res-f-hiring" onchange="renderResource()" style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
             <option value="all">ทุก Hiring Type</option>
-            <option>Permanent (Direct)</option>
-            <option>Secondment</option>
-            <option>Sub-contract</option>
+            <option value="direct">Direct Head Count</option>
+            <option value="secondment">Secondment</option>
+            <option value="subcon">Sub Con</option>
           </select>
           <select id="res-f-project" onchange="renderResource()" style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
             <option value="all">ทุกโครงการ</option>
@@ -1728,6 +1730,10 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Export CSV
           </button>
+          <button id="res-employee-template-btn" class="btn-export" onclick="downloadTemplate('resourcePeople')">Employee Template</button>
+          <button id="res-employee-import-btn" class="btn-export" onclick="importBulk('resourcePeople')">Import Employees</button>
+          <button id="res-project-code-template-btn" class="btn-export" onclick="downloadTemplate('projectCodes')">Project Code Template</button>
+          <button id="res-project-code-import-btn" class="btn-export" onclick="importBulk('projectCodes')">Import Project Codes</button>
           <button class="btn-primary" style="margin-left:auto" onclick="openResModal()">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             New Request
@@ -1798,12 +1804,12 @@ svg.icon { display: inline-block; vertical-align: middle; }
       <!-- ════ RESOURCE: Transfer Modal ════ -->
       <div id="resource-transfer-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:300;align-items:center;justify-content:center">
         <div class="card" style="width:500px;max-width:95vw;padding:24px">
-          <div style="font-size:15px;font-weight:700;margin-bottom:12px">↗ Transfer Resource</div>
+          <div style="font-size:15px;font-weight:700;margin-bottom:12px">Employee Assignment</div>
           <input type="hidden" id="res-transfer-id">
           <div id="res-transfer-body"></div>
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
             <button class="btn-ghost" onclick="closeResTransfer()">Cancel</button>
-            <button class="btn-primary" onclick="saveResTransfer()">↗ Transfer</button>
+            <button class="btn-primary" onclick="saveResTransfer()">Save Assignment</button>
           </div>
         </div>
       </div>
@@ -1836,8 +1842,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 <script src="views/license.js"></script>
 <script src="views/device.js"></script>
 <script src="views/bulk_import.js"></script>
-<script src="views/settings.js"></script>
-<script src="views/resource.js?v=0.2.2"></script>
+<script src="views/resource_module.js?v=0.3.0"></script>
 <script src="views/cost.js"></script>
 <style>
   #resource-detail-drawer { transform:translateX(100%);visibility:hidden;z-index:1100; }
@@ -1995,7 +2000,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 <style>
 .pend-tab-btn.active { background:var(--surface)!important;color:var(--blue)!important;font-weight:600!important;box-shadow:0 1px 3px rgba(0,0,0,0.08); }
 </style>
-<input type="file" id="bulk-import-input" accept=".xlsx,.xls" style="display:none" onchange="handleBulkImport(event)">
+<input type="file" id="bulk-import-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleBulkImport(event)">
 <!-- Bulk Account Upload Modal -->
 <div id="bulk-acct-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:300;align-items:center;justify-content:center">
   <div class="card" style="width:520px;max-width:95vw;padding:24px">

@@ -132,6 +132,96 @@ function canInternalOps(role)   { return role === 'user' || role === 'pmo'; }  /
 function canDelete(role)        { return role === 'pmo'; }                     // hard delete
 function isTransfer(r)          { return !!r.transferFrom; }
 
+function clampAlloc(n) {
+  const v = Number(n);
+  if(!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(100, Math.round(v)));
+}
+function resourcePersonName(r) {
+  return (r.resourceName || r.requesterName || r.position || '').trim();
+}
+function resourceEmployeeCode(r) {
+  return (r.employeeCode || '').trim();
+}
+function primaryAllocation(r) {
+  const explicit = clampAlloc(r.allocationPercent);
+  if(explicit > 0) return explicit;
+  return Math.max(0, 100 - _allocUsed(r));
+}
+function primaryProjectCode(r) {
+  return (r.primaryProjectCode || r.projectCode || '').trim();
+}
+function isActiveResource(r) {
+  return r.status === 'filled';
+}
+function allocationRows(list, opts={}) {
+  const includeInactive = !!opts.includeInactive;
+  return (list||[]).flatMap(r => {
+    if(!includeInactive && !isActiveResource(r)) return [];
+    if(includeInactive && !['filled','resolved','mitigated'].includes(r.status)) return [];
+    const person = resourcePersonName(r);
+    const active = isActiveResource(r);
+    const rows = [{
+      requestId: r.id,
+      person,
+      employeeCode: resourceEmployeeCode(r),
+      resourceTeam: r.resourceTeam,
+      level: r.level,
+      project: r.project,
+      code: primaryProjectCode(r),
+      allocation: primaryAllocation(r),
+      startDate: r.onboardDate || r.startDate,
+      endDate: active ? (r.endDate || '') : (r.offboardDate || r.resolvedDate || r.endDate || ''),
+      status: active ? 'active' : 'closed',
+      source: isTransfer(r) ? 'Transfer' : 'Primary',
+      note: r.remark || '',
+    }];
+    (r.projectCodes||[]).forEach(c => rows.push({
+      requestId: r.id,
+      person,
+      employeeCode: resourceEmployeeCode(r),
+      resourceTeam: r.resourceTeam,
+      level: r.level,
+      project: c.project,
+      code: c.code,
+      allocation: clampAlloc(c.allocation),
+      startDate: c.startDate || c.at || r.onboardDate || r.startDate,
+      endDate: active ? (c.endDate || r.endDate || '') : (c.endDate || r.offboardDate || r.resolvedDate || ''),
+      status: active ? 'active' : 'closed',
+      source: 'Project Code',
+      note: c.note || '',
+    }));
+    return rows.filter(x => x.allocation > 0);
+  });
+}
+function movementRows(list) {
+  return (list||[]).flatMap(r => {
+    const logs = (r.activityLog||[]).map(l => ({
+      at: l.at || r.updatedAt || r.createdAt,
+      person: resourcePersonName(r),
+      project: r.project,
+      action: l.action || 'Updated',
+      from: l.from || '',
+      to: l.to || '',
+      by: l.by || 'System',
+      remark: l.remark || '',
+      requestId: r.id,
+    }));
+    if(!logs.length) logs.push({
+      at: r.createdAt || r.requestDate,
+      person: resourcePersonName(r),
+      project: r.project,
+      action: 'Created',
+      from: '',
+      to: r.status || '',
+      by: r.requesterName || 'System',
+      remark: r.remark || '',
+      requestId: r.id,
+    });
+    return logs;
+  }).sort((a,b) => String(b.at||'').localeCompare(String(a.at||'')));
+}
+
 
 function visibleToRole(list, role) {
   if(role === 'bbik') return list.filter(r => BBIK_VISIBLE.includes(r.status));
@@ -162,6 +252,9 @@ async function loadResourcesAsync() {
         requestDate: r.request_date, resolvedDate: r.resolved_date,
         remark: r.remark, status: r.status, requesterName: r.requester_name,
         transferFrom: r.transfer_from, projectCodes: r.project_codes||[],
+        resourceName: r.resource_name, employeeCode: r.employee_code,
+        primaryProjectCode: r.primary_project_code, allocationPercent: r.allocation_percent,
+        onboardDate: r.onboard_date, offboardDate: r.offboard_date,
         activityLog: r.activity_log||[],
         createdAt: r.created_at, updatedAt: r.updated_at,
       }));
@@ -187,6 +280,10 @@ async function saveResourceAsync(data) {
         request_date: saved.requestDate, resolved_date: saved.resolvedDate||null,
         remark: saved.remark, status: saved.status, requester_name: saved.requesterName,
         transfer_from: saved.transferFrom||null, project_codes: saved.projectCodes||[],
+        resource_name: saved.resourceName||null, employee_code: saved.employeeCode||null,
+        primary_project_code: saved.primaryProjectCode||null,
+        allocation_percent: saved.allocationPercent == null ? null : clampAlloc(saved.allocationPercent),
+        onboard_date: saved.onboardDate||null, offboard_date: saved.offboardDate||null,
         activity_log: saved.activityLog||[],
         created_at: saved.createdAt, updated_at: saved.updatedAt,
       },'?on_conflict=id');
@@ -226,7 +323,7 @@ let _resPage = 1;
 const RES_PER_PAGE = 20;
 let _resSortCol = 'requestDate';
 let _resSortAsc = false;
-let _resTab  = 'request';   // 'request' | 'transfer' | 'code'
+let _resTab  = 'request';   // request | people | allocation | transfer | code | movement
 let _resView = 'all';       // chip key (request tab)
 
 
@@ -296,6 +393,116 @@ function ensureResChrome() {
   if(fStatusSel) fStatusSel.style.display = 'none';
 }
 
+function ensureResChrome() {
+  if(document.getElementById('res-chrome')) return;
+  const view = document.getElementById('view-resource');
+  if(!view) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'res-chrome';
+  wrap.innerHTML = `
+    <div id="res-role-bar" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);flex-wrap:wrap">
+      <span style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px">Working as</span>
+      <select id="res-role-select" onchange="setRole(this.value)" style="font-family:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
+        ${Object.entries(RES_ROLES).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('')}
+      </select>
+      <span id="res-proj-wrap" style="display:none;align-items:center;gap:6px;font-size:12px;color:var(--text-2)">
+        Project: <select id="res-proj-select" onchange="setUserProject(this.value)" style="font-family:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)"></select>
+      </span>
+      <span id="res-role-note" style="font-size:11px;color:var(--text-3)"></span>
+    </div>
+    <div id="res-session-panel" style="margin-bottom:14px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:0 1px 2px rgba(15,23,42,.04)">
+      <div style="font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">View Session</div>
+      <div id="res-tab-bar" style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn-sm res-tab" data-tab="request" onclick="setResTab('request')" style="padding:7px 14px">Request</button>
+        <button class="btn-sm res-tab" data-tab="people" onclick="setResTab('people')" style="padding:7px 14px">People</button>
+        <button class="btn-sm res-tab" data-tab="allocation" onclick="setResTab('allocation')" style="padding:7px 14px">Allocation</button>
+        <button class="btn-sm res-tab" data-tab="transfer" onclick="setResTab('transfer')" style="padding:7px 14px">Transfer</button>
+        <button class="btn-sm res-tab" data-tab="code" onclick="setResTab('code')" style="padding:7px 14px">Project Code</button>
+        <button class="btn-sm res-tab" data-tab="movement" onclick="setResTab('movement')" style="padding:7px 14px">Movements</button>
+      </div>
+    </div>
+    <div id="res-status-panel" style="margin-bottom:16px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm)">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
+        <div style="font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.6px">Request Status</div>
+        <div style="font-size:11px;color:var(--text-3)">Request tab only</div>
+      </div>
+      <div id="res-view-chips" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+    </div>`;
+  view.insertBefore(wrap, view.firstChild);
+
+  const fStatusSel = document.getElementById('res-f-status');
+  if(fStatusSel) fStatusSel.style.display = 'none';
+}
+
+function renderResourceTable(cols, rows, emptyMsg) {
+  const tbody = document.getElementById('res-table-body');
+  if(!tbody) return;
+  const table = tbody.closest('table');
+  if(table) {
+    let thead = table.querySelector('thead');
+    if(!thead) { thead = document.createElement('thead'); table.insertBefore(thead, table.firstChild); }
+    thead.innerHTML = `<tr>${cols.map(c=>`<th style="${c.th||''}">${esc(c.label)}</th>`).join('')}</tr>`;
+  }
+  if(!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="${cols.length}" style="text-align:center;padding:34px;color:var(--text-3)">${emptyMsg}</td></tr>`;
+  } else {
+    tbody.innerHTML = rows.map(r =>
+      `<tr ${r.requestId?`style="cursor:pointer" onclick="openResDetail('${r.requestId}')"`:''}>${cols.map(c=>`<td style="${c.td||''}">${c.cell(r)}</td>`).join('')}</tr>`
+    ).join('');
+  }
+  const pagEl = document.getElementById('res-pagination');
+  if(pagEl) pagEl.innerHTML = `<span style="font-size:12px;color:var(--text-3)">${rows.length} rows</span>`;
+}
+
+function renderPeopleView(base) {
+  const active = base.filter(isActiveResource);
+  const rows = active.map(r => {
+    const allocs = allocationRows([r]);
+    return {
+      requestId: r.id,
+      person: resourcePersonName(r),
+      employeeCode: resourceEmployeeCode(r),
+      role: [r.resourceTeam, r.level].filter(Boolean).join(' / '),
+      projects: allocs.map(a => `${a.project}${a.code?` (${a.code})`:''}: ${a.allocation}%`).join(' | '),
+      totalAllocation: allocs.reduce((sum,a)=>sum+a.allocation,0),
+      startDate: r.onboardDate || r.startDate,
+      status: r.status,
+    };
+  }).sort((a,b)=>String(a.person).localeCompare(String(b.person)));
+  renderResourceTable([
+    { label:'Resource', cell:r=>`<strong>${esc(r.person||'-')}</strong>${r.employeeCode?`<div style="font-size:11px;color:var(--text-3)">${esc(r.employeeCode)}</div>`:''}` },
+    { label:'Team / Level', cell:r=>esc(r.role||'-') },
+    { label:'Current Allocation', cell:r=>esc(r.projects||'-') },
+    { label:'Total', td:'text-align:right', cell:r=>`<span class="badge ${r.totalAllocation>100?'badge-red':'badge-teal'}">${r.totalAllocation}%</span>` },
+    { label:'Start', cell:r=>`<span style="font-size:11px">${r.startDate?shortDate(String(r.startDate).slice(0,10)):'-'}</span>` },
+    { label:'Action', td:'text-align:center', cell:r=>`<button class="btn-sm" onclick="event.stopPropagation();openResDetail('${r.requestId}')">Manage</button> <button class="btn-sm" style="color:var(--amber)" onclick="event.stopPropagation();offboardResource('${r.requestId}')">Offboard</button>` },
+  ], rows, 'No active people yet. Onboard a request to create the actual resource snapshot.');
+}
+
+function renderAllocationView(base) {
+  const rows = allocationRows(base).sort((a,b)=>`${a.person} ${a.project}`.localeCompare(`${b.person} ${b.project}`));
+  renderResourceTable([
+    { label:'Resource', cell:r=>`<strong>${esc(r.person||'-')}</strong>${r.employeeCode?`<div style="font-size:11px;color:var(--text-3)">${esc(r.employeeCode)}</div>`:''}` },
+    { label:'Project', cell:r=>esc(r.project||'-') },
+    { label:'Project Code', cell:r=>esc(r.code||'-') },
+    { label:'Allocation', td:'text-align:right', cell:r=>`<span class="badge badge-teal">${r.allocation}%</span>` },
+    { label:'Source', cell:r=>esc(r.source||'-') },
+    { label:'Start', cell:r=>`<span style="font-size:11px">${r.startDate?shortDate(String(r.startDate).slice(0,10)):'-'}</span>` },
+    { label:'End', cell:r=>`<span style="font-size:11px">${r.endDate?shortDate(String(r.endDate).slice(0,10)):'-'}</span>` },
+  ], rows, 'No active allocations yet. Filled / onboarded resources will appear here.');
+}
+
+function renderMovementView(base) {
+  const rows = movementRows(base);
+  renderResourceTable([
+    { label:'When', cell:r=>`<span style="font-size:11px">${r.at?new Date(r.at).toLocaleString('th-TH'):'-'}</span>` },
+    { label:'Resource', cell:r=>esc(r.person||'-') },
+    { label:'Project', cell:r=>esc(r.project||'-') },
+    { label:'Action', cell:r=>`<strong>${esc(r.action||'-')}</strong>${r.from||r.to?`<div style="font-size:11px;color:var(--text-3)">${esc([r.from,r.to].filter(Boolean).join(' -> '))}</div>`:''}` },
+    { label:'By', cell:r=>esc(r.by||'-') },
+    { label:'Remark', cell:r=>esc(r.remark||'-') },
+  ], rows, 'No resource movements yet.');
+}
 
 function _renderResourceUI(allRaw) {
   const role = currentRole();
@@ -326,30 +533,38 @@ function _renderResourceUI(allRaw) {
     const hideForBbik = role === 'bbik' && tab !== 'request';
     btn.style.display = hideForBbik ? 'none' : '';
     const on = tab === _resTab;
-    btn.style.background  = on ? 'var(--blue)' : '';
-    btn.style.color       = on ? '#fff' : '';
+    btn.style.background  = on ? 'var(--blue)' : 'var(--surface)';
+    btn.style.color       = on ? '#fff' : 'var(--text)';
     btn.style.fontWeight  = on ? '700' : '';
+    btn.style.borderColor = on ? 'var(--blue)' : 'var(--border-md)';
   });
 
 
   // ── Visibility + tab/chip filter ──
   let scoped = visibleToRole(allRaw, role);
   const chips = document.getElementById('res-view-chips');
+  const statusPanel = document.getElementById('res-status-panel');
 
 
   if(_resTab === 'transfer') {
+    if(statusPanel) statusPanel.style.display = 'none';
     if(chips) chips.style.display = 'none';
     scoped = scoped.filter(isTransfer);
   } else if(_resTab === 'code') {
+    if(statusPanel) statusPanel.style.display = 'none';
     if(chips) chips.style.display = 'none';
     scoped = scoped.filter(r => (r.projectCodes||[]).length > 0);
+  } else if(['people','allocation','movement'].includes(_resTab)) {
+    if(statusPanel) statusPanel.style.display = 'none';
+    if(chips) chips.style.display = 'none';
   } else { // request tab → status chips
+    if(statusPanel) statusPanel.style.display = '';
     if(chips) {
       chips.style.display = 'flex';
       chips.innerHTML = RES_VIEWS.map(v => {
         const n = scoped.filter(v.match).length;
         const on = _resView === v.key;
-        return `<button class="btn-sm" onclick="setResView('${v.key}')" style="padding:4px 11px;font-size:11px;${on?'background:var(--blue);color:#fff;font-weight:700':''}">${esc(v.label)} <span style="opacity:.7">${n}</span></button>`;
+        return `<button class="btn-sm" onclick="setResView('${v.key}')" style="padding:6px 12px;font-size:11px;background:${on?'var(--blue)':'var(--surface)'};color:${on?'#fff':'var(--text)'};border-color:${on?'var(--blue)':'var(--border-md)'};font-weight:${on?'700':'500'}">${esc(v.label)} <span style="opacity:.72">${n}</span></button>`;
       }).join('');
     }
     const v = RES_VIEWS.find(x=>x.key===_resView) || RES_VIEWS[0];
@@ -377,6 +592,19 @@ function _renderResourceUI(allRaw) {
   const newBtn = document.querySelector('#view-resource .filter-row .btn-primary');
   if(newBtn) newBtn.style.display = (canManageRequest(role) && _resTab==='request') ? '' : 'none';
 
+  if(_resTab === 'people') {
+    renderPeopleView(base);
+    return;
+  }
+  if(_resTab === 'allocation') {
+    renderAllocationView(base);
+    return;
+  }
+  if(_resTab === 'movement') {
+    renderMovementView(base);
+    return;
+  }
+
 
   // ── Optional inline filters (if present in index.html) ──
   const search   = (document.getElementById('res-search')?.value||'').toLowerCase();
@@ -390,7 +618,7 @@ function _renderResourceUI(allRaw) {
   if(fProject !== 'all') list = list.filter(r => r.project === fProject);
   if(fLevel   !== 'all') list = list.filter(r => r.level === fLevel);
   if(search) list = list.filter(r =>
-    `${r.project} ${r.position} ${r.resourceTeam} ${r.level}`.toLowerCase().includes(search));
+    `${r.project} ${r.position} ${r.resourceTeam} ${r.level} ${resourcePersonName(r)} ${resourceEmployeeCode(r)} ${primaryProjectCode(r)}`.toLowerCase().includes(search));
 
 
   // Sort + paginate
@@ -478,6 +706,10 @@ function openResModal(id) {
       <div class="fg"><label id="rf-end-label">End Date</label><input id="rf-end" class="ri" type="date" value="${g('endDate')}"></div>
       <div class="fg"><label>Requester Name</label><input id="rf-requester" class="ri" placeholder="ชื่อผู้ขอ" value="${esc(g('requesterName'))}"></div>
       <div class="fg"><label>Request Date</label><input id="rf-reqdate" class="ri" type="date" value="${g('requestDate', todayISO)}" readonly style="background:var(--bg)"></div>
+      <div class="fg"><label>Resource Name</label><input id="rf-resource-name" class="ri" placeholder="Actual person name when known" value="${esc(g('resourceName'))}"></div>
+      <div class="fg"><label>Employee Code</label><input id="rf-employee-code" class="ri" placeholder="Optional employee id" value="${esc(g('employeeCode'))}"></div>
+      <div class="fg"><label>Primary Project Code</label><input id="rf-primary-code" class="ri" placeholder="Optional project code" value="${esc(g('primaryProjectCode'))}"></div>
+      <div class="fg"><label>Primary Allocation %</label><input id="rf-allocation" class="ri" type="number" min="1" max="100" value="${esc(String(g('allocationPercent', 100)))}"></div>
     </div>
     <div class="fg" style="margin-top:10px"><label>Remark</label><textarea id="rf-remark" class="ri" rows="3" placeholder="หมายเหตุ / เหตุผล">${esc(g('remark'))}</textarea></div>`;
 
@@ -507,6 +739,8 @@ async function saveResource() {
   const position = g('rf-position');
   const hc = 1; // 1 request = 1 transaction
   const hiring = g('rf-hiring'), startDate = g('rf-start'), endDate = g('rf-end');
+  const allocation = clampAlloc(g('rf-allocation') || 100);
+  if(allocation < 1 || allocation > 100) { alert('Primary Allocation must be between 1 and 100%'); return; }
 
 
   if(!team||!project||!position||!hiring||!startDate) { alert('กรุณากรอกข้อมูลที่จำเป็นให้ครบ'); return; }
@@ -531,6 +765,12 @@ async function saveResource() {
     requesterName: g('rf-requester'),
     transferFrom: existing?.transferFrom||null,
     projectCodes: existing?.projectCodes||[],
+    resourceName: g('rf-resource-name') || existing?.resourceName || '',
+    employeeCode: g('rf-employee-code') || existing?.employeeCode || '',
+    primaryProjectCode: g('rf-primary-code') || existing?.primaryProjectCode || '',
+    allocationPercent: allocation,
+    onboardDate: existing?.onboardDate||null,
+    offboardDate: existing?.offboardDate||null,
     activityLog: existing?.activityLog || [{ action:'Created', status:'pending', by: g('rf-requester')||actor, at: new Date().toISOString() }],
   };
 
@@ -586,10 +826,38 @@ function openResStatus(id) {
     `<span class="badge ${RES_STATUS[r.status]?.cls||'badge-gray'}">${s.label}</span> — ${esc(r.position)} / ${esc(r.project)}
      <div style="font-size:11px;color:var(--text-3);margin-top:6px">เปลี่ยนในนาม <strong>${esc(RES_ROLES[role])}</strong></div>`;
   document.getElementById('res-status-select').innerHTML = opts;
+  document.getElementById('res-status-select').onchange = toggleStatusOnboardFields;
+  ensureStatusOnboardFields(r);
   document.getElementById('res-status-remark').value = '';
   document.getElementById('resource-status-modal').style.display = 'flex';
+  toggleStatusOnboardFields();
 }
 function closeResStatus() { document.getElementById('resource-status-modal').style.display='none'; }
+
+function ensureStatusOnboardFields(r) {
+  let box = document.getElementById('res-status-onboard-fields');
+  if(!box) {
+    box = document.createElement('div');
+    box.id = 'res-status-onboard-fields';
+    box.style.cssText = 'display:none;margin:10px 0;padding:10px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg)';
+    const selectWrap = document.getElementById('res-status-select')?.closest('.fg');
+    selectWrap?.insertAdjacentElement('afterend', box);
+  }
+  box.innerHTML = `
+    <div class="fg" style="margin-bottom:8px"><label>Resource Name *</label><input id="rs-resource-name" class="ri" value="${esc(r.resourceName||'')}" placeholder="Actual onboarded person"></div>
+    <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:8px">
+      <div class="fg"><label>Employee Code</label><input id="rs-employee-code" class="ri" value="${esc(r.employeeCode||'')}" placeholder="Optional"></div>
+      <div class="fg"><label>Onboard Date</label><input id="rs-onboard-date" class="ri" type="date" value="${r.onboardDate||todayISO}"></div>
+      <div class="fg"><label>Primary Project Code</label><input id="rs-primary-code" class="ri" value="${esc(r.primaryProjectCode||'')}" placeholder="Optional"></div>
+      <div class="fg"><label>Primary Allocation %</label><input id="rs-allocation" class="ri" type="number" min="1" max="100" value="${esc(String(r.allocationPercent||100))}"></div>
+    </div>`;
+}
+
+function toggleStatusOnboardFields() {
+  const box = document.getElementById('res-status-onboard-fields');
+  const next = document.getElementById('res-status-select')?.value;
+  if(box) box.style.display = next === 'filled' ? 'block' : 'none';
+}
 
 
 function _transitionAction(prev, next) {
@@ -622,8 +890,22 @@ async function saveResStatus() {
   if(newStatus==='cancelled' && !remark) { alert('กรุณากรอก Remark สำหรับการยกเลิก'); return; }
 
 
+  const onboardMeta = {};
+  if(newStatus === 'filled') {
+    const rn = document.getElementById('rs-resource-name')?.value?.trim() || '';
+    const alloc = clampAlloc(document.getElementById('rs-allocation')?.value || 100);
+    if(!rn) { alert('Resource Name is required when onboarding'); return; }
+    if(alloc < 1 || alloc > 100) { alert('Primary Allocation must be between 1 and 100%'); return; }
+    onboardMeta.resourceName = rn;
+    onboardMeta.employeeCode = document.getElementById('rs-employee-code')?.value?.trim() || '';
+    onboardMeta.primaryProjectCode = document.getElementById('rs-primary-code')?.value?.trim() || '';
+    onboardMeta.allocationPercent = alloc;
+    onboardMeta.onboardDate = document.getElementById('rs-onboard-date')?.value || todayISO;
+    onboardMeta.offboardDate = null;
+  }
+
   const now = new Date().toISOString();
-  const updated = { ...list[idx],
+  const updated = { ...list[idx], ...onboardMeta,
     status: newStatus,
     resolvedDate: ['filled','resolved','mitigated'].includes(newStatus) ? todayISO : list[idx].resolvedDate,
     updatedAt: now,
@@ -682,6 +964,7 @@ async function saveResTransfer() {
 
   const updatedSource = { ...source,
     status: 'resolved', resolvedDate: todayISO, updatedAt: now,
+    offboardDate: startDate,
     activityLog: [...(source.activityLog||[]), { action:'Transferred', to: destProject, by: actor, remark, at: now }],
     remark: (source.remark ? source.remark+'\n' : '') + `[Transfer] → ${destProject}: ${remark}`,
   };
@@ -696,6 +979,10 @@ async function saveResTransfer() {
     status: 'filled',
     requesterName: source.requesterName,
     transferFrom: sourceId, projectCodes: source.projectCodes||[],
+    resourceName: source.resourceName||'', employeeCode: source.employeeCode||'',
+    primaryProjectCode: source.primaryProjectCode||'',
+    allocationPercent: source.allocationPercent||primaryAllocation(source),
+    onboardDate: startDate, offboardDate: null,
     activityLog: [{ action:'Transfer received', from: source.project, by: actor, remark, at: now }],
     createdAt: now, updatedAt: now,
   };
@@ -740,6 +1027,7 @@ function ensureAddCodeModal() {
   m.addEventListener('click', e => { if(e.target===m) closeAddCode(); });
 }
 function _allocUsed(r) { return (r.projectCodes||[]).reduce((sum,c)=> sum + (Number(c.allocation)||0), 0); }
+function _allocTotalUsed(r) { return primaryAllocation(r) + _allocUsed(r); }
 
 
 function openAddCode(id) {
@@ -762,7 +1050,7 @@ function openAddCode(id) {
      <div style="font-size:11px;color:var(--text-3);margin-top:3px">โครงการหลัก: <strong>${esc(r.project)}</strong></div>`;
 
 
-  const used = _allocUsed(r);
+  const used = _allocTotalUsed(r);
   document.getElementById('addcode-existing').innerHTML = existing.length
     ? `<div style="font-size:11px;font-weight:700;color:var(--text-2);margin-bottom:5px">Project Code ที่ถืออยู่</div>` +
       existing.map(c=>`<div style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;margin-bottom:4px;display:flex;justify-content:space-between">
@@ -774,7 +1062,7 @@ function openAddCode(id) {
   document.getElementById('addcode-code').value = '';
   document.getElementById('addcode-alloc').value = Math.min(50, Math.max(1, 100-used));
   document.getElementById('addcode-note').value = '';
-  document.getElementById('addcode-cap').textContent = `Allocation เพิ่มได้อีกสูงสุด ${Math.max(0, 100-used)}% (ใช้ไปแล้วในโค้ดเสริม ${used}%)`;
+  document.getElementById('addcode-cap').textContent = `Allocation available ${Math.max(0, 100-used)}% (primary + extra codes used ${used}%)`;
   document.getElementById('res-addcode-modal').style.display = 'flex';
 }
 function closeAddCode() { const m=document.getElementById('res-addcode-modal'); if(m) m.style.display='none'; }
@@ -794,7 +1082,7 @@ async function saveAddCode() {
   const idx = list.findIndex(r=>r.id===id);
   if(idx<0) return;
   const r = list[idx];
-  const used = _allocUsed(r);
+  const used = _allocTotalUsed(r);
   if(used + alloc > 100) { alert(`Allocation รวมเกิน 100% (เหลือเพิ่มได้ ${100-used}%)`); return; }
 
 
@@ -832,6 +1120,28 @@ async function _doDeleteResource(id) {
 
 // ── Detail drawer ──
 // สร้าง drawer เองถ้า index.html ไม่มี (กันปุ่ม "จัดการ" กดแล้วเงียบ)
+async function offboardResource(id) {
+  const role = currentRole();
+  if(!canInternalOps(role)) { alert(`${RES_ROLES[role]} cannot offboard resources`); return; }
+  const r = loadResources().find(x => x.id === id);
+  if(!r) return;
+  if(r.status !== 'filled') { alert('Offboard is available only for filled / onboarded resources'); return; }
+  const reason = prompt(`Offboard ${resourcePersonName(r)||r.position} from ${r.project}?\n\nReason / note:`, '');
+  if(reason === null) return;
+  const now = new Date().toISOString();
+  const updated = { ...r,
+    status: 'resolved',
+    resolvedDate: todayISO,
+    offboardDate: todayISO,
+    updatedAt: now,
+    activityLog: [...(r.activityLog||[]), { action:'Offboarded', from:'filled', to:'resolved', by:RES_ROLES[role], remark:reason.trim(), at:now }],
+    remark: (r.remark ? r.remark+'\n' : '') + `[Offboard] ${reason.trim()}`,
+  };
+  await saveResourceAsync(updated);
+  closeResDetail();
+  renderResource();
+}
+
 function ensureDetailDrawer() {
   if(!document.getElementById('res-drawer-style')) {
     const st = document.createElement('style');
@@ -898,6 +1208,15 @@ function openResDetail(id) {
       </div>
       <span class="badge ${s.cls}">${s.label}</span>
     </div>
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;margin-bottom:14px;font-size:12px">
+      <div style="font-weight:700;margin-bottom:6px">Actual Resource</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><span style="color:var(--text-3)">Resource</span><br><strong>${esc(resourcePersonName(r)||'-')}</strong></div>
+        <div><span style="color:var(--text-3)">Employee Code</span><br><strong>${esc(resourceEmployeeCode(r)||'-')}</strong></div>
+        <div><span style="color:var(--text-3)">Primary Code</span><br><strong>${esc(primaryProjectCode(r)||'-')}</strong></div>
+        <div><span style="color:var(--text-3)">Primary Allocation</span><br><strong>${primaryAllocation(r)}%</strong></div>
+      </div>
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;font-size:12px">
       ${[['Level',r.level],['Hiring Type',r.hiringType],
          ['Start Date',r.startDate?shortDate(r.startDate):'—'],['End Date',r.endDate?shortDate(r.endDate):'—'],
@@ -945,8 +1264,8 @@ function closeResDetail() {
 function exportResourceCsv() {
   const list = visibleToRole(loadResources(), currentRole());
   if(!list.length) { alert('ไม่มีข้อมูล'); return; }
-  const headers = ['ID','Resource Team','Project','Position','Level','Hiring Type','Start Date','End Date','Request Date','Resolved Date','Updated','Status','Requester','Transfer From','Project Codes','Remark'];
-  const rows = list.map(r=>[r.id,r.resourceTeam,r.project,r.position,r.level,r.hiringType,r.startDate||'',r.endDate||'',r.requestDate||'',r.resolvedDate||'',r.updatedAt?String(r.updatedAt).slice(0,10):'',RES_STATUS[r.status]?.label||r.status,r.requesterName||'',r.transferFrom||'',(r.projectCodes||[]).map(c=>`${c.code}(${c.project}:${c.allocation}%)`).join(' | '),r.remark||'']);
+  const headers = ['ID','Resource Name','Employee Code','Resource Team','Project','Primary Project Code','Primary Allocation %','Position','Level','Hiring Type','Start Date','End Date','Onboard Date','Offboard Date','Request Date','Resolved Date','Updated','Status','Requester','Transfer From','Project Codes','Remark'];
+  const rows = list.map(r=>[r.id,resourcePersonName(r),resourceEmployeeCode(r),r.resourceTeam,r.project,primaryProjectCode(r),primaryAllocation(r),r.position,r.level,r.hiringType,r.startDate||'',r.endDate||'',r.onboardDate||'',r.offboardDate||'',r.requestDate||'',r.resolvedDate||'',r.updatedAt?String(r.updatedAt).slice(0,10):'',RES_STATUS[r.status]?.label||r.status,r.requesterName||'',r.transferFrom||'',(r.projectCodes||[]).map(c=>`${c.code}(${c.project}:${c.allocation}%)`).join(' | '),r.remark||'']);
   const csv = [headers,...rows].map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'});
   const a = document.createElement('a'); a.href=URL.createObjectURL(blob);

@@ -192,6 +192,9 @@ function syncThemeControl() {
   button.setAttribute('aria-label', nextLabel);
   button.setAttribute('aria-pressed', String(theme === 'dark'));
   button.title = nextLabel;
+  if(!button.classList.contains('theme-toggle--clouding')) {
+    button.dataset.cover = theme === 'dark' ? 'sun' : 'moon';
+  }
   const label = button.querySelector('.theme-toggle-label');
   if(label) label.textContent = theme === 'dark' ? 'Dark' : 'Light';
 }
@@ -202,7 +205,19 @@ function setTheme(theme) {
   syncThemeControl();
 }
 function toggleTheme() {
-  setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+  const theme = currentTheme();
+  const next = theme === 'dark' ? 'light' : 'dark';
+  const button = document.getElementById('theme-toggle');
+  if(!button) { setTheme(next); return; }
+  if(button.classList.contains('theme-toggle--clouding')) return;
+  button.dataset.cover = next === 'dark' ? 'sun' : 'moon';
+  button.classList.add('theme-toggle--clouding');
+  button.disabled = true;
+  setTheme(next);
+  window.setTimeout(() => {
+    button.classList.remove('theme-toggle--clouding');
+    button.disabled = false;
+  }, 720);
 }
 
 // ── Shared utils ──
