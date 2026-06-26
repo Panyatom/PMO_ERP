@@ -192,6 +192,9 @@ function syncThemeControl() {
   button.setAttribute('aria-label', nextLabel);
   button.setAttribute('aria-pressed', String(theme === 'dark'));
   button.title = nextLabel;
+  if(!button.classList.contains('theme-toggle--clouding')) {
+    button.dataset.cover = theme === 'dark' ? 'sun' : 'moon';
+  }
   const label = button.querySelector('.theme-toggle-label');
   if(label) label.textContent = theme === 'dark' ? 'Dark' : 'Light';
 }
@@ -202,7 +205,19 @@ function setTheme(theme) {
   syncThemeControl();
 }
 function toggleTheme() {
-  setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+  const theme = currentTheme();
+  const next = theme === 'dark' ? 'light' : 'dark';
+  const button = document.getElementById('theme-toggle');
+  if(!button) { setTheme(next); return; }
+  if(button.classList.contains('theme-toggle--clouding')) return;
+  button.dataset.cover = next === 'dark' ? 'sun' : 'moon';
+  button.classList.add('theme-toggle--clouding');
+  button.disabled = true;
+  setTheme(next);
+  window.setTimeout(() => {
+    button.classList.remove('theme-toggle--clouding');
+    button.disabled = false;
+  }, 720);
 }
 
 // ── Shared utils ──
@@ -559,8 +574,52 @@ function openMemoPdf(memoNo) {
   downloadMemoPdf(memo);
 }
 
+// ── Micro interactions ──
+function initMicroInteractions() {
+  if(window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  const rippleSelector = [
+    'button', '.btn-primary', '.btn-ghost', '.btn-sm', '.btn-export',
+    '.btn-approve', '.btn-reject', '.add-btn', '.rm-btn', '.type-btn',
+    '.cost-stab', '.sb-item', '.sb-sub-item', '[role="button"]'
+  ].join(',');
+
+  document.addEventListener('click', event => {
+    const target = event.target.closest(rippleSelector);
+    if(!target || target.disabled || target.getAttribute('aria-disabled') === 'true') return;
+
+    const rect = target.getBoundingClientRect();
+    const ripple = document.createElement('span');
+    ripple.className = 'motion-ripple';
+    ripple.setAttribute('aria-hidden', 'true');
+    const keyboardClick = event.detail === 0;
+    ripple.style.left = `${keyboardClick ? rect.width / 2 : event.clientX - rect.left}px`;
+    ripple.style.top = `${keyboardClick ? rect.height / 2 : event.clientY - rect.top}px`;
+    target.classList.add('motion-ripple-host');
+    target.appendChild(ripple);
+    ripple.addEventListener('animationend', () => ripple.remove(), { once:true });
+  });
+
+  const animateAddedNodes = new MutationObserver(records => {
+    records.forEach(record => record.addedNodes.forEach(node => {
+      if(!(node instanceof HTMLElement)) return;
+      const items = node.matches('.item-row, .row-name, .pend-card')
+        ? [node]
+        : [...node.querySelectorAll('.item-row, .row-name, .pend-card')];
+      items.forEach(item => {
+        item.classList.remove('motion-enter');
+        void item.offsetWidth;
+        item.classList.add('motion-enter');
+        item.addEventListener('animationend', () => item.classList.remove('motion-enter'), { once:true });
+      });
+    }));
+  });
+  animateAddedNodes.observe(document.body, { childList:true, subtree:true });
+}
+
 // ── Init ──
 function initApp() {
+  initMicroInteractions();
   syncThemeControl();
   ['f-date','f-signdate','f-apprdate','sl-ratedate'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = todayISO;
