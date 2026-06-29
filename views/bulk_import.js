@@ -452,4 +452,3 @@ function downloadTemplate(type) {
   XLSX.utils.book_append_sheet(wb, ws, 'Template');
   XLSX.writeFile(wb, t.filename);
 }
-

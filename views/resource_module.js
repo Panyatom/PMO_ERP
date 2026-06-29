@@ -2183,4 +2183,3 @@ document.addEventListener('click', e => {
   if(e.target===document.getElementById('resource-status-modal')) closeResStatus();
   if(e.target===document.getElementById('resource-transfer-modal')) closeResTransfer();
 });
-
