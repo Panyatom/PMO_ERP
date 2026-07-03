@@ -1,12 +1,12 @@
-﻿// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────
 // Supabase client + storage layer
 // Replaces localStorage for memos, licenses, devices
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────
 const PMO_CONFIG = window.__PMO_CONFIG__ || {};
 const SUPA_URL = String(PMO_CONFIG.supabaseUrl || '').replace(/\/$/, '');
 const SUPA_KEY = String(PMO_CONFIG.supabaseAnonKey || '');
 
-// â”€â”€ Supabase REST helper â”€â”€
+// ── Supabase REST helper ──
 const SUPA_FETCH_TIMEOUT_MS = 6000;
 
 async function supaFetch(table, method='GET', body=null, query='') {
@@ -39,8 +39,8 @@ async function supaFetch(table, method='GET', body=null, query='') {
   }
 }
 
-// â”€â”€ Memo field mapping: JS camelCase â†” DB snake_case â”€â”€
-// â”€â”€ Shared financial models (Phase 1A â€” local storage only) â”€â”€
+// ── Memo field mapping: JS camelCase ↔ DB snake_case ──
+// ── Shared financial models (Phase 1A — local storage only) ──
 const SPEND_TYPES = Object.freeze({
   SOFTWARE: 'Software',
   HARDWARE: 'Hardware',
@@ -248,15 +248,15 @@ function createBudgetPoolRecord(input = {}) {
     .filter(t => SPEND_TYPE_VALUES.includes(t));
   const memoTypes = spendTypes.map(t => SPEND_TYPE_TO_MEMO_TYPE[t]).filter(Boolean);
   // Phase 7A-9A: createBudgetPoolRecord() is THE canonicalizer, so it must itself normalize a
-  // legacy/typed BE value (e.g. "2569-01") to Gregorian before deriving year â€” otherwise
+  // legacy/typed BE value (e.g. "2569-01") to Gregorian before deriving year — otherwise
   // gregorianYearToBuddhistEra() double-converts into the "3112" bug at the model layer, and only
   // call sites that separately remembered to normalize first (e.g. the Edit modal) were protected.
   // Every canonical read (Budget Settings, BvA, exports, mapping) now inherits this for free.
   const effectiveStartDate = normalizeMonthValueToGregorian(input.startDate || input.startMonth) || null;
   const effectiveEndDate = normalizeMonthValueToGregorian(input.endDate || input.endMonth) || null;
-  // Year is derived from the pool's own normalized coverage start whenever date data exists â€” an
+  // Year is derived from the pool's own normalized coverage start whenever date data exists — an
   // independently-supplied input.year is never allowed to disagree with the pool's dates
-  // (see docs/BvA_REQUIREMENT.md "Phase 7A-1" Â§2). Only fall back to input.year when there is
+  // (see docs/BvA_REQUIREMENT.md "Phase 7A-1" §2). Only fall back to input.year when there is
   // no date data to derive from at all.
   const derivedYear = effectiveStartDate ? gregorianYearToBuddhistEra(effectiveStartDate) : '';
   return {
@@ -329,20 +329,20 @@ function validateBudgetPoolChange(input, existingPools = [], editId = null) {
   return { valid: errors.length === 0, errors, conflicts, record };
 }
 
-// Phase 7A-9D: Budget Pool bulk import validation â€” Create + Update in one workbook.
-// Reuses validateBudgetPoolChange() row-by-row â€” no separate validation/duplicate engine â€” against
+// Phase 7A-9D: Budget Pool bulk import validation — Create + Update in one workbook.
+// Reuses validateBudgetPoolChange() row-by-row — no separate validation/duplicate engine — against
 // a context that grows with every row already accepted earlier in the SAME batch, so two identical
 // rows in one file are caught by the exact same duplicate check that already protects manual
 // add/edit, not just rows vs. pre-existing pools.
-// Import is strict all-or-nothing (docs/BvA_REQUIREMENT.md "Phase 7A-1" Â§7/Â§8, TD-7A-04): a
-// row-level overlap conflict â€” merely a confirmable warning in the manual single-save flow â€” is
+// Import is strict all-or-nothing (docs/BvA_REQUIREMENT.md "Phase 7A-1" §7/§8, TD-7A-04): a
+// row-level overlap conflict — merely a confirmable warning in the manual single-save flow — is
 // escalated to a hard failure here, since Budget Pool is master data and there is no per-row
 // "confirm through it" UI in a batch import.
 //
 // Update-decision contract (per the redesigned Bulk Upload workflow): Pool ID (`row.id`) is the
 // ONLY thing that decides Create vs. Update. Business identity (project, name, year) remains
 // validated for uniqueness via validateBudgetPoolChange() exactly as before, but it is never used
-// to infer which pool a row updates â€” that inference was the pre-7A-9D behavior and could silently
+// to infer which pool a row updates — that inference was the pre-7A-9D behavior and could silently
 // overwrite the wrong pool. A blank Pool ID always creates; a non-blank Pool ID must match a real
 // existing pool.
 function validateBudgetPoolImportBatch(rows, existingPools = []) {
@@ -367,7 +367,7 @@ function validateBudgetPoolImportBatch(rows, existingPools = []) {
       valid = false;
       rowResults.push({
         row: rowNumber, ok: false,
-        errors: ['Duplicate Pool ID â€” this Pool ID appears more than once in this file. Each Pool ID may be used by only one row.'],
+        errors: ['Duplicate Pool ID — this Pool ID appears more than once in this file. Each Pool ID may be used by only one row.'],
         input: row,
       });
       return;
@@ -378,7 +378,7 @@ function validateBudgetPoolImportBatch(rows, existingPools = []) {
       valid = false;
       rowResults.push({
         row: rowNumber, ok: false,
-        errors: ['Unknown Pool ID â€” no existing Budget Pool has this ID. Leave Pool ID blank to create a new pool instead.'],
+        errors: ['Unknown Pool ID — no existing Budget Pool has this ID. Leave Pool ID blank to create a new pool instead.'],
         input: row,
       });
       return;
@@ -409,8 +409,8 @@ function validateBudgetPoolImportBatch(rows, existingPools = []) {
     // A record that resolves to more than one matching pool still becomes Needs PMO Review at
     // mapping time (mapBudgetPool(), unchanged) -- that is where ambiguity is handled, not here.
     // A blank Pool ID that nonetheless collides with an existing pool's business identity gets its
-    // own explicit, actionable message â€” in addition to (not instead of) the generic duplicate
-    // message above â€” since the fix ("restore the Pool ID, or rename") is different from the
+    // own explicit, actionable message — in addition to (not instead of) the generic duplicate
+    // message above — since the fix ("restore the Pool ID, or rename") is different from the
     // fix for a genuine two-new-rows duplicate ("rename one of them").
     if (!rowId && result.errors.some(message => message.includes('Duplicate Budget Pool for Project, Pool Name, and Year'))) {
       errors.push('Existing Budget Pool detected, but Pool ID is blank. Restore Pool ID to update this Pool, or change Project / Pool Name / Budget Year to create a new Pool.');
@@ -438,7 +438,7 @@ function validateBudgetPoolImportBatch(rows, existingPools = []) {
         sameSpendTypes;
       if (unchanged) {
         // True no-op: reuse the existing record as-is so nothing (not even updatedAt/updatedBy)
-        // changes if this row is later saved â€” callers should skip saving 'none' rows entirely.
+        // changes if this row is later saved — callers should skip saving 'none' rows entirely.
         action = 'none';
         record = existingMatch;
       } else {
@@ -456,7 +456,7 @@ function validateBudgetPoolImportBatch(rows, existingPools = []) {
 
 function budgetPoolDeletionBlockers(poolId, records = [], manualExpenses = [], memos = []) {
   // A cross-year Manual Override being blocked (Phase 7A-3) clears the CANONICAL Actual Spend
-  // record's manualBudgetPoolId/finalBudgetPoolId â€” but it never touches the underlying manual
+  // record's manualBudgetPoolId/finalBudgetPoolId — but it never touches the underlying manual
   // expense's or memo's own persisted budgetPoolId field. Deletion must still be blocked if any
   // of those raw, persisted sources still reference this pool, even though canonical
   // reconciliation would no longer show an effective mapping to it.
@@ -572,8 +572,8 @@ function mapBudgetPool(actualSpend, pools = []) {
     const selectedPool = pools.find(pool => pool.id === actualSpend.manualBudgetPoolId);
     if (selectedPool) {
       // Manual Override must match both project and year (docs/BvA_REQUIREMENT.md
-      // "Phase 7A-1" Â§2/Â§4). A cross-project override otherwise "succeeds" but never appears in
-      // BvA, which groups by project/pool scope â€” the amount looks silently missing rather than
+      // "Phase 7A-1" §2/§4). A cross-project override otherwise "succeeds" but never appears in
+      // BvA, which groups by project/pool scope — the amount looks silently missing rather than
       // Unbudgeted. Checked before year so the flag reports whichever mismatch is present.
       const sameProject = !actualSpend.project || !selectedPool.project || selectedPool.project === actualSpend.project;
       const mappingDate = actualSpendMappingDate(actualSpend);
@@ -751,7 +751,7 @@ function normalizeMonthValueToGregorian(value) {
 // Shared Gregorian -> Buddhist Era year helper (the inverse of financialYearToGregorian above).
 // Accepts either a full calendar value ("2026-01", "2026-01-15") or a bare year. Used wherever a
 // Budget Pool or Actual Spend coverage year needs to be derived and compared consistently, so year
-// conversion exists in exactly one place per docs/BvA_REQUIREMENT.md "Phase 7A-1" Â§2.
+// conversion exists in exactly one place per docs/BvA_REQUIREMENT.md "Phase 7A-1" §2.
 function gregorianYearToBuddhistEra(dateOrYear) {
   const parsed = parseStrictCalendarValue(dateOrYear);
   const numeric = parsed ? parsed.year : Number(String(dateOrYear || '').slice(0, 4));
@@ -760,8 +760,8 @@ function gregorianYearToBuddhistEra(dateOrYear) {
 
 // Shared "what year is it right now, in Thai Buddhist Era" helper. Every year filter/default that
 // needs "today's" BE year (Budget vs Actual, Budget Settings, Overview KPIs) must call this instead
-// of re-deriving `new Date().getFullYear() + 543` locally â€” Phase 7A-9A closes
-// docs/BvA_REQUIREMENT.md "Phase 7A-1" Â§2 Known Issue #2.
+// of re-deriving `new Date().getFullYear() + 543` locally — Phase 7A-9A closes
+// docs/BvA_REQUIREMENT.md "Phase 7A-1" §2 Known Issue #2.
 function getCurrentBuddhistYear() {
   return gregorianYearToBuddhistEra(new Date().getFullYear());
 }
@@ -777,11 +777,11 @@ function formatMonthBE(value) {
   return `${String(parsed.month).padStart(2, '0')}/${gregorianYearToBuddhistEra(value)}`;
 }
 
-// Canonical Project list â€” the single source of truth for "Project" dropdowns that should reflect
+// Canonical Project list — the single source of truth for "Project" dropdowns that should reflect
 // Settings' configured project list (as opposed to dropdowns that intentionally derive their
 // options from observed data, e.g. Pending's project filter). Phase 7A-9A foundation: only
 // Budget Pool Settings (`bpool-project`) is migrated onto this helper in this phase; the rest of
-// the app's Project dropdowns are deferred, not redesigned, here â€” see docs/TECHNICAL_DEBT.md.
+// the app's Project dropdowns are deferred, not redesigned, here — see docs/TECHNICAL_DEBT.md.
 function getCanonicalProjectList() {
   const s = typeof loadSettings === 'function' ? loadSettings() : null;
   return s?.projects || [];
@@ -795,7 +795,7 @@ function actualSpendOverlapsYear(record = {}, year) {
   return (!start || start <= target) && (!end || end >= target);
 }
 
-// Free-text search shared by the Budget vs Actual filter bar â€” same substring-over-lowercased-
+// Free-text search shared by the Budget vs Actual filter bar — same substring-over-lowercased-
 // fields convention as Manual Entries' search (renderManualEntries(), views/budget.js), so search
 // behavior stays identical across the app instead of a second implementation.
 function bvaRecordMatchesSearch(record = {}, search = '') {
@@ -1010,9 +1010,9 @@ function updateActualSpendBudgetOverride(memoNo, manualBudgetPoolId, pools = loa
   return updated;
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ══════════════════════════════════════════════════════════════════
 // GLOBAL: User profiles & authority limits cache
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ══════════════════════════════════════════════════════════════════
 let _userProfilesCache = null;
 let _authorityCache    = null;
 
@@ -1023,9 +1023,9 @@ async function loadUserProfilesAsync() {
     if(rows && rows.length){ _userProfilesCache = rows; return rows; }
   } catch(e){ console.warn('user_profiles load failed',e.message); }
   _userProfilesCache = [
-    {id:1, full_name:'à¸™à¸²à¸¢ à¸™à¸§à¸žà¸¥ à¸‡à¸²à¸¡à¸§à¸£à¹‚à¸£à¸ˆà¸™à¹Œà¸ªà¸à¸¸à¸¥',  title:'à¸œà¸¹à¹‰à¸­à¸³à¸™à¸§à¸¢à¸à¸²à¸£à¹‚à¸„à¸£à¸‡à¸à¸²à¸£',     name_aliases:['à¸™à¸§à¸žà¸¥','Nawaphon'],      is_approver:true, can_review:true, can_approve:true, is_active:true, is_pmo:true, email:'nawaphon@orbitdigital.co.th'},
-    {id:2, full_name:'à¸™à¸²à¸¢ à¸›à¸à¸£à¸“à¹Œ à¹€à¸ˆà¸µà¸¢à¸¡à¸ªà¸à¸¸à¸¥à¸—à¸´à¸žà¸¢à¹Œ', title:'à¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸šà¸£à¸´à¸«à¸²à¸£', name_aliases:['à¸›à¸à¸£à¸“à¹Œ','CEO','Pakorn'],  is_approver:true, can_review:true, can_approve:true, is_active:true, is_pmo:true, email:'pakorn@orbitdigital.co.th'},
-    {id:3, full_name:'à¸™à¸²à¸‡à¸ªà¸²à¸§ à¸Šà¸·à¹ˆà¸™à¸à¸¡à¸¥ à¸ªà¸²à¸£à¸¡à¸²à¸™à¸´à¸•à¸¢à¹Œ', title:'à¸œà¸¹à¹‰à¸ˆà¸±à¸”à¸à¸²à¸£à¹‚à¸„à¸£à¸‡à¸à¸²à¸£',        name_aliases:['à¸Šà¸·à¹ˆà¸™à¸à¸¡à¸¥','Chuenkamon'], is_approver:true, can_review:true, can_approve:true, is_active:true, is_pmo:true, email:'somying@orbitdigital.co.th'},
+    {id:1, full_name:'นาย นวพล งามวรโรจน์สกุล',  title:'ผู้อำนวยการโครงการ',     name_aliases:['นวพล','Nawaphon'],      is_approver:true, can_review:true, can_approve:true, is_active:true, is_pmo:true, email:'nawaphon@orbitdigital.co.th'},
+    {id:2, full_name:'นาย ปกรณ์ เจียมสกุลทิพย์', title:'ประธานเจ้าหน้าที่บริหาร', name_aliases:['ปกรณ์','CEO','Pakorn'],  is_approver:true, can_review:true, can_approve:true, is_active:true, is_pmo:true, email:'pakorn@orbitdigital.co.th'},
+    {id:3, full_name:'นางสาว ชื่นกมล สารมานิตย์', title:'ผู้จัดการโครงการ',        name_aliases:['ชื่นกมล','Chuenkamon'], is_approver:true, can_review:true, can_approve:true, is_active:true, is_pmo:true, email:'somying@orbitdigital.co.th'},
   ];
   return _userProfilesCache;
 }
@@ -1055,17 +1055,17 @@ function getAuthorityLimit(title, memoType) {
     if(r) return Number(r.limit_thb)||0;
   }
   const fb={
-    'à¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸šà¸£à¸´à¸«à¸²à¸£':          {sl:2000000,hw:2000000,int:0,ent:150000,dep:2000000},
-    'à¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸ªà¸²à¸¢à¸à¸²à¸£à¹€à¸‡à¸´à¸™ (CFO)':{sl:1000000,hw:500000, int:0,ent:50000, dep:500000},
-    'à¸œà¸¹à¹‰à¸­à¸³à¸™à¸§à¸¢à¸à¸²à¸£ (Team Director)':       {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
-    'à¸œà¸¹à¹‰à¸­à¸³à¸™à¸§à¸¢à¸à¸²à¸£à¹‚à¸„à¸£à¸‡à¸à¸²à¸£':                {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
+    'ประธานเจ้าหน้าที่บริหาร':          {sl:2000000,hw:2000000,int:0,ent:150000,dep:2000000},
+    'ประธานเจ้าหน้าที่สายการเงิน (CFO)':{sl:1000000,hw:500000, int:0,ent:50000, dep:500000},
+    'ผู้อำนวยการ (Team Director)':       {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
+    'ผู้อำนวยการโครงการ':                {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
     'Senior Manager / Manager':          {sl:50000,  hw:50000,  int:0,ent:10000, dep:50000},
     'Team Leader':                       {sl:30000,  hw:30000,  int:0,ent:5000,  dep:30000},
   };
   return fb[title]?.[memoType]??0;
 }
 
-// isPMO â€” single source of truth (moved from budget.js)
+// isPMO — single source of truth (moved from budget.js)
 function currentUserProfileId() {
   const raw = document.getElementById('sb-user-btn')?.dataset?.profileId;
   const id = Number(raw);
@@ -1083,7 +1083,7 @@ function isPMO() {
   if (profile) return profile.is_pmo === true;
   return (document.getElementById('sb-urole')?.textContent?.trim()||'') === 'PMO';
 }
-// currentUser â€” single source of truth (moved from pending.js)
+// currentUser — single source of truth (moved from pending.js)
 function currentUser() {
   return document.getElementById('sb-uname')?.textContent?.trim()||'';
 }
@@ -1123,7 +1123,7 @@ function canCurrentUserActOnMemo(memo) {
   return isMemoCurrentApprover(memo) || isPMO();
 }
 
-// Milestone 1A Task 1.3 â€” an approver step is "resolved" (locked, no longer the
+// Milestone 1A Task 1.3 — an approver step is "resolved" (locked, no longer the
 // pending one awaiting action) whether it was approved in-system, bypassed via
 // A1 self-review, or overridden by PMO. Views use this instead of checking
 // status === 'approved' alone, so bypassed/overridden steps still render as
@@ -1132,10 +1132,10 @@ function isApproverStepResolved(status) {
   return status === 'approved' || status === 'bypassed' || status === 'overridden';
 }
 
-// memoStatusKey / histStatusLabel / histStatusBadgeClass â€” single source of truth
+// memoStatusKey / histStatusLabel / histStatusBadgeClass — single source of truth
 // (moved from views/history.js, Milestone 1A Task 1.4). Behavior unchanged; this
 // only centralizes what was already implicitly global so budget.js and pending.js
-// can reuse it without redefining their own copy â€” see docs/TECHNICAL_DEBT.md
+// can reuse it without redefining their own copy — see docs/TECHNICAL_DEBT.md
 // for the follow-up on pending.js's separately-styled inline status pill.
 function memoStatusKey(memo) {
   return memo.status || 'pending';
@@ -1156,12 +1156,12 @@ function histStatusBadgeClass(memo) {
     completed: 'badge-green', rejected: 'badge-red', pending: 'badge-amber',
     pending_a2: 'badge-amber', pending_a3: 'badge-amber',
     draft: 'badge-gray', cancelled: 'badge-gray', expired: 'badge-red',
-    voided: 'badge-gray', // Milestone 1B â€” distinct from Approved, matches Cancelled/Draft's neutral tone
+    voided: 'badge-gray', // Milestone 1B — distinct from Approved, matches Cancelled/Draft's neutral tone
   };
   return map[key] || 'badge-gray';
 }
 
-// appendAuditLog â€” single source of truth (moved from views/pending.js, Milestone 1A Task 1.2)
+// appendAuditLog — single source of truth (moved from views/pending.js, Milestone 1A Task 1.2)
 function appendAuditLog(memos, memoNo, action, comment, extra = {}) {
   const idx = memos.findIndex(m => m.memoNo === memoNo);
   if(idx<0) return;
@@ -1176,7 +1176,7 @@ function appendAuditLog(memos, memoNo, action, comment, extra = {}) {
     statusAfter:  extra.statusAfter  || null,
     evidenceUrl:  extra.evidenceUrl  || null,
     channel:      extra.channel      || 'in-app',
-    // Milestone 2 Task 2.4 â€” Budget tag audit: previous/new Budget Pool id,
+    // Milestone 2 Task 2.4 — Budget tag audit: previous/new Budget Pool id,
     // generic enough to be reused by any other future "value changed" event.
     previousBudgetPoolId: extra.previousBudgetPoolId ?? null,
     newBudgetPoolId:      extra.newBudgetPoolId      ?? null,
@@ -1196,7 +1196,7 @@ function prepareMemoForSubmission(data, now = new Date().toISOString()) {
   const next = selfA1 ? approvers[1] : approvers[0];
   if (selfA1) {
     // Milestone 1A Task 1.3: A1 self-review is a Bypassed step, not a genuine
-    // in-system Approved one â€” see MEMO_LIFECYCLE.md Â§7 / SYSTEM_STATE_MACHINE.md Â§5.
+    // in-system Approved one — see MEMO_LIFECYCLE.md §7 / SYSTEM_STATE_MACHINE.md §5.
     approvers[0] = {
       ...approvers[0],
       status: 'bypassed',
@@ -1253,7 +1253,7 @@ function draftFromMemo(memo, sourceMemoNo = memo?.memoNo) {
     approvalNote: undefined,
     rejectionReason: undefined,
     cancellationReason: undefined,
-    // Milestone 1B â€” a duplicated memo must not inherit its source's Void or
+    // Milestone 1B — a duplicated memo must not inherit its source's Void or
     // soft-delete metadata.
     voidedAt: undefined, voidedBy: undefined, voidReason: undefined, voidEvidenceUrl: undefined,
     deleted: false, deletedAt: undefined, deletedBy: undefined, deleteReason: undefined,
@@ -1272,7 +1272,7 @@ function draftFromMemo(memo, sourceMemoNo = memo?.memoNo) {
   };
 }
 
-// â”€â”€ Memo field mapping: JS camelCase â†” DB snake_case â”€â”€
+// ── Memo field mapping: JS camelCase ↔ DB snake_case ──
 function memoToDb(m) {
   return {
     id: m.id || m.memoNo,
@@ -1312,7 +1312,7 @@ function dbToMemo(r) {
   };
 }
 
-// â”€â”€ Memo storage (async, with localStorage fallback) â”€â”€
+// ── Memo storage (async, with localStorage fallback) ──
 const MEMO_KEY = 'orbit-pmo-memos-v1';
 let _memCache = null;
 let _supaAvailable = null;
@@ -1378,7 +1378,7 @@ async function updateMemoStatusAsync(memoNo, status, extra={}) {
 
   if(await checkSupa()) {
     try {
-      // camelCase â†’ snake_case: approvalNote â†’ approval_note
+      // camelCase → snake_case: approvalNote → approval_note
       const toSnake = s => s.replace(/([A-Z])/g, '_$1').toLowerCase();
       const patch = { status, updated_at: updated.updatedAt, ...Object.fromEntries(
         Object.entries(extra).map(([k,v]) => [toSnake(k), v])
@@ -1398,7 +1398,7 @@ async function updateMemoStatusAsync(memoNo, status, extra={}) {
   return updated;
 }
 
-// â”€â”€ Sync: push all localStorage memos to Supabase â”€â”€
+// ── Sync: push all localStorage memos to Supabase ──
 async function syncLocalToSupabase() {
   if(!(await checkSupa())) return { ok:false, msg:'Supabase unavailable' };
   const local = loadMemos();
@@ -1414,12 +1414,12 @@ async function syncLocalToSupabase() {
   return { ok:true, pushed };
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// app.js â€” shared utils, storage, nav, PDF
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────
+// app.js — shared utils, storage, nav, PDF
+// ─────────────────────────────────────────
 
-// â”€â”€ Date helpers â”€â”€
-const MONTHS_TH = ['à¸¡à¸à¸£à¸²à¸„à¸¡','à¸à¸¸à¸¡à¸ à¸²à¸žà¸±à¸™à¸˜à¹Œ','à¸¡à¸µà¸™à¸²à¸„à¸¡','à¹€à¸¡à¸©à¸²à¸¢à¸™','à¸žà¸¤à¸©à¸ à¸²à¸„à¸¡','à¸¡à¸´à¸–à¸¸à¸™à¸²à¸¢à¸™','à¸à¸£à¸à¸Žà¸²à¸„à¸¡','à¸ªà¸´à¸‡à¸«à¸²à¸„à¸¡','à¸à¸±à¸™à¸¢à¸²à¸¢à¸™','à¸•à¸¸à¸¥à¸²à¸„à¸¡','à¸žà¸¤à¸¨à¸ˆà¸´à¸à¸²à¸¢à¸™','à¸˜à¸±à¸™à¸§à¸²à¸„à¸¡'];
+// ── Date helpers ──
+const MONTHS_TH = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
 function thaiDate(d) { return `${d.getDate()} ${MONTHS_TH[d.getMonth()]} ${d.getFullYear()+543}`; }
 const TODAY = thaiDate(new Date());
 const todayISO = new Date().toISOString().slice(0,10);
@@ -1432,7 +1432,7 @@ function syncThemeControl() {
   const theme = currentTheme();
   const button = document.getElementById('theme-toggle');
   if(!button) return;
-  const nextLabel = theme === 'dark' ? 'à¹€à¸›à¸¥à¸µà¹ˆà¸¢à¸™à¹€à¸›à¹‡à¸™à¹‚à¸«à¸¡à¸”à¸ªà¸§à¹ˆà¸²à¸‡' : 'à¹€à¸›à¸¥à¸µà¹ˆà¸¢à¸™à¹€à¸›à¹‡à¸™à¹‚à¸«à¸¡à¸”à¸¡à¸·à¸”';
+  const nextLabel = theme === 'dark' ? 'เปลี่ยนเป็นโหมดสว่าง' : 'เปลี่ยนเป็นโหมดมืด';
   button.setAttribute('aria-label', nextLabel);
   button.setAttribute('aria-pressed', String(theme === 'dark'));
   button.title = nextLabel;
@@ -1464,10 +1464,10 @@ function toggleTheme() {
   }, 720);
 }
 
-// â”€â”€ Shared utils â”€â”€
+// ── Shared utils ──
 function esc(v) { return String(v ?? '').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch])); }
 function val(sel, root=document) { return root.querySelector(sel)?.value?.trim() || ''; }
-function money(n) { return 'à¸¿' + (Number(n)||0).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }
+function money(n) { return '฿' + (Number(n)||0).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }
 function shortDate(iso) {
   if(!iso) return '-';
   const d = new Date(iso);
@@ -1501,7 +1501,7 @@ function table(headers, rows, numericIndexes=[], centerIndexes=[]) {
     + '</table>';
 }
 
-// â”€â”€ Storage â”€â”€
+// ── Storage ──
 // MEMO_KEY defined in Supabase layer above
 let _memMemos = [];
 function canUseLocalStorage() {
@@ -1537,7 +1537,7 @@ function setNextMemoNo() {
   if(el && !el.value.trim()) el.value = nextMemoNo();
 }
 function saveMemo(data) {
-  // Sync version for backward compat â€” also triggers async save to Supabase
+  // Sync version for backward compat — also triggers async save to Supabase
   const now = new Date().toISOString();
   const memos = loadMemos();
   const idx = memos.findIndex(m => m.memoNo === data.memoNo);
@@ -1552,7 +1552,7 @@ function saveMemo(data) {
 function updateMemoStatus(memoNo, status, extra={}) {
   const memos = loadMemos();
   const idx = memos.findIndex(m => m.memoNo === memoNo);
-  if(idx<0) { alert('à¹„à¸¡à¹ˆà¸žà¸š Memo à¸—à¸µà¹ˆà¹€à¸¥à¸·à¸­à¸'); return null; }
+  if(idx<0) { alert('ไม่พบ Memo ที่เลือก'); return null; }
   memos[idx] = { ...memos[idx], ...extra, status, updatedAt: new Date().toISOString() };
   if(status==='completed') memos[idx].approvedAt = memos[idx].updatedAt;
   if(status==='rejected')  memos[idx].rejectedAt = memos[idx].updatedAt;
@@ -1758,7 +1758,7 @@ function closeNotifications() {
   panel?.setAttribute('aria-hidden', 'true');
 }
 
-// â”€â”€ Navigation â”€â”€
+// ── Navigation ──
 function swView(id, el, title) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.sb-sub-item').forEach(s => s.classList.remove('active'));
@@ -1781,36 +1781,36 @@ function toggleMemoSub(el) {
   swView('create', document.querySelector('#memo-sub .sb-sub-item'), 'Create Memo');
 }
 
-// â”€â”€ PDF â”€â”€
+// ── PDF ──
 function renderMemoPdf(data) {
-  // Use server CSS classes (.mp-*) â€” injected by PDF server with THSarabun font
+  // Use server CSS classes (.mp-*) — injected by PDF server with THSarabun font
   function fmtDate(v) {
     if(!v || v === '-') return '';
-    // Already a Thai date string (e.g. "20 à¸žà¸¤à¸©à¸ à¸²à¸„à¸¡ 2569") â€” return as-is
-    if(/[à¸-à¹™]/.test(v)) return v;
-    // ISO date YYYY-MM-DD â†’ convert to Thai Buddhist era DD/MM/YYYY
+    // Already a Thai date string (e.g. "20 พฤษภาคม 2569") — return as-is
+    if(/[ก-๙]/.test(v)) return v;
+    // ISO date YYYY-MM-DD → convert to Thai Buddhist era DD/MM/YYYY
     const d = new Date(v.length===10 ? v+'T00:00:00' : v);
     if(isNaN(d.getTime())) return v;
     return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()+543}`;
   }
 
   const typeBody = {
-    sl: `à¹€à¸™à¸·à¹ˆà¸­à¸‡à¸”à¹‰à¸§à¸¢à¸žà¸™à¸±à¸à¸‡à¸²à¸™à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} - à¸šà¸£à¸´à¸©à¸±à¸— à¸­à¸­à¸£à¹Œà¸šà¸´à¸— à¸”à¸´à¸ˆà¸´à¸—à¸±à¸¥ à¸ˆà¸³à¸à¸±à¸” à¸¡à¸µà¸„à¸§à¸²à¸¡à¸ˆà¸³à¹€à¸›à¹‡à¸™à¸•à¹‰à¸­à¸‡à¹ƒà¸Šà¹‰à¸‡à¸²à¸™à¹‚à¸›à¸£à¹à¸à¸£à¸¡ à¹€à¸žà¸·à¹ˆà¸­à¸žà¸±à¸’à¸™à¸²à¹‚à¸„à¸£à¸‡à¸à¸²à¸£à¹à¸¥à¸°à¸Šà¹ˆà¸§à¸¢à¸—à¸µà¸¡à¸žà¸±à¸’à¸™à¸²à¸ªà¸²à¸¡à¸²à¸£à¸–à¸—à¸³à¸‡à¸²à¸™à¹„à¸”à¹‰à¸­à¸¢à¹ˆà¸²à¸‡à¸¡à¸µà¸›à¸£à¸°à¸ªà¸´à¸—à¸˜à¸´à¸ à¸²à¸ž à¸ˆà¸¶à¸‡à¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¹€à¸žà¸·à¹ˆà¸­à¸•à¹ˆà¸­à¸­à¸²à¸¢à¸¸à¸à¸²à¸£à¹ƒà¸Šà¹‰à¸‡à¸²à¸™à¹‚à¸›à¸£à¹à¸à¸£à¸¡ à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¸±à¸‡à¸•à¹ˆà¸­à¹„à¸›à¸™à¸µà¹‰`,
-    hw: `à¹€à¸™à¸·à¹ˆà¸­à¸‡à¸”à¹‰à¸§à¸¢à¸žà¸™à¸±à¸à¸‡à¸²à¸™à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} - à¸šà¸£à¸´à¸©à¸±à¸— à¸­à¸­à¸£à¹Œà¸šà¸´à¸— à¸”à¸´à¸ˆà¸´à¸—à¸±à¸¥ à¸ˆà¸³à¸à¸±à¸” à¸¡à¸µà¸„à¸§à¸²à¸¡à¸ˆà¸³à¹€à¸›à¹‡à¸™à¸•à¹‰à¸­à¸‡à¸ˆà¸±à¸”à¸‹à¸·à¹‰à¸­à¸­à¸¸à¸›à¸à¸£à¸“à¹Œ Hardware à¹€à¸žà¸·à¹ˆà¸­à¸ªà¸™à¸±à¸šà¸ªà¸™à¸¸à¸™à¸à¸²à¸£à¸”à¸³à¹€à¸™à¸´à¸™à¸‡à¸²à¸™à¸‚à¸­à¸‡à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ à¸ˆà¸¶à¸‡à¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¸±à¸‡à¸•à¹ˆà¸­à¹„à¸›à¸™à¸µà¹‰`,
-    int: `à¹€à¸™à¸·à¹ˆà¸­à¸‡à¸”à¹‰à¸§à¸¢à¸à¹ˆà¸²à¸¢ PMO à¸¡à¸µà¸„à¸§à¸²à¸¡à¸›à¸£à¸°à¸ªà¸‡à¸„à¹Œà¸ˆà¸±à¸”à¸à¸´à¸ˆà¸à¸£à¸£à¸¡ Team Activity à¹€à¸žà¸·à¹ˆà¸­à¹€à¸ªà¸£à¸´à¸¡à¸ªà¸£à¹‰à¸²à¸‡à¸à¸³à¸¥à¸±à¸‡à¹ƒà¸ˆà¹à¸¥à¸°à¸ªà¹ˆà¸‡à¹€à¸ªà¸£à¸´à¸¡à¸à¸²à¸£à¸—à¸³à¸‡à¸²à¸™à¹€à¸›à¹‡à¸™à¸—à¸µà¸¡à¸‚à¸­à¸‡à¸žà¸™à¸±à¸à¸‡à¸²à¸™à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} à¸ˆà¸¶à¸‡à¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¸±à¸‡à¸•à¹ˆà¸­à¹„à¸›à¸™à¸µà¹‰`,
-    ent: `à¹€à¸™à¸·à¹ˆà¸­à¸‡à¸”à¹‰à¸§à¸¢à¸à¹ˆà¸²à¸¢ PMO à¸¡à¸µà¸„à¸§à¸²à¸¡à¸›à¸£à¸°à¸ªà¸‡à¸„à¹Œà¸ˆà¸±à¸”à¸‡à¸²à¸™à¹€à¸¥à¸µà¹‰à¸¢à¸‡à¸£à¸±à¸šà¸£à¸­à¸‡à¸¥à¸¹à¸à¸„à¹‰à¸²à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} à¹€à¸žà¸·à¹ˆà¸­à¹€à¸ªà¸£à¸´à¸¡à¸ªà¸£à¹‰à¸²à¸‡à¸„à¸§à¸²à¸¡à¸ªà¸±à¸¡à¸žà¸±à¸™à¸˜à¹Œà¸­à¸±à¸™à¸”à¸µà¹à¸¥à¸°à¸£à¸±à¸à¸©à¸²à¸„à¸§à¸²à¸¡à¸žà¸¶à¸‡à¸žà¸­à¹ƒà¸ˆà¸‚à¸­à¸‡à¸¥à¸¹à¸à¸„à¹‰à¸² à¸ˆà¸¶à¸‡à¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¸±à¸‡à¸•à¹ˆà¸­à¹„à¸›à¸™à¸µà¹‰`,
-    dep: `à¹€à¸™à¸·à¹ˆà¸­à¸‡à¸”à¹‰à¸§à¸¢à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} à¸¡à¸µà¸„à¸§à¸²à¸¡à¸ˆà¸³à¹€à¸›à¹‡à¸™à¸•à¹‰à¸­à¸‡ Deployment à¸£à¸°à¸šà¸š à¸ˆà¸¶à¸‡à¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸„à¹ˆà¸²à¹ƒà¸Šà¹‰à¸ˆà¹ˆà¸²à¸¢à¹ƒà¸™à¸à¸²à¸£ Deployment à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¸±à¸‡à¸•à¹ˆà¸­à¹„à¸›à¸™à¸µà¹‰`,
+    sl: `เนื่องด้วยพนักงานโครงการ ${esc(data.project||'-')} - บริษัท ออร์บิท ดิจิทัล จำกัด มีความจำเป็นต้องใช้งานโปรแกรม เพื่อพัฒนาโครงการและช่วยทีมพัฒนาสามารถทำงานได้อย่างมีประสิทธิภาพ จึงขออนุมัติงบประมาณเพื่อต่ออายุการใช้งานโปรแกรม ตามรายละเอียดดังต่อไปนี้`,
+    hw: `เนื่องด้วยพนักงานโครงการ ${esc(data.project||'-')} - บริษัท ออร์บิท ดิจิทัล จำกัด มีความจำเป็นต้องจัดซื้ออุปกรณ์ Hardware เพื่อสนับสนุนการดำเนินงานของโครงการ จึงขออนุมัติงบประมาณตามรายละเอียดดังต่อไปนี้`,
+    int: `เนื่องด้วยฝ่าย PMO มีความประสงค์จัดกิจกรรม Team Activity เพื่อเสริมสร้างกำลังใจและส่งเสริมการทำงานเป็นทีมของพนักงานโครงการ ${esc(data.project||'-')} จึงขออนุมัติงบประมาณตามรายละเอียดดังต่อไปนี้`,
+    ent: `เนื่องด้วยฝ่าย PMO มีความประสงค์จัดงานเลี้ยงรับรองลูกค้าโครงการ ${esc(data.project||'-')} เพื่อเสริมสร้างความสัมพันธ์อันดีและรักษาความพึงพอใจของลูกค้า จึงขออนุมัติงบประมาณตามรายละเอียดดังต่อไปนี้`,
+    dep: `เนื่องด้วยโครงการ ${esc(data.project||'-')} มีความจำเป็นต้อง Deployment ระบบ จึงขออนุมัติงบประมาณค่าใช้จ่ายในการ Deployment ตามรายละเอียดดังต่อไปนี้`,
   };
-  const bodyText = typeBody[data.type] || `à¸”à¹‰à¸§à¸¢à¸à¹ˆà¸²à¸¢ PMO à¸¡à¸µà¸„à¸§à¸²à¸¡à¸›à¸£à¸°à¸ªà¸‡à¸„à¹Œà¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸£à¸²à¸¢à¸à¸²à¸£à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¹‰à¸²à¸™à¸¥à¹ˆà¸²à¸‡ à¹€à¸žà¸·à¹ˆà¸­à¸ªà¸™à¸±à¸šà¸ªà¸™à¸¸à¸™à¸à¸²à¸£à¸”à¸³à¹€à¸™à¸´à¸™à¸‡à¸²à¸™à¸‚à¸­à¸‡à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} à¹ƒà¸«à¹‰à¹€à¸›à¹‡à¸™à¹„à¸›à¸•à¸²à¸¡à¹à¸œà¸™à¸‡à¸²à¸™`;
+  const bodyText = typeBody[data.type] || `ด้วยฝ่าย PMO มีความประสงค์ขออนุมัติรายการตามรายละเอียดด้านล่าง เพื่อสนับสนุนการดำเนินงานของโครงการ ${esc(data.project||'-')} ให้เป็นไปตามแผนงาน`;
 
   // Per-type closing paragraphs with authority reference
-  const authorityRef = 'à¸­à¹‰à¸²à¸‡à¸­à¸´à¸‡à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸ˆà¸²à¸à¸„à¸¹à¹ˆà¸¡à¸·à¸­à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´ à¸ž.à¸¨. 2566 à¸‚à¹‰à¸­ 3.2 à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™ (à¸—à¸µà¹ˆà¸¡à¸µà¸à¸²à¸£à¸•à¸±à¹‰à¸‡à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¹„à¸§à¹‰) à¸«à¸¡à¸§à¸”à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¸„à¹ˆà¸²à¸šà¸£à¸´à¸à¸²à¸£ à¸‹à¸¶à¹ˆà¸‡à¹ƒà¸«à¹‰à¸­à¸³à¸™à¸²à¸ˆà¹à¸à¹ˆà¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸šà¸£à¸´à¸«à¸²à¸£à¹ƒà¸™à¸§à¸‡à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ 2,000,000 à¸šà¸²à¸—';
-  const authorityRef500k = 'à¸­à¹‰à¸²à¸‡à¸­à¸´à¸‡à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸ˆà¸²à¸à¸„à¸¹à¹ˆà¸¡à¸·à¸­à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´ à¸ž.à¸¨. 2566 à¸‚à¹‰à¸­ 3.2 à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™ (à¸—à¸µà¹ˆà¸¡à¸µà¸à¸²à¸£à¸•à¸±à¹‰à¸‡à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¹„à¸§à¹‰) à¸«à¸¡à¸§à¸”à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¸„à¹ˆà¸²à¸šà¸£à¸´à¸à¸²à¸£à¸ªà¸³à¸«à¸£à¸±à¸šà¸žà¸™à¸±à¸à¸‡à¸²à¸™ à¸‹à¸¶à¹ˆà¸‡à¹ƒà¸«à¹‰à¸­à¸³à¸™à¸²à¸ˆà¹à¸à¹ˆà¸œà¸¹à¹‰à¸šà¸£à¸´à¸«à¸²à¸£à¹ƒà¸™à¸§à¸‡à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ 500,000 à¸šà¸²à¸—';
+  const authorityRef = 'อ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงิน (ที่มีการตั้งงบประมาณไว้) หมวดการชำระค่าบริการ ซึ่งให้อำนาจแก่ประธานเจ้าหน้าที่บริหารในวงเงินไม่เกิน 2,000,000 บาท';
+  const authorityRef500k = 'อ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงิน (ที่มีการตั้งงบประมาณไว้) หมวดการชำระค่าบริการสำหรับพนักงาน ซึ่งให้อำนาจแก่ผู้บริหารในวงเงินไม่เกิน 500,000 บาท';
   const amtStr = data.total ? `<strong>${esc(money(data.total||0))}</strong> (${esc(data.amountWords||'-')})` : '';
 
   const closingMap = {
     sl:  data.total ? (function(){
-      const slSection = (data.sections||[]).find(s => s.title === 'à¸£à¸²à¸¢à¸à¸²à¸£ Software');
+      const slSection = (data.sections||[]).find(s => s.title === 'รายการ Software');
       let totalSeats = 0, months = 12;
       if(slSection && slSection.html) {
         const doc = new DOMParser().parseFromString(slSection.html, 'text/html');
@@ -1824,24 +1824,24 @@ function renderMemoPdf(data) {
           }
         });
       }
-      const seatsStr = totalSeats ? `à¸ˆà¸³à¸™à¸§à¸™à¸£à¸§à¸¡à¸—à¸±à¹‰à¸‡à¸«à¸¡à¸” ${totalSeats} Seats ` : '';
-      const monthsStr = `à¸£à¸°à¸¢à¸°à¹€à¸§à¸¥à¸² ${months} à¹€à¸”à¸·à¸­à¸™ `;
-      return `à¹ƒà¸™à¸à¸²à¸£à¸™à¸µà¹‰à¸ˆà¸¶à¸‡à¸‚à¸­à¹ƒà¸«à¹‰à¸—à¹ˆà¸²à¸™à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸ªà¸³à¸«à¸£à¸±à¸šà¸„à¹ˆà¸²à¹ƒà¸Šà¹‰à¸ˆà¹ˆà¸²à¸¢à¸”à¸±à¸‡à¸à¸¥à¹ˆà¸²à¸§ à¸£à¸§à¸¡à¹€à¸›à¹‡à¸™à¸ˆà¸³à¸™à¸§à¸™à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ ${amtStr} ${seatsStr}${monthsStr}${authorityRef}`;
+      const seatsStr = totalSeats ? `จำนวนรวมทั้งหมด ${totalSeats} Seats ` : '';
+      const monthsStr = `ระยะเวลา ${months} เดือน `;
+      return `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณสำหรับค่าใช้จ่ายดังกล่าว รวมเป็นจำนวนเงินไม่เกิน ${amtStr} ${seatsStr}${monthsStr}${authorityRef}`;
     })() : '',
-    hw:  data.total ? `à¸ˆà¸¶à¸‡à¸‚à¸­à¸„à¸§à¸²à¸¡à¸à¸£à¸¸à¸“à¸²à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸„à¹ˆà¸²à¹ƒà¸Šà¹‰à¸ˆà¹ˆà¸²à¸¢à¸ªà¸³à¸«à¸£à¸±à¸šà¸£à¸²à¸¢à¸à¸²à¸£à¸ˆà¸±à¸”à¸‹à¸·à¹‰à¸­à¸ˆà¹‰à¸²à¸‡à¸­à¹‰à¸²à¸‡à¸•à¹‰à¸™ à¹ƒà¸™à¸§à¸‡à¹€à¸‡à¸´à¸™ ${amtStr} à¸–à¹‰à¸²à¸­à¹‰à¸²à¸‡à¸­à¸´à¸‡à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸ˆà¸²à¸à¸„à¸¹à¹ˆà¸¡à¸·à¸­à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´ à¸ž.à¸¨. 2566 à¸‚à¹‰à¸­ 3.2 à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™ (à¸—à¸µà¹ˆà¸¡à¸µà¸à¸²à¸£à¸•à¸±à¹‰à¸‡à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¹„à¸§à¹‰) à¸«à¸¡à¸§à¸”à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¸„à¹ˆà¸²à¸šà¸£à¸´à¸à¸²à¸£ à¸‹à¸¶à¹ˆà¸‡à¹ƒà¸«à¹‰à¸­à¸³à¸™à¸²à¸ˆà¹à¸à¹ˆà¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸šà¸£à¸´à¸«à¸²à¸£à¹ƒà¸™à¸§à¸‡à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ 500,000 à¸šà¸²à¸—` : '',
-    int: data.total ? `à¹ƒà¸™à¸à¸²à¸£à¸™à¸µà¹‰à¸ˆà¸¶à¸‡à¸‚à¸­à¹ƒà¸«à¹‰à¸—à¹ˆà¸²à¸™à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸ªà¸³à¸«à¸£à¸±à¸šà¸„à¹ˆà¸²à¸à¸´à¸ˆà¸à¸£à¸£à¸¡ Team Activity à¸”à¸±à¸‡à¸à¸¥à¹ˆà¸²à¸§ à¹€à¸›à¹‡à¸™à¸§à¸‡à¹€à¸‡à¸´à¸™à¸ˆà¸³à¸™à¸§à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ ${amtStr} (à¹à¸›à¸”à¸«à¸¡à¸·à¹ˆà¸™à¸ªà¸µà¹ˆà¸žà¸±à¸™à¸šà¸²à¸—à¸–à¹‰à¸§à¸™) ${authorityRef500k}` : '',
-    ent: data.total ? `à¹ƒà¸™à¸à¸²à¸£à¸™à¸µà¹‰à¸ˆà¸¶à¸‡à¸‚à¸­à¹ƒà¸«à¹‰à¸—à¹ˆà¸²à¸™à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸„à¹ˆà¸²à¸£à¸±à¸šà¸£à¸­à¸‡à¸¥à¸¹à¸à¸„à¹‰à¸²à¸ˆà¸²à¸ ${esc(data.project||'-')} à¹ƒà¸™à¸Šà¹ˆà¸§à¸‡à¹€à¸§à¸¥à¸²à¸”à¸±à¸‡à¸à¸¥à¹ˆà¸²à¸§ ${authorityRef}` : '',
-    dep: data.total ? `à¹ƒà¸™à¸à¸²à¸£à¸™à¸µà¹‰à¸ˆà¸¶à¸‡à¸‚à¸­à¹ƒà¸«à¹‰à¸—à¹ˆà¸²à¸™à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸„à¹ˆà¸²à¹ƒà¸Šà¹‰à¸ˆà¹ˆà¸²à¸¢ Deployment à¸£à¸§à¸¡à¹€à¸›à¹‡à¸™à¸ˆà¸³à¸™à¸§à¸™à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ ${amtStr} ${authorityRef}` : '',
+    hw:  data.total ? `จึงขอความกรุณาโปรดพิจารณาอนุมัติค่าใช้จ่ายสำหรับรายการจัดซื้อจ้างอ้างต้น ในวงเงิน ${amtStr} ถ้าอ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงิน (ที่มีการตั้งงบประมาณไว้) หมวดการชำระค่าบริการ ซึ่งให้อำนาจแก่ประธานเจ้าหน้าที่บริหารในวงเงินไม่เกิน 500,000 บาท` : '',
+    int: data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณสำหรับค่ากิจกรรม Team Activity ดังกล่าว เป็นวงเงินจำนวนไม่เกิน ${amtStr} (แปดหมื่นสี่พันบาทถ้วน) ${authorityRef500k}` : '',
+    ent: data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณค่ารับรองลูกค้าจาก ${esc(data.project||'-')} ในช่วงเวลาดังกล่าว ${authorityRef}` : '',
+    dep: data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณค่าใช้จ่าย Deployment รวมเป็นจำนวนเงินไม่เกิน ${amtStr} ${authorityRef}` : '',
   };
-  const closingText = closingMap[data.type] || (data.total ? `à¹ƒà¸™à¸à¸²à¸£à¸™à¸µà¹‰à¸ˆà¸¶à¸‡à¸‚à¸­à¹ƒà¸«à¹‰à¸—à¹ˆà¸²à¸™à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸£à¸§à¸¡à¹€à¸›à¹‡à¸™à¸ˆà¸³à¸™à¸§à¸™à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ ${amtStr}` : '');
+  const closingText = closingMap[data.type] || (data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณรวมเป็นจำนวนเงินไม่เกิน ${amtStr}` : '');
 
   // sectionsHtml rendered inline below with fxNote injection
 
   const fxNote = data.type === 'sl'
-    ? `<p class="mp-note">* <u>à¸«à¸¡à¸²à¸¢à¹€à¸«à¸•à¸¸</u> : à¹€à¸£à¸—à¸£à¸²à¸„à¸²à¹‚à¸›à¸£à¹à¸à¸£à¸¡à¸”à¸±à¸‡à¸à¸¥à¹ˆà¸²à¸§à¹à¸›à¸¥à¸‡à¹€à¸£à¸—à¹€à¸‡à¸´à¸™à¸•à¸£à¸²à¸ˆà¸²à¸à¸«à¸™à¹ˆà¸§à¸¢ USD à¹€à¸›à¹‡à¸™ THB à¸“ à¸§à¸±à¸™à¸—à¸µà¹ˆ ${esc(data.date||TODAY)}${data.fxRate ? ` (1 USD = à¸¿${data.fxRate})` : ''}</p>`
+    ? `<p class="mp-note">* <u>หมายเหตุ</u> : เรทราคาโปรแกรมดังกล่าวแปลงเรทเงินตราจากหน่วย USD เป็น THB ณ วันที่ ${esc(data.date||TODAY)}${data.fxRate ? ` (1 USD = ฿${data.fxRate})` : ''}</p>`
     : '';
 
-  // Dates stored as Thai strings from dateInput() â€” display directly
+  // Dates stored as Thai strings from dateInput() — display directly
   // fmtDate only as safety net for raw ISO strings
   const reviewerDate = data.reviewerDate && data.reviewerDate !== '-' ? data.reviewerDate : (data.date||'');
   const approverDate = data.approverDate && data.approverDate !== '-' ? data.approverDate : (data.date||'');
@@ -1850,17 +1850,17 @@ function renderMemoPdf(data) {
     <!-- Header row: memo no + date (logo injected by server) -->
     <div class="mp-hdr">
       <div class="mp-hdr-right">
-        <div><strong>à¹€à¸¥à¸‚à¸—à¸µà¹ˆ</strong>&nbsp;&nbsp;${esc(data.memoNo)}</div>
-        <div><strong>à¸¥à¸‡à¸§à¸±à¸™à¸—à¸µà¹ˆ</strong>&nbsp;&nbsp;${esc(data.date||TODAY)}</div>
+        <div><strong>เลขที่</strong>&nbsp;&nbsp;${esc(data.memoNo)}</div>
+        <div><strong>ลงวันที่</strong>&nbsp;&nbsp;${esc(data.date||TODAY)}</div>
       </div>
     </div>
 
     <!-- Title -->
-    <div class="mp-title">à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¹‰à¸­à¸„à¸§à¸²à¸¡</div>
+    <div class="mp-title">บันทึกข้อความ</div>
 
-    <!-- à¹€à¸£à¸·à¹ˆà¸­à¸‡ / à¹€à¸£à¸µà¸¢à¸™ -->
-    <div class="mp-field"><span class="mp-field-label">à¹€à¸£à¸·à¹ˆà¸­à¸‡</span><span class="mp-field-value">${esc(data.subject||'-')}</span></div>
-    <div class="mp-field"><span class="mp-field-label">à¹€à¸£à¸µà¸¢à¸™</span><span class="mp-field-value">${esc(data.to||'-')}</span></div>
+    <!-- เรื่อง / เรียน -->
+    <div class="mp-field"><span class="mp-field-label">เรื่อง</span><span class="mp-field-value">${esc(data.subject||'-')}</span></div>
+    <div class="mp-field"><span class="mp-field-label">เรียน</span><span class="mp-field-value">${esc(data.to||'-')}</span></div>
 
     <!-- Body -->
     <div class="mp-body"><p>${bodyText}</p></div>
@@ -1868,23 +1868,23 @@ function renderMemoPdf(data) {
     <!-- Sections with fxNote after SL table -->
     ${(data.sections||[]).map(function(s){
       let html = s.html;
-      if(s.title === 'à¸£à¸²à¸¢à¸à¸²à¸£ Software') {
+      if(s.title === 'รายการ Software') {
         const H = (from, to) => { html = html.split(from).join(to); };
         // Rename headers using regex (full inline styles, not just text-align)
         const renameHeader = (from, to) => {
           html = html.replace(new RegExp('<th([^>]*)>' + from + '<\\/th>', 'g'), '<th$1>' + to + '</th>');
         };
         renameHeader('#', 'No');
-        renameHeader('à¸Šà¸·à¹ˆà¸­ Software', 'Item');
-        renameHeader('à¸¿\\/à¹€à¸”à¸·à¸­à¸™', 'Price/Month (THB)');
-        renameHeader('à¸ˆà¸³à¸™à¸§à¸™', 'QTY (License)');
-        renameHeader('à¸£à¸§à¸¡', 'Amount (THB)');
-        renameHeader('à¹€à¸”à¸·à¸­à¸™', 'Month');
+        renameHeader('ชื่อ Software', 'Item');
+        renameHeader('฿\\/เดือน', 'Price/Month (THB)');
+        renameHeader('จำนวน', 'QTY (License)');
+        renameHeader('รวม', 'Amount (THB)');
+        renameHeader('เดือน', 'Month');
         // Center everything, then fix item name column (index 1) back to left
         H('<td class="tdl" style="text-align:left">', '<td style="text-align:left">');
         H('<td class="" style="text-align:left">', '<td style="text-align:center">');
         H('<td class="num" style="text-align:center">', '<td style="text-align:center;font-weight:700">');
-        // Fix: first td in each row (#) should be center â€” it uses tdl class
+        // Fix: first td in each row (#) should be center — it uses tdl class
         // Re-process: make all td center, only keep left for item name cells
         // Split by rows and fix per-column
         html = html.replace(/<tr>(.*?)<\/tr>/gs, function(match, cells) {
@@ -1907,7 +1907,7 @@ function renderMemoPdf(data) {
           html = html.replace('</tbody></table>', totalRow+'</tbody></table>');
         }
       }
-      if(s.title === 'à¸•à¸²à¸£à¸²à¸‡ Account') {
+      if(s.title === 'ตาราง Account') {
         // Add No column header
         html = html.replace('<thead><tr>', '<thead><tr><th style="background:#e8e8e8;color:#111;font-weight:600;padding:8px 10px;text-align:center;border:1px solid #ccc;font-size:13pt;width:40px">No</th>');
         // Add row number + center all td except account/email col (index 0 = left)
@@ -1926,7 +1926,7 @@ function renderMemoPdf(data) {
           return tds.length > 1 ? '<tr>'+tds.join('')+'</tr>' : match;
         });
       }
-      return '<div style="margin-top:12px"><p style="font-weight:700;margin-bottom:6px">'+esc(s.title)+'</p>'+html+(s.title==='à¸£à¸²à¸¢à¸à¸²à¸£ Software'?fxNote:'')+'</div>';
+      return '<div style="margin-top:12px"><p style="font-weight:700;margin-bottom:6px">'+esc(s.title)+'</p>'+html+(s.title==='รายการ Software'?fxNote:'')+'</div>';
     }).join('')}
 
 
@@ -1937,9 +1937,9 @@ function renderMemoPdf(data) {
     <!-- Signature boxes -->
     <div class="mp-approval">
       <div class="mp-appr-cell">
-        <div class="mp-appr-head">à¹€à¸£à¸µà¸¢à¸™à¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸šà¸£à¸´à¸«à¸²à¸£ à¹€à¸žà¸·à¹ˆà¸­à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´<br>à¸”à¸³à¹€à¸™à¸´à¸™à¸à¸²à¸£</div>
-        <div class="mp-appr-opt">&#9675; à¹€à¸«à¹‡à¸™à¸Šà¸­à¸š, à¹€à¸žà¸·à¹ˆà¸­à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´</div>
-        <div class="mp-appr-opt">&#9675; à¸­à¸·à¹ˆà¸™à¹† ..............................â€¦â€¦â€¦</div>
+        <div class="mp-appr-head">เรียนประธานเจ้าหน้าที่บริหาร เพื่อโปรดพิจารณาอนุมัติ<br>ดำเนินการ</div>
+        <div class="mp-appr-opt">&#9675; เห็นชอบ, เพื่อโปรดพิจารณาอนุมัติ</div>
+        <div class="mp-appr-opt">&#9675; อื่นๆ ..............................………</div>
         <div style="flex:1"></div>
         <div class="mp-sig-space"></div>
         <div class="mp-sig-name">( ${esc(data.reviewerName||'-')} )</div>
@@ -1947,8 +1947,8 @@ function renderMemoPdf(data) {
         <div class="mp-sig-date">${reviewerDate}</div>
       </div>
       <div class="mp-appr-cell">
-        <div class="mp-appr-opt">&#9675; à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´, à¹€à¸žà¸·à¹ˆà¸­à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸”à¸³à¹€à¸™à¸´à¸™à¸à¸²à¸£</div>
-        <div class="mp-appr-opt">&#9675; à¸­à¸·à¹ˆà¸™à¹† ..............................â€¦â€¦â€¦</div>
+        <div class="mp-appr-opt">&#9675; อนุมัติ, เพื่อโปรดพิจารณาดำเนินการ</div>
+        <div class="mp-appr-opt">&#9675; อื่นๆ ..............................………</div>
         <div style="flex:1"></div>
         <div class="mp-sig-space"></div>
         <div class="mp-sig-name">( ${esc(data.approverName||'-')} )</div>
@@ -2006,11 +2006,11 @@ async function downloadMemoPdf(data) {
 }
 function openMemoPdf(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
-  if(!memo) { alert('à¹„à¸¡à¹ˆà¸žà¸š Memo'); return; }
+  if(!memo) { alert('ไม่พบ Memo'); return; }
   downloadMemoPdf(memo);
 }
 
-// â”€â”€ Micro interactions â”€â”€
+// ── Micro interactions ──
 function pmoMotionHide(el, afterHide) {
   if(!el) return;
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -2149,9 +2149,9 @@ function ensurePmoDatePicker() {
   picker.setAttribute('role', 'dialog');
   picker.innerHTML = `
     <div class="pmo-date-head">
-      <button type="button" class="pmo-date-nav" data-date-nav="-1" aria-label="Previous month">â€¹</button>
+      <button type="button" class="pmo-date-nav" data-date-nav="-1" aria-label="Previous month">‹</button>
       <div class="pmo-date-month"></div>
-      <button type="button" class="pmo-date-nav" data-date-nav="1" aria-label="Next month">â€º</button>
+      <button type="button" class="pmo-date-nav" data-date-nav="1" aria-label="Next month">›</button>
     </div>
     <div class="pmo-date-controls">
       <div class="pmo-date-current"></div>
@@ -2313,7 +2313,7 @@ function renderPmoSelect(select) {
       data-pmo-option-index="${index}"
       ${option.disabled ? 'disabled' : ''}>
       <span>${esc(option.textContent.trim())}</span>
-      ${option.selected ? '<b aria-hidden="true">âœ“</b>' : '<b aria-hidden="true"></b>'}
+      ${option.selected ? '<b aria-hidden="true">✓</b>' : '<b aria-hidden="true"></b>'}
     </button>
   `).join('') || '<div class="pmo-select-empty">No values</div>';
 }
@@ -2335,7 +2335,7 @@ function enhancePmoSelect(select) {
   select.tabIndex = -1;
   wrap.insertAdjacentHTML('beforeend', `
     <button type="button" class="pmo-select-trigger">
-      <span></span><b aria-hidden="true">â–¾</b>
+      <span></span><b aria-hidden="true">▾</b>
     </button>
     <div class="pmo-select-menu"></div>
   `);
@@ -2399,7 +2399,7 @@ function initCustomSelects() {
   observer.observe(document.body, { childList:true, subtree:true });
 }
 
-// â”€â”€ Init â”€â”€
+// ── Init ──
 function initApp() {
   initMicroInteractions();
   initDatePicker();
