@@ -286,7 +286,7 @@ function renderCostBreakdownTable(licenses) {
 // ── Modal ──
 function openLicenseModal(id) {
   const modal = document.getElementById('license-modal');
-  modal.style.display = 'flex';
+  pmoMotionShow(modal);
   if(id) {
     const lic = getAllLicenses().find(l => String(l.id)===String(id));
     if(!lic) { closeLicenseModal(); return; }
@@ -320,7 +320,7 @@ function openLicenseModal(id) {
     document.getElementById('lic-status-field').value = 'active';
   }
 }
-function closeLicenseModal() { document.getElementById('license-modal').style.display='none'; }
+function closeLicenseModal() { pmoMotionHide(document.getElementById('license-modal')); }
 
 function saveLicenseManual() {
   const name = document.getElementById('lic-name').value.trim();

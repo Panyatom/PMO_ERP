@@ -18,6 +18,21 @@ database schema as migrations and injects browser configuration at deploy time.
    `file://` URL).
 3. Open `index.html` for the complete PMO Dashboard V0.2 application.
 
+## Tests
+
+Business-flow tests use the built-in Node.js test runner and do not require
+external packages:
+
+```powershell
+npm test
+```
+
+For the current Resource workflow suite only:
+
+```powershell
+npm run test:resource-flow
+```
+
 ## Database
 
 The source of truth is `supabase/migrations/`. Apply migrations with the
@@ -31,8 +46,10 @@ npx supabase db push
 ```
 
 The current policies deliberately retain anonymous read/create/update access
-for PoC compatibility. This is not the final production authorization model;
-Supabase Auth and organization-based RLS are the next security milestone.
+for PoC compatibility. The browser now has an auth-ready mock session facade so
+UI and business-flow tests can use one role/session model before real OAuth is
+enabled. This is not the final production authorization model; Supabase Auth
+and organization-based RLS are the next security milestone.
 
 ## Deployment
 

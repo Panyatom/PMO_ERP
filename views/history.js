@@ -326,7 +326,7 @@ function openHistoryDetail(memoNo) {
   `;
   const modalInner = document.querySelector('#detail-modal > div');
   if (modalInner) modalInner.style.maxWidth = '720px';
-  document.getElementById('detail-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('detail-modal'));
 }
 
 function showRejectionReason(memoNo, event) {

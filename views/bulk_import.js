@@ -118,12 +118,15 @@ function resourceImportId(employeeCode, index) {
 }
 
 async function importResourcePeople(rows) {
-  if(typeof saveResourceAsync !== 'function' || typeof loadResourcesAsync !== 'function') {
+  if(typeof saveResourceAsync !== 'function' || typeof loadResourcesAsync !== 'function' || typeof saveResourceMasterAsync !== 'function' || typeof loadResourceMasterAsync !== 'function') {
     alert('Resource module is not ready. Please open Resource Management and try again.');
     return;
   }
   const existing = await loadResourcesAsync();
-  const byEmployee = new Map(existing.filter(r => strVal(r.employeeCode)).map(r => [strVal(r.employeeCode).toLowerCase(), r]));
+  const existingMaster = await loadResourceMasterAsync();
+  const byEmployee = new Map(existingMaster.filter(r => strVal(r.employeeCode)).map(r => [strVal(r.employeeCode).toLowerCase(), r]));
+  const byName = new Map(existingMaster.filter(r => strVal(r.resourceName)).map(r => [strVal(r.resourceName).toLowerCase(), r]));
+  const byRequestEmployee = new Map(existing.filter(r => strVal(r.employeeCode)).map(r => [strVal(r.employeeCode).toLowerCase(), r]));
   const now = new Date().toISOString();
   let added = 0, updated = 0, skipped = 0;
 
@@ -137,7 +140,7 @@ async function importResourcePeople(rows) {
     const englishName = [first, last].filter(Boolean).join(' ');
     const resourceName = fullName || englishName;
     const project = strVal(rowVal(row, ['Project','project','\u0e42\u0e04\u0e23\u0e07\u0e01\u0e32\u0e23']));
-    if(!resourceName || !project) { skipped++; continue; }
+    if(!resourceName) { skipped++; continue; }
 
     const nickname = strVal(rowVal(row, ['Nickname','Nick Name','\u0e0a\u0e37\u0e48\u0e2d\u0e40\u0e25\u0e48\u0e19']));
     const hiringType = normalizeImportHiringType(rowVal(row, ['TYPE','Type','Employment Type','\u0e1b\u0e23\u0e30\u0e40\u0e20\u0e17']));
@@ -150,8 +153,8 @@ async function importResourcePeople(rows) {
     const offboard = parseExcelDate(rowVal(row, ['Offboard','offboard','Offboard Date']));
     const startDate = parseExcelDate(rowVal(row, ['\u0e27\u0e31\u0e19\u0e40\u0e23\u0e34\u0e48\u0e21\u0e07\u0e32\u0e19','Start Date','Start','start_date'])) || onboard || todayISO;
     const role = strVal(rowVal(row, ['Role','role']));
-    const existingRow = employeeCode ? byEmployee.get(employeeCode.toLowerCase()) : null;
-    const id = existingRow?.id || resourceImportId(employeeCode, i);
+    const existingMasterRow = employeeCode ? byEmployee.get(employeeCode.toLowerCase()) : byName.get(resourceName.toLowerCase());
+    const existingRow = employeeCode ? byRequestEmployee.get(employeeCode.toLowerCase()) : existing.find(r => strVal(r.resourceName).toLowerCase() === resourceName.toLowerCase());
     const meta = [
       nickname ? `Nickname: ${nickname}` : '',
       email ? `Email: ${email}` : '',
@@ -159,12 +162,38 @@ async function importResourcePeople(rows) {
       role ? `Role: ${role}` : '',
       department ? `Department: ${department}` : '',
     ].filter(Boolean).join('\n');
+    const masterPayload = {
+      ...(existingMasterRow||{}),
+      id: existingMasterRow?.id || resourceImportId(employeeCode || resourceName, i),
+      employeeCode,
+      resourceName,
+      resourceNameTh: thaiName || resourceName,
+      resourceNameEn: englishName,
+      nickname,
+      email,
+      resourceTeam: department || role || existingMasterRow?.resourceTeam || 'Resource',
+      position: position || role || existingMasterRow?.position || 'Resource',
+      level,
+      employmentType: hiringType,
+      sourceCompany: from,
+      currentProject: project || existingMasterRow?.currentProject || '',
+      status: offboard ? 'offboarded' : 'active',
+      onboardDate: onboard || startDate,
+      offboardDate: offboard || '',
+      note: meta,
+      requestId: existingRow?.id || existingMasterRow?.requestId || '',
+      createdAt: existingMasterRow?.createdAt || now,
+      updatedAt: now,
+    };
+    const savedMaster = await saveResourceMasterAsync(masterPayload);
+    const id = existingRow?.id || savedMaster.requestId || resourceImportId(employeeCode || resourceName, i);
     const payload = {
       ...(existingRow||{}),
       id,
-      resourceTeam: department || role || existingRow?.resourceTeam || 'Resource',
-      project,
-      position: position || role || existingRow?.position || 'Resource',
+      resourceMasterId: savedMaster.id,
+      resourceTeam: savedMaster.resourceTeam || existingRow?.resourceTeam || 'Resource',
+      project: savedMaster.currentProject || existingRow?.project || 'Unassigned',
+      position: savedMaster.position || existingRow?.position || 'Resource',
       level,
       hc: 1,
       hiringType,
@@ -177,21 +206,25 @@ async function importResourcePeople(rows) {
       requesterName: existingRow?.requesterName || 'Employee Import',
       transferFrom: existingRow?.transferFrom || null,
       projectCodes: existingRow?.projectCodes || [],
-      resourceName,
-      resourceNameTh: thaiName || resourceName,
-      resourceNameEn: englishName,
+      resourceName: savedMaster.resourceName,
+      resourceNameTh: savedMaster.resourceNameTh,
+      resourceNameEn: savedMaster.resourceNameEn,
       employeeCode,
       primaryProjectCode: existingRow?.primaryProjectCode || '',
       allocationPercent: existingRow?.allocationPercent || 100,
-      onboardDate: onboard || startDate,
+      onboardDate: savedMaster.onboardDate || startDate,
       offboardDate: offboard || null,
       activityLog: [...(existingRow?.activityLog||[]), { action: existingRow ? 'Employee import updated' : 'Employee imported', to: project, by:'Employee Import', remark:'Imported from employee file', at:now }],
       createdAt: existingRow?.createdAt || now,
       updatedAt: now,
     };
     const saved = await saveResourceAsync(payload);
-    if(employeeCode) byEmployee.set(employeeCode.toLowerCase(), saved || payload);
-    if(existingRow) updated++; else added++;
+    const linkedMaster = { ...savedMaster, requestId: saved?.id || payload.id };
+    await saveResourceMasterAsync(linkedMaster);
+    if(employeeCode) byEmployee.set(employeeCode.toLowerCase(), linkedMaster);
+    if(resourceName) byName.set(resourceName.toLowerCase(), linkedMaster);
+    if(employeeCode) byRequestEmployee.set(employeeCode.toLowerCase(), saved || payload);
+    if(existingMasterRow || existingRow) updated++; else added++;
   }
 
   if(typeof renderResource === 'function') renderResource();
@@ -210,10 +243,14 @@ function importProjectCodes(rows) {
     const code = strVal(rowVal(row, ['Project Code','project_code','Code']));
     const project = strVal(rowVal(row, ['Project','project','โครงการ']));
     if(!code || !project) { skipped++; return; }
+    const orgProject = typeof ensureProjectInSettingsMaster === 'function'
+      ? ensureProjectInSettingsMaster(project, { owner: strVal(rowVal(row, ['PM Owner','PM','Owner','pm_owner'])) })
+      : null;
     const current = byCode.get(code.toLowerCase());
     const item = {
       ...(current||{}),
       id: current?.id || code.replace(/\s+/g, '-'),
+      organizationProjectId: orgProject?.id || current?.organizationProjectId || '',
       no: strVal(rowVal(row, ['No','NO','#'])) || current?.no || String(index + 1),
       project,
       type: strVal(rowVal(row, ['Type','TYPE','ประเภท'])),

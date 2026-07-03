@@ -247,7 +247,7 @@ function openInfraModal(project, program) {
   const projects = s?.projects || ['AOA-MP','TTB','Geo9','Release 2.1','Release 3'];
   const infraCosts = loadInfraCosts();
 
-  document.getElementById('infra-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('infra-modal'));
   document.getElementById('infra-form').innerHTML = `
     <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px">
       <div class="fg"><label>Project *</label>
@@ -274,7 +274,7 @@ function openInfraModal(project, program) {
       </div>
     </div>`;
 }
-function closeInfraModal() { document.getElementById('infra-modal').style.display = 'none'; }
+function closeInfraModal() { pmoMotionHide(document.getElementById('infra-modal')); }
 
 // Edit all projects for a given program
 function openInfraModalForProgram(prog) {
@@ -285,7 +285,7 @@ function openInfraModalForProgram(prog) {
   const existingProjects = Object.keys(infraCosts).filter(p => infraCosts[p]?.[prog] !== undefined);
   const allP = [...new Set([...projects, ...existingProjects])].sort();
 
-  document.getElementById('infra-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('infra-modal'));
   document.getElementById('infra-form').innerHTML = `
     <p style="font-size:12px;color:var(--text-2);margin-bottom:12px">แก้ค่า <strong>${esc(prog)}</strong> ต่อโครงการ (THB/เดือน)</p>
     <input type="hidden" id="inf-program" value="${esc(prog)}">
@@ -352,7 +352,7 @@ function openBudgetCostModal() {
     ...projects, ...Object.keys(infraCosts), ...Object.keys(licByProj)
   ])].sort();
 
-  document.getElementById('budget-cost-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('budget-cost-modal'));
   document.getElementById('budget-cost-form').innerHTML = `
     <p style="font-size:12px;color:var(--text-2);margin-bottom:14px">ตั้ง Annual Budget ต่อโครงการ (THB) — แก้ได้ตลอดเวลา</p>
     ${allProjects.map(proj => `
@@ -363,7 +363,7 @@ function openBudgetCostModal() {
           value="${costBudgets[proj]?.total || ''}">
       </div>`).join('')}`;
 }
-function closeBudgetCostModal() { document.getElementById('budget-cost-modal').style.display = 'none'; }
+function closeBudgetCostModal() { pmoMotionHide(document.getElementById('budget-cost-modal')); }
 
 function saveBudgetCost() {
   const inputs = document.querySelectorAll('#budget-cost-form input[data-proj]');

@@ -13,7 +13,7 @@
 //   bbik  â€” à¸šà¸£à¸´à¸©à¸±à¸—à¹à¸¡à¹ˆ: à¹€à¸«à¹‡à¸™à¹€à¸‰à¸žà¸²à¸°à¸£à¸²à¸¢à¸à¸²à¸£à¸—à¸µà¹ˆ "Approved à¸‚à¸¶à¹‰à¸™à¹„à¸›" à¹à¸¥à¹‰à¸§à¸ªà¸£à¸£à¸«à¸²
 //
 // Flow:  pending â†’ (PMO approve) â†’ approved â†’ (BBIK à¸£à¸±à¸šà¸‡à¸²à¸™) â†’ sourcing â†’
-//        interviewing â†’ offer â†’ document â†’ (PMO onboard) â†’ filled â†’ resolved
+//        interviewing -> offer -> (BBIK confirms onboard) -> filled -> resolved
 //
 // Self-contained: chrome (role/tab/chips) à¸–à¸¹à¸ inject à¸”à¹‰à¸§à¸¢ JS â€” à¹„à¸¡à¹ˆà¸•à¹‰à¸­à¸‡à¹à¸à¹‰ index.html
 // Depends on globals from app.js: esc, shortDate, todayISO, checkSupa, supaFetch
@@ -21,9 +21,11 @@
 
 
 const RES_KEY = 'orbit-pmo-resources-v1';
+const RESOURCE_MASTER_KEY = 'orbit-pmo-resource-master-v1';
 const RES_TIMELINE_MODE_KEY = 'orbit-pmo-resource-timeline-mode-v1';
 const PROJECT_CODE_KEY = 'orbit-pmo-project-codes-v1';
 let _resCache = null;
+let _resourceMasterCache = null;
 let _projectCodeCache = null;
 
 const DEFAULT_PROJECT_CODES = [
@@ -75,6 +77,7 @@ const DEFAULT_PROJECT_CODES = [
 // â”€â”€ Status config â”€â”€
 const RES_STATUS = {
   pending:     { label:'Pending',              cls:'badge-gray',   th:'Waiting for PMO/Dir approval' },
+  pendingDocs: { label:'Pending Docs',         cls:'badge-yellow', th:'Pre-approval documents required before BBIK' },
   approved:    { label:'Approved -> BBIK',     cls:'badge-blue',   th:'Approved by PMO/Dir, waiting for BBIK' },
   sourcing:    { label:'Sourcing (BBIK)',      cls:'badge-blue',   th:'BBIK is sourcing' },
   interviewing:{ label:'Interviewing (BBIK)',  cls:'badge-purple', th:'BBIK is interviewing' },
@@ -85,12 +88,23 @@ const RES_STATUS = {
   resolved:    { label:'Resolved',             cls:'badge-green',  th:'Closed' },
   cancelled:   { label:'Cancelled',            cls:'badge-red',    th:'Cancelled' },
 };
-const OPEN = ['pending','approved','sourcing','interviewing','offer','document'];
-const RECRUITING = ['sourcing','interviewing','offer','document'];
+const OPEN = ['pending','pendingDocs','approved','sourcing','interviewing','offer','document'];
+const RECRUITING = ['sourcing','interviewing','offer'];
 
 
 const LEVEL_OPTS = ['Junior','Mid','Senior','Lead','Manager'];
 const HIRING_OPTS = ['Direct Head Count (Permanent)','Secondment','Sub-contract'];
+const CANCEL_REASON_OPTIONS = (typeof PMO_RESOURCE_FLOW !== 'undefined' && PMO_RESOURCE_FLOW.DEFAULT_CANCEL_REASONS)
+  ? PMO_RESOURCE_FLOW.DEFAULT_CANCEL_REASONS
+  : [
+      'Requirement changed',
+      'Duplicate request',
+      'Headcount / budget not approved',
+      'Position no longer needed',
+      'Candidate / resource unavailable',
+      'Timeline postponed',
+      'Other',
+    ];
 const HIRING_TYPE_META = {
   direct: {
     label: 'Direct HC',
@@ -120,10 +134,11 @@ const HIRING_TYPE_META = {
 const RES_VIEWS = [
   { key:'all',        label:'All',          match:()=>true },
   { key:'pending',    label:'Pending',      match:r=>r.status==='pending' },
+  { key:'pendingDocs',label:'Pending Docs', match:r=>r.status==='pendingDocs' },
   { key:'approved',   label:'Approved',     match:r=>r.status==='approved' },
   { key:'recruiting', label:'Recruiting',   match:r=>RECRUITING.includes(r.status) },
   { key:'filled',     label:'Onboarded',    match:r=>r.status==='filled' },
-  { key:'closed',     label:'Closed',       match:r=>['resolved','mitigated'].includes(r.status) },
+  { key:'closed',     label:'Filled',       match:r=>['resolved','mitigated'].includes(r.status) },
   { key:'cancelled',  label:'Cancelled',    match:r=>r.status==='cancelled' },
 ];
 
@@ -142,11 +157,12 @@ const RES_ROLES = {
 
 // STATUS_FLOW[currentStatus][role] = [allowed next statuses]. PMO can set anything.
 const STATUS_FLOW = {
-  pending:      { pmo:['approved','cancelled'], user:['cancelled'] },
+  pending:      { pmo:['pendingDocs','approved','cancelled'], user:['cancelled'] },
+  pendingDocs:  { pmo:['approved','cancelled'] },
   approved:     { bbik:['sourcing'], pmo:['cancelled'] },
   sourcing:     { bbik:['interviewing'], pmo:['cancelled'] },
   interviewing: { bbik:['offer'], pmo:['cancelled'] },
-  offer:        { bbik:['document'], pmo:['cancelled'] },
+  offer:        { bbik:['filled'], pmo:['cancelled'] },
   document:     { pmo:['filled'] },           // Orbit à¸¢à¸·à¸™à¸¢à¸±à¸™ onboard
   filled:       { pmo:['resolved'], user:['resolved'] },
   mitigated:    {},
@@ -156,21 +172,69 @@ const STATUS_FLOW = {
 
 
 // BBIK à¹€à¸«à¹‡à¸™à¹„à¸”à¹‰à¹€à¸‰à¸žà¸²à¸°à¸£à¸²à¸¢à¸à¸²à¸£à¸—à¸µà¹ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¹à¸¥à¹‰à¸§à¸‚à¸¶à¹‰à¸™à¹„à¸› (cross-company isolation)
-const BBIK_VISIBLE = ['approved','sourcing','interviewing','offer','document'];
+const BBIK_VISIBLE = ['approved','sourcing','interviewing','offer'];
 
 
 let _role = null;
 let _userProject = null;
-function resProjects() {
+function organizationProjects() {
   const s = typeof loadSettings==='function' ? loadSettings() : null;
-  const fromCodes = [...new Set(loadProjectCodeMaster().map(c => c.project).filter(Boolean))];
-  return fromCodes.length ? fromCodes : (s?.projects || ['AOA-MP','TTB','Geo9','Release 2.1','Release 3']);
+  const fromSettings = s?.projectMaster?.length
+    ? s.projectMaster.filter(p => p.status === 'active').map(p => p.name || p.code).filter(Boolean)
+    : (s?.projects || []);
+  return [...new Set(fromSettings)].filter(Boolean);
+}
+function resourceLevels() {
+  const s = typeof loadSettings === 'function' ? loadSettings() : null;
+  const levels = Array.isArray(s?.resource?.levels) && s.resource.levels.length ? s.resource.levels : LEVEL_OPTS;
+  return [...new Set(levels.map(l => String(l).trim()).filter(Boolean))];
+}
+function projectMasterItem(projectName) {
+  const name = String(projectName || '').trim().toLowerCase();
+  if(!name || typeof loadSettings !== 'function') return null;
+  return (loadSettings().projectMaster || []).find(p =>
+    String(p.name || '').trim().toLowerCase() === name ||
+    String(p.code || '').trim().toLowerCase() === name
+  ) || null;
+}
+function projectAccentColor(projectName) {
+  const color = String(projectMasterItem(projectName)?.color || '').trim();
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : '#8dd7cf';
+}
+function projectTextColor(hex) {
+  const raw = String(hex || '').replace('#', '');
+  if(!/^[0-9a-f]{6}$/i.test(raw)) return '#0f172a';
+  const r = parseInt(raw.slice(0, 2), 16);
+  const g = parseInt(raw.slice(2, 4), 16);
+  const b = parseInt(raw.slice(4, 6), 16);
+  return ((r * 299 + g * 587 + b * 114) / 1000) > 150 ? '#0f172a' : '#fff';
+}
+function projectPill(projectName, label=projectName) {
+  const color = projectAccentColor(projectName);
+  return `<span class="badge" style="font-size:10px;background:${color};color:${projectTextColor(color)};border-color:${color};white-space:nowrap">${esc(label || '-')}</span>`;
+}
+function currentRequesterName() {
+  const session = typeof pmoCurrentSession === 'function' ? pmoCurrentSession() : null;
+  return String(session?.user?.name || '').trim();
+}
+function resProjects() {
+  const fromMaster = organizationProjects();
+  if(fromMaster.length) return fromMaster;
+  const s = typeof loadSettings==='function' ? loadSettings() : null;
+  return [...new Set(s?.projects || ['AOA-MP','TTB','Geo9','Release 2.1','Release 3'])];
+}
+function knownResourceProjects(records=[]) {
+  return [...new Set([...resProjects(), ...(records||[]).map(r => r.project).filter(Boolean)])];
 }
 function normalizeProjectCode(row, index=0) {
   const code = String(row.code || row.projectCode || row['Project Code'] || '').trim();
   const project = String(row.project || row.Project || '').trim();
+  const orgProject = typeof loadSettings === 'function'
+    ? (loadSettings().projectMaster || []).find(p => String(p.name || '').toLowerCase() === project.toLowerCase() || String(p.code || '').toLowerCase() === project.toLowerCase())
+    : null;
   return {
     id: String(row.id || code || `${project}-${index}`).replace(/\s+/g, '-'),
+    organizationProjectId: String(row.organizationProjectId || row.organization_project_id || orgProject?.id || '').trim(),
     no: String(row.no || row.No || '').trim(),
     project,
     type: String(row.type || row.Type || '').trim(),
@@ -197,8 +261,176 @@ function storeProjectCodeMaster(list) {
   _projectCodeCache = (list||[]).map(normalizeProjectCode).filter(c => c.project || c.code);
   try { localStorage.setItem(PROJECT_CODE_KEY, JSON.stringify(_projectCodeCache)); } catch(e) {}
 }
+function cleanResourceMasterId(value, fallback='') {
+  const raw = String(value || '').trim();
+  const source = raw || String(fallback || '').trim() || `RESOURCE-${Date.now().toString(36)}`;
+  return source.replace(/[^A-Za-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || `RESOURCE-${Date.now().toString(36)}`;
+}
+function normalizeResourceMaster(row={}, index=0) {
+  const employeeCode = String(row.employeeCode || row.employee_code || '').trim();
+  const nameTh = String(row.resourceNameTh || row.resource_name_th || '').trim();
+  const nameEn = String(row.resourceNameEn || row.resource_name_en || '').trim();
+  const name = String(row.resourceName || row.resource_name || nameTh || nameEn || '').trim();
+  return {
+    id: cleanResourceMasterId(row.id || row.resourceMasterId || row.resource_master_id, employeeCode || name || index),
+    employeeCode,
+    resourceName: name,
+    resourceNameTh: nameTh || name,
+    resourceNameEn: nameEn,
+    nickname: String(row.nickname || '').trim(),
+    email: String(row.email || '').trim(),
+    resourceTeam: String(row.resourceTeam || row.resource_team || '').trim(),
+    position: String(row.position || '').trim(),
+    level: String(row.level || '').trim(),
+    employmentType: String(row.employmentType || row.employment_type || row.hiringType || row.hiring_type || '').trim(),
+    sourceCompany: String(row.sourceCompany || row.source_company || row.transferFrom || row.transfer_from || '').trim(),
+    currentProject: String(row.currentProject || row.current_project || row.project || '').trim(),
+    status: String(row.status || row.resourceStatus || row.resource_status || 'active').trim().toLowerCase() || 'active',
+    onboardDate: String(row.onboardDate || row.onboard_date || row.startDate || row.start_date || '').slice(0, 10),
+    offboardDate: String(row.offboardDate || row.offboard_date || row.endDate || row.end_date || '').slice(0, 10),
+    note: String(row.note || row.remark || '').trim(),
+    requestId: String(row.requestId || row.request_id || '').trim(),
+    createdAt: row.createdAt || row.created_at || new Date().toISOString(),
+    updatedAt: row.updatedAt || row.updated_at || new Date().toISOString(),
+  };
+}
+function resourceMasterFromRequest(r) {
+  const status = ['filled','mitigated'].includes(r.status) ? 'active' : ['resolved','cancelled'].includes(r.status) ? 'offboarded' : 'inactive';
+  return normalizeResourceMaster({
+    id: r.resourceMasterId || r.employeeCode || r.id,
+    employeeCode: r.employeeCode,
+    resourceName: r.resourceName,
+    resourceNameTh: r.resourceNameTh,
+    resourceNameEn: r.resourceNameEn,
+    resourceTeam: r.resourceTeam,
+    position: r.position,
+    level: r.level,
+    employmentType: r.hiringType,
+    currentProject: r.project,
+    status,
+    onboardDate: r.onboardDate || r.startDate,
+    offboardDate: r.offboardDate || r.endDate,
+    note: r.remark,
+    requestId: r.id,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  });
+}
+function resourceLikeFromMaster(m) {
+  return {
+    id: m.requestId || m.id,
+    resourceMasterId: m.id,
+    resourceTeam: m.resourceTeam,
+    project: m.currentProject,
+    position: m.position,
+    level: m.level,
+    hiringType: m.employmentType,
+    status: m.status === 'active' ? 'filled' : m.status === 'offboarded' ? 'resolved' : 'pending',
+    resourceName: m.resourceName,
+    resourceNameTh: m.resourceNameTh,
+    resourceNameEn: m.resourceNameEn,
+    employeeCode: m.employeeCode,
+    onboardDate: m.onboardDate,
+    offboardDate: m.offboardDate,
+    startDate: m.onboardDate,
+    endDate: m.offboardDate,
+    requestDate: m.onboardDate,
+    resolvedDate: m.offboardDate,
+    remark: m.note,
+    projectCodes: [],
+    allocationPercent: 100,
+    requesterName: 'Employee Master',
+    createdAt: m.createdAt,
+    updatedAt: m.updatedAt,
+  };
+}
+function loadResourceMaster() {
+  if(_resourceMasterCache) return _resourceMasterCache;
+  try {
+    const raw = JSON.parse(localStorage.getItem(RESOURCE_MASTER_KEY)||'[]');
+    _resourceMasterCache = Array.isArray(raw) ? raw.map(normalizeResourceMaster).filter(m => m.resourceName || m.employeeCode) : [];
+  } catch(e) {
+    _resourceMasterCache = [];
+  }
+  if(!_resourceMasterCache.length) {
+    _resourceMasterCache = loadResources()
+      .filter(r => employeeDirectoryName(r) || resourceEmployeeCode(r))
+      .map(resourceMasterFromRequest);
+    storeResourceMaster(_resourceMasterCache);
+  }
+  return _resourceMasterCache;
+}
+function storeResourceMaster(list) {
+  const byKey = new Map();
+  (list||[]).map(normalizeResourceMaster).filter(m => m.resourceName || m.employeeCode).forEach(m => {
+    const key = m.employeeCode ? `emp:${m.employeeCode.toLowerCase()}` : `id:${m.id}`;
+    const current = byKey.get(key);
+    if(!current || String(m.updatedAt||'') >= String(current.updatedAt||'')) byKey.set(key, m);
+  });
+  _resourceMasterCache = [...byKey.values()];
+  try { localStorage.setItem(RESOURCE_MASTER_KEY, JSON.stringify(_resourceMasterCache)); } catch(e) {}
+}
+async function loadResourceMasterAsync() {
+  if(typeof checkSupa === 'function' && await checkSupa()) {
+    try {
+      const rows = await supaFetch('resource_master','GET',null,'?order=updated_at.desc&limit=1000');
+      const remote = (rows||[]).map(normalizeResourceMaster);
+      if(remote.length) {
+        storeResourceMaster(remote);
+        return _resourceMasterCache;
+      }
+    } catch(e) { console.warn('Resource master load failed; using local copy', e.message); }
+  }
+  return loadResourceMaster();
+}
+async function saveResourceMasterAsync(data) {
+  const list = await loadResourceMasterAsync();
+  const now = new Date().toISOString();
+  const normalized = normalizeResourceMaster({ ...data, updatedAt: now });
+  const exists = list.find(m => m.id === normalized.id || (normalized.employeeCode && m.employeeCode.toLowerCase() === normalized.employeeCode.toLowerCase()));
+  const saved = { ...(exists||{}), ...normalized, createdAt: exists?.createdAt || normalized.createdAt || now, updatedAt: now };
+  storeResourceMaster(exists ? list.map(m => (m.id === exists.id ? saved : m)) : [...list, saved]);
+  if(typeof checkSupa === 'function' && await checkSupa()) {
+    try {
+      await supaFetch('resource_master','POST',{
+        id: saved.id,
+        employee_code: saved.employeeCode || null,
+        resource_name: saved.resourceName || null,
+        resource_name_th: saved.resourceNameTh || null,
+        resource_name_en: saved.resourceNameEn || null,
+        nickname: saved.nickname || null,
+        email: saved.email || null,
+        resource_team: saved.resourceTeam || null,
+        position: saved.position || null,
+        level: saved.level || null,
+        employment_type: saved.employmentType || null,
+        source_company: saved.sourceCompany || null,
+        current_project: saved.currentProject || null,
+        resource_status: ['active','inactive','offboarded'].includes(saved.status) ? saved.status : 'active',
+        onboard_date: saved.onboardDate || null,
+        offboard_date: saved.offboardDate || null,
+        note: saved.note || null,
+        created_at: saved.createdAt,
+        updated_at: saved.updatedAt,
+      },'?on_conflict=id');
+    } catch(e) { console.warn('Resource master save failed; keeping local copy', e.message); }
+  }
+  return saved;
+}
 function activeProjectCodeMaster() {
   return loadProjectCodeMaster().filter(c => String(c.status||'').toLowerCase() === 'active');
+}
+function projectCodesForProject(project) {
+  const selected = String(project || '').trim().toLowerCase();
+  return activeProjectCodeMaster().filter(c => !selected || String(c.project || '').trim().toLowerCase() === selected);
+}
+function projectCodeOptionsForProject(project, selectedCode='') {
+  const codes = projectCodesForProject(project);
+  const selected = String(selectedCode || '').trim();
+  const fallback = selected && !codes.some(c => c.code === selected)
+    ? `<option value="${esc(selected)}" selected>${esc(selected)} / Current value</option>`
+    : '';
+  return fallback + codes.map(c => `<option value="${esc(c.code)}" ${selected===c.code?'selected':''}>${esc(c.code)}${c.pmOwner?` / ${esc(c.pmOwner)}`:''}</option>`).join('');
 }
 function projectCodeByValue(code, project='') {
   const codeLower = String(code||'').trim().toLowerCase();
@@ -209,27 +441,39 @@ function projectCodeByValue(code, project='') {
   );
 }
 function currentRole() {
+  const session = typeof pmoCurrentSession === 'function' ? pmoCurrentSession() : null;
+  const sessionRole = session?.role || '';
+  if(sessionRole && resourceRoles()[sessionRole]) {
+    _role = sessionRole;
+    return _role;
+  }
   if(_role) return _role;
   try { _role = localStorage.getItem(RES_ROLE_KEY) || 'pmo'; } catch(e) { _role = 'pmo'; }
-  if(!RES_ROLES[_role]) _role = 'pmo';
+  if(!resourceRoles()[_role]) _role = 'pmo';
   return _role;
 }
 function setRole(r) {
-  if(!RES_ROLES[r]) return;
+  if(!resourceRoles()[r]) return;
   _role = r;
   try { localStorage.setItem(RES_ROLE_KEY, r); } catch(e) {}
+  if(typeof pmoSetSessionRole === 'function') pmoSetSessionRole(r);
   _resPage = 1;
   renderResource();
 }
 function currentUserProject() {
+  const session = typeof pmoCurrentSession === 'function' ? pmoCurrentSession() : null;
+  if(session?.project) {
+    _userProject = session.project;
+    return _userProject;
+  }
   if(_userProject !== null) return _userProject;
-  try { _userProject = localStorage.getItem(RES_PROJECT_KEY) || ''; } catch(e) { _userProject = ''; }
   if(!_userProject) { const p = resProjects(); _userProject = p[0] || ''; }
   return _userProject;
 }
 function setUserProject(p) {
   _userProject = p;
   try { localStorage.setItem(RES_PROJECT_KEY, p); } catch(e) {}
+  if(typeof pmoSetSessionProject === 'function') pmoSetSessionProject(p);
   _resPage = 1;
   renderResource();
 }
@@ -243,20 +487,102 @@ function setTimelineMode(mode) {
   try { localStorage.setItem(RES_TIMELINE_MODE_KEY, mode === 'all' ? 'all' : 'project-code'); } catch(e) {}
   renderResource();
 }
+
+function resourceSettings() {
+  const s = typeof loadSettings === 'function' ? loadSettings() : null;
+  return s?.resource || null;
+}
+function resourceRoles() {
+  const configured = resourceSettings()?.roles;
+  if(configured) {
+    const next = typeof structuredClone === 'function' ? structuredClone(configured) : JSON.parse(JSON.stringify(configured));
+    if(next.bbik) {
+      next.bbik.transitions = { ...(next.bbik.transitions || {}), offer:['filled'], document:[] };
+      next.bbik.tabs = (next.bbik.tabs || ['request']).filter(tab => tab !== 'dashboard');
+    }
+    if(next.user) next.user.tabs = (next.user.tabs || ['request']).filter(tab => tab !== 'dashboard');
+    if(next.pmo) next.pmo.tabs = (next.pmo.tabs || ['request','people','timeline','transfer','code']).filter(tab => tab !== 'dashboard');
+    return next;
+  }
+  if(window.PMO_RESOURCE_FLOW?.createDefaultResourceRoles) {
+    return window.PMO_RESOURCE_FLOW.createDefaultResourceRoles(RES_ROLES);
+  }
+  return Object.fromEntries(Object.entries(RES_ROLES).map(([key, label]) => [key, {
+    label,
+    note: '',
+    scope: key === 'user' ? 'selected-project' : key === 'bbik' ? 'bbik-pipeline' : 'all',
+    tabs: key === 'bbik' || key === 'user' ? ['request'] : ['request','people','timeline','transfer','code'],
+    permissions: {
+      createRequest: key === 'user' || key === 'pmo',
+      editPending: key === 'user' || key === 'pmo',
+      cancelPending: key === 'user' || key === 'pmo',
+      resolveFilled: key === 'user' || key === 'pmo',
+      approve: key === 'pmo',
+      recruit: key === 'bbik',
+      transfer: key === 'pmo',
+      projectCode: key === 'pmo',
+      offboard: key === 'pmo',
+      deleteRequest: key === 'pmo',
+      importEmployees: key === 'pmo',
+      importProjectCodes: key === 'pmo',
+    },
+    transitions: Object.fromEntries(Object.entries(STATUS_FLOW).map(([status, byRole]) => [status, byRole[key] || []])),
+  }]));
+}
+function roleConfig(role=currentRole()) {
+  return resourceRoles()[role] || resourceRoles().pmo || { label: RES_ROLES[role] || role, permissions: {}, transitions: {}, tabs: ['request'], scope: 'all' };
+}
+function roleLabel(role=currentRole()) {
+  return roleConfig(role).label || RES_ROLES[role] || role;
+}
+function hasRolePermission(role, permission) {
+  return !!roleConfig(role).permissions?.[permission];
+}
+function canViewResourceTab(role, tab) {
+  const tabs = roleConfig(role).tabs || ['request'];
+  return tabs.includes(tab);
+}
 // Allowed next statuses for a given (status, role)
 function allowedNext(status, role) {
-  if(role === 'pmo') return Object.keys(RES_STATUS).filter(s => s !== status); // unlock-all
-  const map = STATUS_FLOW[status] || {};
-  return map[role] ? [...map[role]] : [];
+  if(window.PMO_RESOURCE_FLOW?.allowedNext) {
+    return window.PMO_RESOURCE_FLOW.allowedNext(status, role, resourceRoles(), STATUS_FLOW, !!resourceSettings(), Object.keys(RES_STATUS));
+  }
+  const map = roleConfig(role).transitions || STATUS_FLOW[status] || {};
+  if(Array.isArray(map[status])) return [...map[status]].filter(next => canUseStatusTransition(role, status, next));
+  if(role === 'pmo' && !resourceSettings()) return Object.keys(RES_STATUS).filter(s => s !== status);
+  const legacyMap = STATUS_FLOW[status] || {};
+  if(!resourceSettings()) return legacyMap[role] ? [...legacyMap[role]].filter(next => canUseStatusTransition(role, status, next)) : [];
+  return [];
 }
-function canManageRequest(role) { return role === 'user' || role === 'pmo'; } // create/edit request
-function canApprove(role)       { return role === 'pmo'; }                     // approve pending
-function canRecruit(role)       { return role === 'bbik'; }                    // accept + run pipeline
-function canInternalOps(role)   { return role === 'user' || role === 'pmo'; }  // transfer / add-code
-function canDelete(role)        { return role === 'pmo'; }                     // hard delete
+function canManageRequest(role) { return hasRolePermission(role, 'createRequest') || hasRolePermission(role, 'editPending'); }
+function canEditPending(role)    { return hasRolePermission(role, 'editPending'); }
+function canApprove(role)        { return hasRolePermission(role, 'approve'); }
+function canRecruit(role)        { return hasRolePermission(role, 'recruit'); }
+function canInternalOps(role)    { return hasRolePermission(role, 'transfer') || hasRolePermission(role, 'projectCode'); }
+function canTransfer(role)       { return hasRolePermission(role, 'transfer'); }
+function canProjectCode(role)    { return hasRolePermission(role, 'projectCode'); }
+function canOffboard(role)       { return hasRolePermission(role, 'offboard'); }
+function canDelete(role)         { return hasRolePermission(role, 'deleteRequest'); }
+function canImportEmployees(role){ return hasRolePermission(role, 'importEmployees'); }
+function canImportProjectCodes(role){ return hasRolePermission(role, 'importProjectCodes'); }
+function canUseStatusTransition(role, fromStatus, toStatus) {
+  if(window.PMO_RESOURCE_FLOW?.canUseStatusTransition) {
+    return window.PMO_RESOURCE_FLOW.canUseStatusTransition(resourceRoles(), role, fromStatus, toStatus);
+  }
+  if(toStatus === 'approved') return canApprove(role);
+  if(['sourcing','interviewing','offer'].includes(toStatus)) return canRecruit(role);
+  if(toStatus === 'filled') return canApprove(role) || hasRolePermission(role, 'resolveFilled') || (fromStatus === 'offer' && canRecruit(role));
+  if(toStatus === 'resolved') return hasRolePermission(role, 'resolveFilled');
+  if(toStatus === 'cancelled') return hasRolePermission(role, 'cancelPending') || canApprove(role);
+  return true;
+}
 function isTransfer(r)          { return !!r.transferFrom; }
 function isRequestRecord(r) {
   return !isTransfer(r) && r.requesterName !== 'Employee Import';
+}
+function _legacyAllowedNext(status, role) {
+  const map = STATUS_FLOW[status] || {};
+  return map[role] ? [...map[role]] : [];
 }
 
 function clampAlloc(n) {
@@ -280,6 +606,7 @@ function resourceEmployeeCode(r) {
   return (r.employeeCode || '').trim();
 }
 function hiringKind(value) {
+  if(window.PMO_RESOURCE_FLOW?.hiringKind) return window.PMO_RESOURCE_FLOW.hiringKind(value);
   const raw = String(value || '').toLowerCase();
   if(raw.includes('secondment')) return 'secondment';
   if(raw.includes('sub-contract') || raw.includes('sub con') || raw.includes('subcon')) return 'subcon';
@@ -291,6 +618,26 @@ function hiringMeta(value) {
 function isFixedTermHiring(value) {
   return !!hiringMeta(value).fixedTerm;
 }
+function resourceEndDate(r) {
+  return isFixedTermHiring(r?.hiringType) ? (r?.endDate || '') : '';
+}
+function requiresPreApprovalDocs(value) {
+  if(window.PMO_RESOURCE_FLOW?.requiresPreApprovalDocs) return window.PMO_RESOURCE_FLOW.requiresPreApprovalDocs(value);
+  return ['direct', 'secondment'].includes(hiringKind(value));
+}
+function allowedNextForRecord(record, role) {
+  if(window.PMO_RESOURCE_FLOW?.allowedNextForRecord) {
+    return window.PMO_RESOURCE_FLOW.allowedNextForRecord(record, role, resourceRoles(), {
+      statusFlow: STATUS_FLOW,
+      hasSettings: !!resourceSettings(),
+      allStatuses: Object.keys(RES_STATUS),
+    });
+  }
+  const nexts = allowedNext(record?.status, role);
+  if(!record || record.status !== 'pending') return nexts;
+  const needsDocs = requiresPreApprovalDocs(record.hiringType);
+  return nexts.filter(next => needsDocs ? next !== 'approved' : next !== 'pendingDocs');
+}
 function primaryAllocation(r) {
   const explicit = clampAlloc(r.allocationPercent);
   if(explicit > 0) return explicit;
@@ -301,6 +648,11 @@ function primaryProjectCode(r) {
 }
 function isActiveResource(r) {
   return r.status === 'filled';
+}
+function requiresCancelReason(toStatus) {
+  return typeof PMO_RESOURCE_FLOW !== 'undefined' && PMO_RESOURCE_FLOW.requiresCancelReason
+    ? PMO_RESOURCE_FLOW.requiresCancelReason(toStatus)
+    : toStatus === 'cancelled';
 }
 function transferFromProject(r, list) {
   const sourceId = String(r.transferFrom || '');
@@ -362,7 +714,7 @@ function movementRows(list) {
       from: l.from || '',
       to: l.to || '',
       by: l.by || 'System',
-      remark: l.remark || '',
+      remark: [l.cancelReason ? `Cancel: ${l.cancelReason}` : '', l.remark || ''].filter(Boolean).join(' / '),
       requestId: r.id,
     }));
     if(!logs.length) logs.push({
@@ -516,10 +868,36 @@ function timelineItemWindow(groups) {
 }
 
 
+function timelineYearWindow(year = _resTimelineYear) {
+  const y = Number(year) || new Date().getFullYear();
+  return { start: new Date(y, 0, 1), end: new Date(y, 11, 31) };
+}
+
+function timelineItemOverlapsWindow(item, start, end) {
+  const itemStart = parseDay(item.startDate);
+  const itemEnd = parseDay(item.endDate) || end;
+  if(!itemStart) return false;
+  return itemStart <= end && itemEnd >= start;
+}
+
+function shiftResourceTimelineYear(delta) {
+  _resTimelineYear += Number(delta) || 0;
+  renderTimelineView(visibleToRole(loadResources(), currentRole()));
+}
+
+function resetResourceTimelineYear() {
+  _resTimelineYear = new Date().getFullYear();
+  renderTimelineView(visibleToRole(loadResources(), currentRole()));
+}
+
 function visibleToRole(list, role) {
-  if(role === 'bbik') return list.filter(r => BBIK_VISIBLE.includes(r.status));
-  if(role === 'user') { const p = currentUserProject(); return p ? list.filter(r => r.project === p) : list; }
-  return list; // pmo
+  if(window.PMO_RESOURCE_FLOW?.visibleToRole) {
+    return window.PMO_RESOURCE_FLOW.visibleToRole(list, role, resourceRoles(), currentUserProject());
+  }
+  const scope = roleConfig(role).scope;
+  if(scope === 'bbik-pipeline') return list.filter(r => BBIK_VISIBLE.includes(r.status));
+  if(scope === 'selected-project') { const p = currentUserProject(); return p ? list.filter(r => r.project === p) : list; }
+  return list;
 }
 
 
@@ -545,7 +923,9 @@ async function loadResourcesAsync() {
         hiringType: r.hiring_type, startDate: r.start_date, endDate: r.end_date,
         requestDate: r.request_date, resolvedDate: r.resolved_date,
         remark: r.remark, status: r.status, requesterName: r.requester_name,
+        cancelReason: r.cancel_reason,
         transferFrom: r.transfer_from, projectCodes: r.project_codes||[],
+        resourceMasterId: r.resource_master_id,
         resourceName: r.resource_name, resourceNameTh: r.resource_name_th, resourceNameEn: r.resource_name_en, employeeCode: r.employee_code,
         primaryProjectCode: r.primary_project_code, allocationPercent: r.allocation_percent,
         onboardDate: r.onboard_date, offboardDate: r.offboard_date,
@@ -566,24 +946,47 @@ async function saveResourceAsync(data) {
   const now = new Date().toISOString();
   const isNew = !list.find(r => r.id === data.id);
   const saved = { ...data, updatedAt: now, createdAt: isNew ? now : (list.find(r=>r.id===data.id)?.createdAt||now) };
+  if((employeeDirectoryName(saved) || resourceEmployeeCode(saved)) && ['filled','resolved','mitigated'].includes(saved.status)) {
+    const master = await saveResourceMasterAsync(resourceMasterFromRequest(saved));
+    saved.resourceMasterId = master.id;
+  }
   _resCache = isNew ? [...list, saved] : list.map(r => r.id===data.id ? saved : r);
   storeResources(_resCache);
   if(typeof checkSupa === 'function' && await checkSupa()) {
     try {
-      await supaFetch('resource_requests','POST',{
+      const payload = {
         id: saved.id, resource_team: saved.resourceTeam, project: saved.project,
         position: saved.position, level: saved.level, hc: saved.hc,
         hiring_type: saved.hiringType, start_date: saved.startDate, end_date: saved.endDate||null,
         request_date: saved.requestDate, resolved_date: saved.resolvedDate||null,
         remark: saved.remark, status: saved.status, requester_name: saved.requesterName,
+        cancel_reason: saved.cancelReason||null,
         transfer_from: saved.transferFrom||null, project_codes: saved.projectCodes||[],
+        resource_master_id: saved.resourceMasterId||null,
         resource_name: saved.resourceName||null, resource_name_th: saved.resourceNameTh||null, resource_name_en: saved.resourceNameEn||null, employee_code: saved.employeeCode||null,
         primary_project_code: saved.primaryProjectCode||null,
         allocation_percent: saved.allocationPercent == null ? null : clampAlloc(saved.allocationPercent),
         onboard_date: saved.onboardDate||null, offboard_date: saved.offboardDate||null,
         activity_log: saved.activityLog||[],
         created_at: saved.createdAt, updated_at: saved.updatedAt,
-      },'?on_conflict=id');
+      };
+      for(;;) {
+        try {
+          await supaFetch('resource_requests','POST', payload, '?on_conflict=id');
+          break;
+        } catch(e) {
+          const msg = String(e.message || '');
+          if(msg.includes('resource_master_id') && Object.prototype.hasOwnProperty.call(payload, 'resource_master_id')) {
+            delete payload.resource_master_id;
+            continue;
+          }
+          if(msg.includes('cancel_reason') && Object.prototype.hasOwnProperty.call(payload, 'cancel_reason')) {
+            delete payload.cancel_reason;
+            continue;
+          }
+          throw e;
+        }
+      }
     } catch(e) {
       console.warn('Resource save failed; keeping local copy', e.message);
       const localSaved = { ...saved, localOnly: true, syncError: e.message };
@@ -620,6 +1023,70 @@ function showRequestId() {
 }
 function setShowRequestId(v) { _showIdOverride = (v===null ? null : !!v); renderResource(); }
 
+function resourceRowNoConfig() {
+  const s = typeof loadSettings === 'function' ? loadSettings() : null;
+  const pattern = String(s?.resource?.rowNoFormat || '{00}').trim() || '{00}';
+  const rawStart = Number(s?.resource?.rowNoStart);
+  const start = Number.isFinite(rawStart) && rawStart > 0 ? Math.floor(rawStart) : 1;
+  return { pattern, start };
+}
+
+function formatResourceRowNo(index) {
+  const { pattern, start } = resourceRowNoConfig();
+  const n = start + Math.max(0, Number(index) || 0);
+  let usedToken = false;
+  const formatted = pattern.replace(/\{(0+|n)\}/i, (_, token) => {
+    usedToken = true;
+    return token.toLowerCase() === 'n' ? String(n) : String(n).padStart(token.length, '0');
+  });
+  return usedToken ? formatted : `${pattern}${n}`;
+}
+
+function employeeCodeFormatConfig(hiringType) {
+  const kind = hiringKind(hiringType);
+  if(kind === 'subcon') return null;
+  const s = typeof loadSettings === 'function' ? loadSettings() : null;
+  const cfg = s?.resource?.employeeCodeFormats?.[kind];
+  if(!cfg) return null;
+  return {
+    kind,
+    format: String(cfg.format || (kind === 'secondment' ? 'SEC-{000}' : 'DHC-{000}')).trim(),
+    start: Math.max(1, Math.floor(Number(cfg.start || 1))),
+  };
+}
+
+function formatEmployeeCode(format, n) {
+  const now = new Date();
+  return String(format || '{000}')
+    .replace(/\{YYYY\}/g, String(now.getFullYear()))
+    .replace(/\{YY\}/g, String(now.getFullYear()).slice(-2))
+    .replace(/\{(0+|n)\}/i, (_, token) => token.toLowerCase() === 'n' ? String(n) : String(n).padStart(token.length, '0'));
+}
+
+function nextEmployeeCode(hiringType) {
+  const cfg = employeeCodeFormatConfig(hiringType);
+  if(!cfg) return '';
+  const existing = [...loadResources(), ...loadResourceMaster()]
+    .map(r => resourceEmployeeCode(r) || r.employeeCode || '')
+    .filter(Boolean);
+  let n = cfg.start;
+  let code = formatEmployeeCode(cfg.format, n);
+  const seen = new Set(existing.map(x => x.toLowerCase()));
+  while(seen.has(code.toLowerCase())) {
+    n += 1;
+    code = formatEmployeeCode(cfg.format, n);
+  }
+  return code;
+}
+
+function generateEmployeeCode(targetId='rf-employee-code', hiringId='rf-hiring') {
+  const input = document.getElementById(targetId);
+  const hiring = document.getElementById(hiringId)?.value || '';
+  const code = nextEmployeeCode(hiring);
+  if(!input || !code) return;
+  input.value = code;
+}
+
 
 // â”€â”€ Main render â”€â”€
 let _resPage = 1;
@@ -628,6 +1095,7 @@ let _resSortCol = 'requestDate';
 let _resSortAsc = false;
 let _resTab  = 'request';   // request | people | timeline | allocation | transfer | code | movement
 let _resView = 'all';       // chip key (request tab)
+let _resTimelineYear = new Date().getFullYear();
 
 
 // â”€â”€ Table columns (config-driven: à¸«à¸±à¸§à¸•à¸²à¸£à¸²à¸‡ + à¹à¸–à¸§ à¹ƒà¸Šà¹‰à¸•à¸±à¸§à¹€à¸”à¸µà¸¢à¸§à¸à¸±à¸™) â”€â”€
@@ -637,13 +1105,13 @@ function resColumns() {
   if(showRequestId()) C.push({ key:'id', label:'ID', th:'padding-left:12px',
     cell:r=>`<span style="font-family:monospace;font-size:11px;color:var(--text-3)">${esc(r.id)}</span>` });
   C.push(
-    { key:'team',     label:'Resource Team', cell:r=>esc(r.resourceTeam) },
-    { key:'project',  label:'Project', cell:r=>`<span style="font-weight:500">${esc(r.project)}</span>${(r.projectCodes||[]).length?` <span class="badge badge-teal" style="font-size:9px">+${(r.projectCodes||[]).length} code</span>`:''}${isTransfer(r)?` <span class="badge badge-blue" style="font-size:9px">transfer</span>`:''}` },
+    { key:'no',       label:'No.', th:'padding-left:12px;width:86px', td:'padding-left:12px', cell:(r, ctx)=>`<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-2);font-weight:700">${esc(formatResourceRowNo(ctx?.index || 0))}</span>` },
+    { key:'project',  label:'Project', cell:r=>`${projectPill(r.project)}${(r.projectCodes||[]).length?` <span class="badge badge-teal" style="font-size:9px">+${(r.projectCodes||[]).length} code</span>`:''}${isTransfer(r)?` <span class="badge badge-blue" style="font-size:9px">transfer</span>`:''}` },
     { key:'position', label:'Position', cell:r=>esc(r.position) },
     { key:'level',    label:'Level', cell:r=>`<span class="badge badge-gray" style="font-size:10px">${esc(r.level)}</span>` },
     { key:'hiring',   label:'Employment Type', cell:r=>{ const m=hiringMeta(r.hiringType); return `<span class="badge ${m.cls}" style="font-size:9px">${esc(m.label)}</span>`; } },
     { key:'start',    label:'Start', cell:r=>`<span style="font-size:11px">${r.startDate?shortDate(r.startDate):'-'}</span>` },
-    { key:'end',      label:'End', cell:r=>`<span style="font-size:11px">${r.endDate?shortDate(r.endDate):'-'}</span>` },
+    { key:'end',      label:'End', cell:r=>`<span style="font-size:11px">${resourceEndDate(r)?shortDate(resourceEndDate(r)):'-'}</span>` },
     { key:'reqdate',  label:'Request Date', cell:r=>`<span style="font-size:11px">${r.requestDate?shortDate(r.requestDate):'-'}</span>` },
     { key:'resolved', label:'Resolved', cell:r=>`<span style="font-size:11px">${r.resolvedDate?shortDate(r.resolvedDate):'-'}</span>` },
     { key:'updated',  label:'Updated', cell:r=>`<span style="font-size:11px;color:var(--text-3)">${r.updatedAt?shortDate(String(r.updatedAt).slice(0,10)):'-'}</span>` },
@@ -656,8 +1124,13 @@ function resColumns() {
 
 async function renderResource() {
   ensureResChrome();
-  const all = await loadResourcesAsync();
+  const [all] = await Promise.all([loadResourcesAsync(), loadResourceMasterAsync()]);
   _renderResourceUI(all);
+}
+
+function renderResourceSearch() {
+  _resPage = 1;
+  _renderResourceUI(loadResources(), { preserveResourceFilters: true, suppressRowEnter: true });
 }
 
 
@@ -665,64 +1138,295 @@ function setResTab(t)  { _resTab = t; _resPage = 1; _renderResourceUI(loadResour
 function setResView(v) { _resView = v; _resPage = 1; _renderResourceUI(loadResources()); }
 
 
+const RES_FILTER_STATE = { status:[], hiring:[], project:[], level:[] };
+
+function resourceFilterDefinitions(scoped) {
+  const projects = knownResourceProjects(scoped).sort((a,b)=>a.localeCompare(b));
+  const levels = [...new Set([...resourceLevels(), ...scoped.map(r => r.level)].filter(Boolean))];
+  return {
+    status: {
+      label: 'Status',
+      options: RES_VIEWS.filter(v => v.key !== 'all').map(v => ({ value:v.key, label:v.label, match:v.match })),
+    },
+    hiring: {
+      label: 'Hiring Type',
+      options: Object.entries(HIRING_TYPE_META).map(([value, meta]) => ({ value, label:meta.label, match:r=>hiringKind(r.hiringType) === value })),
+    },
+    project: {
+      label: 'Project',
+      options: projects.map(value => ({ value, label:value, match:r=>r.project === value })),
+    },
+    level: {
+      label: 'Level',
+      options: levels.map(value => ({ value, label:value, match:r=>r.level === value })),
+    },
+  };
+}
+
+function resourceFilterSelected(kind) {
+  return RES_FILTER_STATE[kind] || [];
+}
+
+function resourceFilterSummary(kind, def) {
+  const selected = resourceFilterSelected(kind);
+  return selected.length ? `${def.label} ${selected.length} selected` : `${def.label} All`;
+}
+
+function closeResourceFilterMenus() {
+  document.querySelectorAll('.res-filter-menu.open').forEach(el => el.classList.remove('open'));
+}
+
+function keepResourceFilterMenuOpen(kind) {
+  const menu = document.querySelector(`.res-filter-menu[data-kind="${kind}"]`);
+  if(menu) menu.classList.add('open');
+}
+
+function refreshResourceDropdownFilters(scoped) {
+  const el = document.getElementById('res-filter-dropdowns');
+  if(!el || !el.children.length) return renderResourceDropdownFilters(scoped);
+  const defs = resourceFilterDefinitions(scoped);
+  Object.entries(defs).forEach(([kind, def]) => {
+    const menu = el.querySelector(`.res-filter-menu[data-kind="${kind}"]`);
+    if(!menu) return;
+    const selected = new Set(resourceFilterSelected(kind).map(String));
+    const summary = menu.querySelector('.res-filter-trigger span');
+    const clearIcon = menu.querySelector('.res-filter-trigger b');
+    if(summary) summary.textContent = resourceFilterSummary(kind, def);
+    if(clearIcon) {
+      clearIcon.innerHTML = selected.size ? '&times;' : '&#9662;';
+      clearIcon.setAttribute('onclick', selected.size ? `event.stopPropagation();clearResourceFilter('${kind}')` : '');
+    }
+    const counts = new Map(def.options.map(opt => [String(opt.value), scoped.filter(opt.match).length]));
+    menu.querySelectorAll('input[type="checkbox"][data-value]').forEach(input => {
+      input.checked = selected.has(input.dataset.value);
+      const countEl = input.closest('.res-filter-option')?.querySelector('em');
+      if(countEl && counts.has(input.dataset.value)) countEl.textContent = counts.get(input.dataset.value);
+    });
+  });
+  return defs;
+}
+
+function animateResourceFilterOption(input) {
+  const option = input?.closest?.('.res-filter-option');
+  if(!option) return;
+  option.classList.remove('is-toggled');
+  void option.offsetWidth;
+  option.classList.add('is-toggled');
+  window.setTimeout(() => option.classList.remove('is-toggled'), 320);
+}
+
+function toggleResourceFilterMenu(kind, ev) {
+  ev?.stopPropagation();
+  const menu = document.querySelector(`.res-filter-menu[data-kind="${kind}"]`);
+  const open = menu?.classList.contains('open');
+  closeResourceFilterMenus();
+  if(menu && !open) menu.classList.add('open');
+}
+
+function setResourceFilter(kind, value, checked, input) {
+  const set = new Set(resourceFilterSelected(kind));
+  checked ? set.add(value) : set.delete(value);
+  RES_FILTER_STATE[kind] = [...set];
+  _resPage = 1;
+  _renderResourceUI(loadResources(), { preserveResourceFilters: true });
+  keepResourceFilterMenuOpen(kind);
+  animateResourceFilterOption(input);
+}
+
+function clearResourceFilter(kind) {
+  RES_FILTER_STATE[kind] = [];
+  _resPage = 1;
+  _renderResourceUI(loadResources(), { preserveResourceFilters: true });
+  keepResourceFilterMenuOpen(kind);
+}
+
+function selectAllResourceFilter(kind, values) {
+  RES_FILTER_STATE[kind] = [...values];
+  _resPage = 1;
+  _renderResourceUI(loadResources(), { preserveResourceFilters: true });
+  keepResourceFilterMenuOpen(kind);
+}
+
+function applyResourceDropdownFilters(list, defs) {
+  return Object.entries(defs).reduce((rows, [kind, def]) => {
+    const selected = new Set(resourceFilterSelected(kind));
+    if(!selected.size) return rows;
+    return rows.filter(r => def.options.some(opt => selected.has(opt.value) && opt.match(r)));
+  }, list);
+}
+
+function renderResourceDropdownFilters(scoped) {
+  const el = document.getElementById('res-filter-dropdowns');
+  if(!el) return {};
+  const defs = resourceFilterDefinitions(scoped);
+  el.innerHTML = Object.entries(defs).map(([kind, def]) => {
+    const selected = new Set(resourceFilterSelected(kind));
+    const values = def.options.map(o => o.value);
+    const rows = def.options.map(opt => {
+      const count = scoped.filter(opt.match).length;
+      const on = selected.has(opt.value);
+      const safeValue = esc(JSON.stringify(String(opt.value)));
+      return `
+        <label class="res-filter-option">
+          <input type="checkbox" data-value="${esc(String(opt.value))}" ${on?'checked':''} onchange="setResourceFilter('${kind}', ${safeValue}, this.checked, this)">
+          <span>${esc(opt.label)}</span>
+          <em>${count}</em>
+        </label>`;
+    }).join('');
+    const safeValues = esc(JSON.stringify(values));
+    return `
+      <div class="res-filter-menu" data-kind="${kind}" onclick="event.stopPropagation()">
+        <button class="res-filter-trigger" onclick="toggleResourceFilterMenu('${kind}', event)" type="button">
+          <span>${esc(resourceFilterSummary(kind, def))}</span>
+          <b onclick="${selected.size ? `event.stopPropagation();clearResourceFilter('${kind}')` : ''}">${selected.size ? '&times;' : '&#9662;'}</b>
+        </button>
+        <div class="res-filter-popover">
+          <div class="res-filter-actions">
+            <button type="button" onclick="selectAllResourceFilter('${kind}', ${safeValues})">Select all</button>
+            <button type="button" onclick="clearResourceFilter('${kind}')">Clear</button>
+          </div>
+          <div class="res-filter-options">${rows || '<div class="res-filter-empty">No values</div>'}</div>
+        </div>
+      </div>`;
+  }).join('');
+  return defs;
+}
+
+
 function ensureResChrome() {
   if(document.getElementById('res-chrome')) return;
   const view = document.getElementById('view-resource');
   if(!view) return;
+  if(!window.__resourceTimelineShiftWheelBound) {
+    window.__resourceTimelineShiftWheelBound = true;
+    document.addEventListener('wheel', event => {
+      const wrap = event.target?.closest?.('.res-timeline-wrap');
+      if(!wrap || !event.shiftKey) return;
+      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      if(!delta) return;
+      event.preventDefault();
+      wrap.scrollLeft += delta;
+    }, { passive:false });
+  }
   if(!document.getElementById('res-timeline-style')) {
     const st = document.createElement('style');
     st.id = 'res-timeline-style';
     st.textContent = `
-      .res-timeline-wrap{overflow:auto;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);max-height:calc(100vh - 300px)}
-      .res-timeline-head,.res-timeline-row{display:flex;min-width:max-content}
+      .res-timeline-cell{display:block;width:100%;max-width:100%;padding:0!important;border-bottom:none!important;overflow:hidden;--timeline-person-width:190px;--timeline-grid-min-width:864px}
+      .res-timeline-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) minmax(320px,auto);align-items:end;gap:12px;margin-bottom:10px}
+      .res-timeline-toolbar-title{font-size:13px;font-weight:800;color:var(--text)}
+      .res-timeline-toolbar-note{font-size:11px;color:var(--text-3);line-height:1.35;margin-top:2px}
+      .res-timeline-toolbar-controls{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:10px;align-items:center;justify-self:end}
+      .res-timeline-toolbar-select{width:100%;min-width:220px;font-size:11px;padding:5px 8px}
+      .res-timeline-legend{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+      .res-timeline-table,.res-timeline-table tbody,.res-timeline-table tbody>tr{display:block!important;width:100%!important;max-width:100%!important}
+      .res-timeline-wrap{width:100%;max-width:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);max-height:calc(100vh - 300px);overscroll-behavior-x:contain;touch-action:pan-x pan-y}
+      .res-timeline-head,.res-timeline-row{display:flex;width:100%;min-width:calc(var(--timeline-person-width) + var(--timeline-grid-min-width))}
       .res-timeline-head{position:sticky;top:0;z-index:3;background:var(--surface);border-bottom:1px solid var(--border)}
-      .res-timeline-person{width:260px;min-width:260px;padding:10px 12px;border-right:1px solid var(--border);background:var(--surface);position:sticky;left:0;z-index:2}
-      .res-timeline-head-left{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.6px;z-index:4}
-      .res-timeline-months{display:flex;min-height:32px;background:var(--surface)}
-      .res-timeline-track{position:relative;min-height:58px;background-image:linear-gradient(to right,var(--border) 1px,transparent 1px);background-color:var(--surface-2,var(--bg))}
+      .res-timeline-person{width:var(--timeline-person-width);min-width:var(--timeline-person-width);padding:6px 9px;border-right:1px solid var(--border);background:var(--surface);position:sticky;left:0;z-index:2}
+      .res-timeline-head-left{font-size:9px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;z-index:4}
+      .res-timeline-months{display:grid;grid-template-columns:repeat(var(--timeline-month-count),minmax(0,1fr));min-height:24px;background:var(--surface);min-width:var(--timeline-grid-min-width);flex:1 0 var(--timeline-grid-min-width)}
+      .res-timeline-month{border-left:1px solid var(--border);padding:4px 3px;text-align:center;font-size:9px;font-weight:800;color:var(--text-2);text-transform:uppercase;line-height:1.1}
+      .res-timeline-track{position:relative;min-height:38px;background-image:linear-gradient(to right,var(--border) 1px,transparent 1px);background-color:var(--surface-2,var(--bg));min-width:var(--timeline-grid-min-width);flex:1 0 var(--timeline-grid-min-width)}
       .res-timeline-row{border-bottom:1px solid var(--border)}
       .res-timeline-row:last-child{border-bottom:none}
-      .res-timeline-bar{position:absolute;top:10px;height:28px;border:none;border-radius:6px;color:white;text-align:left;padding:4px 8px;overflow:hidden;cursor:pointer;box-shadow:0 4px 12px rgba(15,23,42,.12)}
-      .res-timeline-bar span{display:block;font-size:11px;font-weight:800;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .res-timeline-bar small{display:block;font-size:9px;line-height:1.2;margin-top:3px;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      @media (max-width:820px){.res-timeline-person{width:210px;min-width:210px}.res-timeline-wrap{max-height:none}}
+      .res-timeline-bar{position:absolute;top:7px;height:22px;border:none;border-radius:5px;color:white;text-align:left;padding:3px 5px;overflow:hidden;cursor:pointer;box-shadow:0 2px 8px rgba(15,23,42,.12)}
+      .res-timeline-bar span{display:block;font-size:9px;font-weight:800;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .res-timeline-bar small{display:block;font-size:8px;line-height:1.1;margin-top:2px;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .res-timeline-person-name{font-size:11px;font-weight:800;color:var(--text);line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .res-timeline-person-meta{font-size:9px;color:var(--text-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .res-timeline-person-badge{margin-top:3px}.res-timeline-person-badge .badge{font-size:8px;padding:2px 6px}
+      .res-timeline-tools{display:flex;align-items:center;gap:6px}.res-timeline-scroll-btn{height:28px;min-width:30px;padding:0 9px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface);color:var(--text);font-family:inherit;font-size:12px;font-weight:800;cursor:pointer}.res-timeline-scroll-btn:hover{border-color:var(--blue);color:var(--blue);background:var(--blue-50)}
+      .res-request-filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 10px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm)}
+      .res-request-filters-title{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap}
+      #res-filter-dropdowns{display:flex;gap:6px;flex-wrap:wrap}
+      .res-filter-menu{position:relative}
+      .res-filter-trigger{display:inline-flex;align-items:center;justify-content:space-between;gap:10px;min-width:126px;height:34px;padding:0 9px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface);color:var(--text);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer}
+      .res-filter-trigger span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .res-filter-trigger b{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--text-3);font-size:13px;line-height:1}
+      .res-filter-menu.open .res-filter-trigger{border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 14%,transparent)}
+      .res-filter-popover{display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:45;width:232px;max-width:78vw;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);box-shadow:0 14px 34px rgba(15,23,42,.18);overflow:hidden}
+      .res-filter-menu.open .res-filter-popover{display:block}
+      .res-filter-actions{display:flex;align-items:center;justify-content:space-between;padding:8px 9px;border-bottom:1px solid var(--border);background:var(--bg)}
+      .res-filter-actions button{border:0;background:transparent;color:var(--blue);font-family:inherit;font-size:11px;font-weight:800;cursor:pointer}
+      .res-filter-options{max-height:246px;overflow:auto;padding:5px}
+      .res-filter-option{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:7px;padding:7px;border-radius:6px;font-size:12px;cursor:pointer;transition:background .16s ease,transform .16s ease,color .16s ease}
+      .res-filter-option:hover{background:var(--bg);transform:translateY(-1px)}
+      .res-filter-option.is-toggled{animation:res-filter-tick .3s cubic-bezier(.2,.8,.2,1)}
+      .res-filter-option input{width:14px;height:14px;accent-color:var(--blue);transition:transform .16s ease,box-shadow .18s ease}
+      .res-filter-option input:checked{transform:scale(1.08);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 16%,transparent)}
+      .res-filter-option span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .res-filter-option em{font-style:normal;color:var(--text-3);font-size:11px}
+      .res-filter-empty{padding:12px;color:var(--text-3);font-size:12px;text-align:center}
+      @keyframes res-filter-tick{0%{transform:scale(.985);background:color-mix(in srgb,var(--blue) 10%,transparent)}55%{transform:scale(1.018);background:color-mix(in srgb,var(--blue) 14%,transparent)}100%{transform:scale(1);background:transparent}}
+      #view-resource{background:color-mix(in srgb,var(--surface) 96%,transparent);border:1px solid var(--border-md);border-radius:8px;padding:0 12px 12px;box-shadow:0 14px 42px rgba(0,0,0,.12);overflow:visible}
+      #res-chrome{margin:0 -12px 12px;padding:0;background:color-mix(in srgb,var(--surface-2) 84%,var(--surface));border-bottom:1px solid var(--border-md);border-radius:8px 8px 0 0}
+      #res-session-panel{position:relative;margin:0;padding:0;background:transparent;border:0;box-shadow:none;overflow-x:auto}
+      .res-basebar{display:flex;align-items:flex-end;gap:2px;min-height:40px;padding:0;white-space:nowrap}
+      #res-tab-bar{display:flex;align-items:flex-end;gap:0;min-width:0}
+      .res-tab{height:40px;padding:0 15px!important;border:1px solid transparent!important;border-bottom:0!important;border-radius:7px 7px 0 0!important;background:rgba(148,163,184,.10)!important;color:color-mix(in srgb,var(--text-2) 66%,transparent)!important;font-size:12px;font-weight:800!important;box-shadow:none!important;position:relative;opacity:.68}
+      .res-tab:first-child{border-top-left-radius:8px!important}
+      .res-tab:hover{background:rgba(148,163,184,.18)!important;color:var(--text)!important;opacity:1}
+      .res-tab.is-active{background:#fff!important;color:#0f172a!important;border-color:rgba(255,255,255,.92)!important;box-shadow:0 -1px 0 #fff inset,0 -2px 0 var(--blue),0 8px 20px rgba(0,0,0,.18)!important;opacity:1}
+      .res-tab.is-active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;background:#fff}
+      :root:not([data-theme="dark"]) .res-tab.is-active{background:#fff!important;color:#111827!important}
+      :root[data-theme="dark"] #res-chrome{background:#151515;border-bottom-color:rgba(255,255,255,.16)}
+      :root[data-theme="dark"] .res-tab{background:rgba(255,255,255,.055)!important;color:rgba(244,244,245,.58)!important}
+      :root[data-theme="dark"] .res-tab:hover{background:rgba(255,255,255,.11)!important;color:#fff!important}
+      :root[data-theme="dark"] .res-tab.is-active{background:#e5e7eb!important;color:#0b0f16!important;border-color:#e5e7eb!important;box-shadow:0 -1px 0 #e5e7eb inset,0 -2px 0 var(--blue),0 8px 20px rgba(0,0,0,.38)!important}
+      :root[data-theme="dark"] .res-tab.is-active::after{background:#e5e7eb}
+      #res-kpi{padding-top:0;margin-bottom:12px!important}
+      #res-status-panel{margin:0 -12px 0;padding:8px 12px;background:color-mix(in srgb,var(--surface) 96%,transparent);border:0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);border-radius:0}
+      #view-resource>.filter-row{margin:0 -12px 10px!important;padding:9px 12px;background:color-mix(in srgb,var(--surface) 96%,transparent);border-bottom:1px solid var(--border);display:flex!important;align-items:center!important;gap:8px!important;flex-wrap:nowrap!important}
+      #view-resource>.filter-row #res-search{flex:1 1 360px;min-width:220px!important;height:34px}
+      #view-resource>.filter-row .btn-export,#view-resource>.filter-row .btn-primary{flex:0 0 auto}
+      #view-resource>.filter-row .btn-primary{margin-left:0!important}
+      #view-resource>.filter-row #res-f-status,#view-resource>.filter-row #res-f-hiring,#view-resource>.filter-row #res-f-project,#view-resource>.filter-row #res-f-level{display:none!important}
+      #view-resource>.card{border-radius:7px;margin:0}
+      #res-pagination{padding:10px 0 0!important}
+      .res-form-grid-3{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+      .res-form-grid-3 .ri{width:100%}
+      @media (max-width:980px){.res-form-grid-3{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+      @media (max-width:640px){.res-form-grid-3{grid-template-columns:1fr!important}}
+      @media (max-width:820px){.res-timeline-cell{--timeline-person-width:150px;--timeline-grid-min-width:864px}.res-timeline-toolbar{grid-template-columns:1fr;align-items:start}.res-timeline-toolbar-controls{justify-self:stretch;grid-template-columns:1fr}.res-timeline-legend{justify-content:flex-start}.res-timeline-wrap{max-height:none}.res-request-filters{align-items:flex-start}#res-filter-dropdowns{width:100%}.res-filter-menu{flex:1 1 180px}.res-filter-trigger{width:100%}#view-resource>.filter-row{flex-wrap:wrap!important}#view-resource>.filter-row #res-search{flex-basis:100%}}
     `;
     document.head.appendChild(st);
   }
   const wrap = document.createElement('div');
   wrap.id = 'res-chrome';
   wrap.innerHTML = `
-    <div id="res-role-bar" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);flex-wrap:wrap">
-      <span style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px">Working as</span>
-      <select id="res-role-select" onchange="setRole(this.value)" style="font-family:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
-        ${Object.entries(RES_ROLES).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('')}
-      </select>
-      <span id="res-proj-wrap" style="display:none;align-items:center;gap:6px;font-size:12px;color:var(--text-2)">
-        Project: <select id="res-proj-select" onchange="setUserProject(this.value)" style="font-family:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)"></select>
-      </span>
-      <span id="res-role-note" style="font-size:11px;color:var(--text-3)"></span>
-    </div>
-    <div id="res-session-panel" style="margin-bottom:14px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:0 1px 2px rgba(15,23,42,.04)">
-      <div style="font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">View Session</div>
-      <div id="res-tab-bar" style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn-sm res-tab" data-tab="request" onclick="setResTab('request')" style="padding:7px 14px">Request</button>
-        <button class="btn-sm res-tab" data-tab="people" onclick="setResTab('people')" style="padding:7px 14px">Employee Directory</button>
-        <button class="btn-sm res-tab" data-tab="timeline" onclick="setResTab('timeline')" style="padding:7px 14px">Timeline</button>
-        <button class="btn-sm res-tab" data-tab="transfer" onclick="setResTab('transfer')" style="padding:7px 14px">Employee Assignment</button>
-        <button class="btn-sm res-tab" data-tab="code" onclick="setResTab('code')" style="padding:7px 14px">Project Code</button>
+    <div id="res-session-panel">
+      <div class="res-basebar">
+        <div id="res-tab-bar">
+          <button class="btn-sm res-tab" data-tab="request" onclick="setResTab('request')">Request</button>
+          <button class="btn-sm res-tab" data-tab="people" onclick="setResTab('people')">Employee Directory</button>
+          <button class="btn-sm res-tab" data-tab="timeline" onclick="setResTab('timeline')">Timeline</button>
+          <button class="btn-sm res-tab" data-tab="transfer" onclick="setResTab('transfer')">Employee Assignment</button>
+          <button class="btn-sm res-tab" data-tab="code" onclick="setResTab('code')">Project Code</button>
+        </div>
       </div>
-    </div>
-    <div id="res-status-panel" style="margin-bottom:16px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm)">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
-        <div style="font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.6px">Request Status</div>
-        <div style="font-size:11px;color:var(--text-3)">Request tab only</div>
-      </div>
-      <div id="res-view-chips" style="display:flex;gap:8px;flex-wrap:wrap"></div>
     </div>`;
   view.insertBefore(wrap, view.firstChild);
 
-  const fStatusSel = document.getElementById('res-f-status');
-  if(fStatusSel) fStatusSel.style.display = 'none';
+  const kpiEl = document.getElementById('res-kpi');
+  if(kpiEl && !document.getElementById('res-status-panel')) {
+    const statusPanel = document.createElement('div');
+    statusPanel.id = 'res-status-panel';
+    statusPanel.className = 'res-request-filters';
+    statusPanel.innerHTML = `
+      <div id="res-filter-dropdowns"></div>`;
+    kpiEl.insertAdjacentElement('afterend', statusPanel);
+  }
+
+  ['res-f-status','res-f-hiring','res-f-project','res-f-level'].forEach(id => {
+    const sel = document.getElementById(id);
+    if(sel) {
+      sel.dataset.nativeSelect = 'true';
+      sel.style.display = 'none';
+      const enhanced = sel.closest('.pmo-select');
+      if(enhanced) enhanced.style.display = 'none';
+    }
+  });
 }
 
 function renderResourceTable(cols, rows, emptyMsg) {
@@ -730,6 +1434,7 @@ function renderResourceTable(cols, rows, emptyMsg) {
   if(!tbody) return;
   const table = tbody.closest('table');
   if(table) {
+    table.classList.remove('res-timeline-table');
     table.style.display = '';
     table.style.width = '100%';
     table.style.minWidth = '';
@@ -748,30 +1453,146 @@ function renderResourceTable(cols, rows, emptyMsg) {
   if(pagEl) pagEl.innerHTML = `<span style="font-size:12px;color:var(--text-3)">${rows.length} rows</span>`;
 }
 
+function resourceWorkflowOwner(status) {
+  if(status === 'pending') return 'PMO';
+  if(status === 'pendingDocs') return 'PMO / HR docs';
+  if(status === 'approved') return 'BBIK';
+  if(RECRUITING.includes(status)) return 'BBIK';
+  if(status === 'document') return 'PMO / HR';
+  if(status === 'offer') return 'BBIK';
+  if(status === 'filled') return 'PMO monitor';
+  if(['resolved','mitigated','cancelled'].includes(status)) return 'Closed';
+  return 'PMO';
+}
+
+function resourceDashboardAgeDays(r) {
+  const d = parseDay(r.updatedAt || r.requestDate || r.createdAt);
+  if(!d) return 0;
+  return daysBetween(d, new Date());
+}
+
+function renderResourceDashboard(base) {
+  const requestRows = (base || []).filter(isRequestRecord);
+  const queueStatuses = ['pending','pendingDocs','approved','sourcing','interviewing','offer','document'];
+  const queue = requestRows
+    .filter(r => queueStatuses.includes(r.status))
+    .sort((a,b) => resourceDashboardAgeDays(b) - resourceDashboardAgeDays(a));
+  const filledMonth = new Date().toISOString().slice(0, 7);
+  const metrics = [
+    { label:'Pending PMO', value:requestRows.filter(r => r.status === 'pending').length, color:'var(--text-2)', note:'New requests' },
+    { label:'Pending Docs', value:requestRows.filter(r => r.status === 'pendingDocs').length, color:'var(--amber)', note:'External HR docs' },
+    { label:'BBIK Queue', value:requestRows.filter(r => ['approved','sourcing','interviewing','offer'].includes(r.status)).length, color:'var(--blue)', note:'Recruiting' },
+    { label:'Ready to Fill', value:requestRows.filter(r => ['offer','document'].includes(r.status)).length, color:'var(--green)', note:'Confirm onboard' },
+    { label:'Onboarded This Month', value:requestRows.filter(r => r.status === 'filled' && String(r.resolvedDate || r.onboardDate || '').startsWith(filledMonth)).length, color:'var(--green)', note:'Filled' },
+    { label:'Closed / Cancelled', value:requestRows.filter(r => ['resolved','mitigated','cancelled'].includes(r.status)).length, color:'var(--text-3)', note:'Archive' },
+  ];
+  const byStatus = RES_VIEWS.filter(v => v.key !== 'all').map(v => ({
+    label: v.label,
+    count: requestRows.filter(v.match).length,
+  }));
+  const rowsHtml = queue.slice(0, 12).map(r => {
+    const s = RES_STATUS[r.status] || { label:r.status, cls:'badge-gray' };
+    const age = resourceDashboardAgeDays(r);
+    return `
+      <tr style="cursor:pointer" onclick="openResDetail('${esc(r.id)}')">
+        <td style="padding-left:14px;font-family:'IBM Plex Mono',monospace;font-size:11px">${esc(r.id)}</td>
+        <td><strong>${esc(r.position || '-')}</strong><div style="font-size:11px;color:var(--text-3);margin-top:2px">${esc(r.project || '-')}</div></td>
+        <td><span class="badge ${s.cls}" style="font-size:9px">${esc(s.label)}</span></td>
+        <td>${esc(resourceWorkflowOwner(r.status))}</td>
+        <td>${esc(hiringMeta(r.hiringType).label)}</td>
+        <td>${age ? `${age}d` : '-'}</td>
+        <td>${esc(r.requestDate ? shortDate(r.requestDate) : '-')}</td>
+      </tr>`;
+  }).join('');
+  const tbody = document.getElementById('res-table-body');
+  if(!tbody) return;
+  const table = tbody.closest('table');
+  if(table) {
+    table.classList.remove('res-timeline-table');
+    table.style.display = '';
+    table.style.width = '100%';
+    table.style.minWidth = '';
+    let thead = table.querySelector('thead');
+    if(!thead) { thead = document.createElement('thead'); table.insertBefore(thead, table.firstChild); }
+    thead.innerHTML = '';
+  }
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="8" style="padding:0;border-bottom:0">
+        <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-bottom:12px">
+          ${metrics.map(m => `
+            <div class="metric-card" style="margin:0">
+              <div class="metric-label">${esc(m.label)}</div>
+              <div class="metric-val" style="color:${m.color}">${m.value}</div>
+              <div class="metric-sub">${esc(m.note)}</div>
+            </div>`).join('')}
+        </div>
+        <div class="card" style="padding:12px;margin:0 0 12px">
+          <div style="font-size:13px;font-weight:800;margin-bottom:8px">Status Mix</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${byStatus.map(x => `<span class="badge badge-gray" style="font-size:10px">${esc(x.label)}: ${x.count}</span>`).join('')}
+          </div>
+        </div>
+        <div class="card" style="padding:0;margin:0;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border)">
+            <div style="font-size:13px;font-weight:800">Action Queue</div>
+            <div style="font-size:11px;color:var(--text-3)">Older updates first</div>
+          </div>
+          <table class="hist-table" style="width:100%">
+            <thead><tr>
+              <th style="padding-left:14px;width:12%">Request ID</th>
+              <th>Role / Project</th>
+              <th style="width:12%">Status</th>
+              <th style="width:13%">Owner</th>
+              <th style="width:11%">Type</th>
+              <th style="width:8%">Age</th>
+              <th style="width:11%">Request Date</th>
+            </tr></thead>
+            <tbody>${rowsHtml || `<tr><td colspan="7" style="padding:28px;text-align:center;color:var(--text-3)">No open resource actions.</td></tr>`}</tbody>
+          </table>
+        </div>
+      </td>
+    </tr>`;
+  const pagEl = document.getElementById('res-pagination');
+  if(pagEl) pagEl.innerHTML = `<span style="font-size:12px;color:var(--text-3)">${queue.length} open action items</span>`;
+}
+
 function renderPeopleView(base) {
-  const active = base.filter(r => isActiveResource(r) && (employeeDirectoryName(r) || resourceEmployeeCode(r)));
-  const rows = active.map(r => {
-    const allocs = allocationRows([r]);
+  const masters = loadResourceMaster();
+  const masterRows = masters.length
+    ? masters.map(m => {
+      const matches = (base||[]).filter(r =>
+        (r.resourceMasterId && r.resourceMasterId === m.id) ||
+        (m.employeeCode && resourceEmployeeCode(r).toLowerCase() === m.employeeCode.toLowerCase()) ||
+        (!m.employeeCode && employeeDirectoryName(r) && employeeDirectoryName(r).toLowerCase() === (m.resourceName || m.resourceNameTh || m.resourceNameEn || '').toLowerCase())
+      );
+      const activeMatches = matches.filter(isActiveResource);
+      const related = activeMatches.length ? activeMatches : [resourceLikeFromMaster(m)];
+      return { master:m, related, requestId: matches[0]?.id || '' };
+    })
+    : base.filter(r => isActiveResource(r) && (employeeDirectoryName(r) || resourceEmployeeCode(r))).map(r => ({ master:resourceMasterFromRequest(r), related:[r], requestId:r.id }));
+
+  const rows = masterRows.map(({ master, related, requestId }) => {
+    const allocs = allocationRows(related);
     return {
-      requestId: r.id,
-      personTh: employeeThaiName(r),
-      personEn: employeeEnglishName(r),
-      employeeCode: resourceEmployeeCode(r),
-      role: [r.position, r.level].filter(Boolean).join(' / '),
-      team: r.resourceTeam || '',
+      requestId,
+      personTh: master.resourceNameTh || master.resourceName,
+      personEn: master.resourceNameEn,
+      employeeCode: master.employeeCode,
+      role: [master.position, master.level].filter(Boolean).join(' / '),
+      team: master.resourceTeam || '',
       projects: allocs,
       totalAllocation: allocs.reduce((sum,a)=>sum+a.allocation,0),
-      startDate: r.onboardDate || r.startDate,
-      status: r.status,
+      startDate: master.onboardDate,
+      status: master.status,
     };
   }).sort((a,b)=>String(a.personTh||a.personEn).localeCompare(String(b.personTh||b.personEn)));
   renderResourceTable([
     { label:'ชื่อ-นามสกุล / Name - Surname', th:'width:21%', cell:r=>`<strong>${esc(r.personTh||'(missing Thai name)')}</strong>${r.personEn?`<div style="font-size:11px;color:var(--text-3)">${esc(r.personEn)}</div>`:''}${r.employeeCode?`<div style="font-size:11px;color:var(--text-3)">${esc(r.employeeCode)}</div>`:''}` },
-    { label:'Position / Level', th:'width:18%', cell:r=>esc(r.role||'-') },
-    { label:'Team', th:'width:18%', cell:r=>esc(r.team||'-') },
-    { label:'Current Allocation', th:'width:22%', cell:r=>r.projects.length ? r.projects.map(a=>`<span class="badge ${a.allocation>100?'badge-red':'badge-teal'}" style="margin:2px 4px 2px 0">${esc(a.project)}${a.code?` / ${esc(a.code)}`:''}: ${a.allocation}%</span>`).join('') : '-' },
+    { label:'Position / Level', th:'width:24%', cell:r=>esc(r.role||'-') },
+    { label:'Current Allocation', th:'width:28%', cell:r=>r.projects.length ? r.projects.map(a=>`${projectPill(a.project, `${a.project}: ${a.allocation}%`)}${a.code?` <span style="font-size:10px;color:var(--text-3)">${esc(a.code)}</span>`:''}`).join(' ') : '-' },
     { label:'Start', th:'width:110px', cell:r=>`<span style="font-size:11px;white-space:nowrap">${r.startDate?shortDate(String(r.startDate).slice(0,10)):'-'}</span>` },
-    { label:'Action', th:'width:150px;text-align:center', td:'text-align:center;white-space:nowrap', cell:r=>`<span style="display:inline-flex;justify-content:center;gap:4px;white-space:nowrap"><button class="btn-sm" onclick="event.stopPropagation();openResDetail('${r.requestId}')">Manage</button><button class="btn-sm" style="color:var(--amber)" onclick="event.stopPropagation();offboardResource('${r.requestId}')">Offboard</button></span>` },
+    { label:'Action', th:'width:150px;text-align:center', td:'text-align:center;white-space:nowrap', cell:r=>r.requestId ? `<span style="display:inline-flex;justify-content:center;gap:4px;white-space:nowrap"><button class="btn-sm" onclick="event.stopPropagation();openResDetail('${r.requestId}')">Manage</button>${canOffboard(currentRole())?`<button class="btn-sm" style="color:var(--amber)" onclick="event.stopPropagation();offboardResource('${r.requestId}')">Offboard</button>`:''}</span>` : '<span style="font-size:11px;color:var(--text-3)">Master only</span>' },
   ], rows, 'No employee records yet. Import employees with Name - Surname / Employee Code first.');
 }
 
@@ -780,13 +1601,16 @@ function renderTimelineView(base) {
   if(!tbody) return;
   const table = tbody.closest('table');
   const mode = timelineMode();
-  const groups = timelineItemGroups(base, mode);
-  const { start, end } = timelineItemWindow(groups);
+  const allGroups = timelineItemGroups(base, mode);
+  const { start, end } = timelineYearWindow(_resTimelineYear);
+  const groups = allGroups
+    .map(g => ({ ...g, items: g.items.filter(item => timelineItemOverlapsWindow(item, start, end)) }))
+    .filter(g => g.items.length);
   const months = timelineMonths(start, end);
   const totalDays = Math.max(1, daysBetween(start, end));
-  const monthWidth = 92;
 
   if(table) {
+    table.classList.add('res-timeline-table');
     table.querySelector('thead')?.remove();
     table.style.display = 'block';
     table.style.width = '100%';
@@ -794,7 +1618,7 @@ function renderTimelineView(base) {
 
   const monthHead = months.map(m => {
     const label = m.toLocaleDateString('en-US', { month:'short', year:'2-digit' });
-    return `<div style="width:${monthWidth}px;border-left:1px solid var(--border);padding:6px 8px;text-align:center;font-size:10px;font-weight:800;color:var(--text-2);text-transform:uppercase">${esc(label)}</div>`;
+    return `<div class="res-timeline-month">${esc(label)}</div>`;
   }).join('');
 
   const legend = Object.values(HIRING_TYPE_META).map(m =>
@@ -816,50 +1640,64 @@ function renderTimelineView(base) {
       const left = daysBetween(start, segStart) / totalDays * 100;
       const width = Math.max(1.2, daysBetween(segStart, segEnd) / totalDays * 100);
       const m = hiringMeta(item.hiringType);
-      const color = item.source === 'Project Code' ? 'var(--purple)' : m.bar;
+      const color = item.source === 'Project Code' ? projectAccentColor(item.project) : m.bar;
+      const textColor = item.source === 'Project Code' ? projectTextColor(color) : '#fff';
       const title = `${g.person} | ${item.project} | ${isoDay(item.startDate)} - ${item.endDate ? isoDay(item.endDate) : 'ongoing'} | ${item.source}`;
-      return `<button class="res-timeline-bar" onclick="event.stopPropagation();openResDetail('${item.requestId}')" title="${esc(title)}" style="left:${left}%;width:${width}%;background:${color}">
+      return `<button class="res-timeline-bar" onclick="event.stopPropagation();openResDetail('${item.requestId}')" title="${esc(title)}" style="left:${left}%;width:${width}%;background:${color};color:${textColor}">
         <span>${esc(item.project || '-')}</span>
         <small>${esc([item.code, `${item.allocation}%`, item.source].filter(Boolean).join(' / '))}</small>
       </button>`;
     }).join('');
     return `<div class="res-timeline-row">
       <div class="res-timeline-person">
-        <div style="font-weight:800;color:var(--text);line-height:1.25">${esc(g.person || '-')}</div>
-        <div style="font-size:11px;color:var(--text-3);margin-top:2px">${esc([g.employeeCode, g.team, g.level].filter(Boolean).join(' / ') || '-')}</div>
-        <div style="margin-top:6px"><span class="badge ${meta.cls}" style="font-size:9px">${esc(meta.label)}</span></div>
+        <div class="res-timeline-person-name">${esc(g.person || '-')}</div>
+        <div class="res-timeline-person-meta">${esc([g.employeeCode, g.level].filter(Boolean).join(' / ') || '-')}</div>
+        <div class="res-timeline-person-badge"><span class="badge ${meta.cls}">${esc(meta.label)}</span></div>
       </div>
-      <div class="res-timeline-track" style="width:${months.length * monthWidth}px;background-size:${monthWidth}px 100%">
+      <div class="res-timeline-track" style="background-size:calc(100% / ${months.length}) 100%">
         ${segments || '<span style="font-size:12px;color:var(--text-3);padding:12px;display:inline-block">No dated assignment</span>'}
       </div>
     </div>`;
   }).join('');
 
-  tbody.innerHTML = `<tr><td style="padding:0;border-bottom:none">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+  tbody.innerHTML = `<tr><td class="res-timeline-cell" style="--timeline-month-count:${months.length}">
+    <div class="res-timeline-toolbar">
       <div>
-        <div style="font-size:13px;font-weight:800;color:var(--text)">Resource Assignment Timeline</div>
-        <div style="font-size:11px;color:var(--text-3)">${mode==='project-code'?'Shows only people with Project Code, based on Project Code start/end dates.':'Shows Project Code plus primary filled assignment periods.'}</div>
+        <div class="res-timeline-toolbar-title">Resource Assignment Timeline</div>
+        <div class="res-timeline-toolbar-note">${mode==='project-code'?'Shows only people with Project Code, based on Project Code start/end dates.':'Shows Project Code plus primary filled assignment periods.'}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <select class="ri" style="width:auto;font-size:11px;padding:5px 8px" onchange="setTimelineMode(this.value)">
+      <div class="res-timeline-toolbar-controls">
+        <select class="ri res-timeline-toolbar-select" onchange="setTimelineMode(this.value)">
           <option value="project-code" ${mode==='project-code'?'selected':''}>Project Code only</option>
           <option value="all" ${mode==='all'?'selected':''}>Include primary assignment</option>
         </select>
-        ${legend}
+        <div class="res-timeline-tools" aria-label="Timeline horizontal scroll controls">
+          <button type="button" class="res-timeline-scroll-btn" onclick="shiftResourceTimelineYear(-1)" title="Previous year">&larr;</button>
+          <span style="font-size:12px;font-weight:800;color:var(--text);min-width:42px;text-align:center">${_resTimelineYear}</span>
+          <button type="button" class="res-timeline-scroll-btn" onclick="shiftResourceTimelineYear(1)" title="Next year">&rarr;</button>
+          <button type="button" class="res-timeline-scroll-btn" onclick="resetResourceTimelineYear()" title="Current year">Today</button>
+        </div>
+        <div class="res-timeline-legend">${legend}</div>
       </div>
     </div>
     <div class="res-timeline-wrap">
       <div class="res-timeline-head">
         <div class="res-timeline-person res-timeline-head-left">Resource</div>
-        <div class="res-timeline-months" style="width:${months.length * monthWidth}px">${monthHead}</div>
+        <div class="res-timeline-months">${monthHead}</div>
       </div>
-      ${rows || `<div style="padding:34px;text-align:center;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm)">No Project Code timeline yet. Add Project Code to a filled resource first.</div>`}
+      ${rows || `<div style="padding:34px;text-align:center;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm)">No assignments in ${_resTimelineYear}. Use the year arrows to view another year.</div>`}
     </div>
   </td></tr>`;
 
   const pagEl = document.getElementById('res-pagination');
-  if(pagEl) pagEl.innerHTML = `<span style="font-size:12px;color:var(--text-3)">${groups.length} people / ${base.length} records</span>`;
+  if(pagEl) pagEl.innerHTML = `<span style="font-size:12px;color:var(--text-3)">${groups.length} people in ${_resTimelineYear} / ${allGroups.length} timeline people</span>`;
+}
+
+function scrollResourceTimeline(direction) {
+  const wrap = document.querySelector('.res-timeline-wrap');
+  if(!wrap) return;
+  const step = Math.max(220, Math.floor(wrap.clientWidth * 0.72));
+  wrap.scrollBy({ left: direction * step, behavior: 'smooth' });
 }
 
 function renderTransferView(base) {
@@ -904,9 +1742,15 @@ function renderTransferView(base) {
     { label:'Last Day', cell:r=>`<span style="font-size:11px">${r.lastDay?shortDate(r.lastDay):'-'}</span>` },
     { label:'New Project Code', cell:r=>esc(r.code||'-') },
     { label:'Supervisor', cell:r=>esc(r.supervisor||'-') },
-    { label:'Action', td:'text-align:center;white-space:nowrap', cell:r=> r.kind==='Project Code'
-      ? `<button class="btn-sm" onclick="event.stopPropagation();openTransferEntry('', '${r.requestId}', 'code', '${r.codeIndex}')">Edit</button> <button class="btn-sm" style="color:var(--red)" onclick="event.stopPropagation();deleteProjectCode('${r.requestId}', ${r.codeIndex})">Delete</button>`
-      : `<button class="btn-sm" onclick="event.stopPropagation();openTransferEntry('${r.requestId}', '', 'transfer')">Edit</button> <button class="btn-sm" style="color:var(--red)" onclick="event.stopPropagation();deleteResource('${r.requestId}')">Delete</button>` },
+    { label:'Action', td:'text-align:center;white-space:nowrap', cell:r=> {
+      const role = currentRole();
+      if(r.kind === 'Project Code') return canProjectCode(role)
+        ? `<button class="btn-sm" onclick="event.stopPropagation();openTransferEntry('', '${r.requestId}', 'code', '${r.codeIndex}')">Edit</button> <button class="btn-sm" style="color:var(--red)" onclick="event.stopPropagation();deleteProjectCode('${r.requestId}', ${r.codeIndex})">Delete</button>`
+        : '<span style="font-size:11px;color:var(--text-3)">View only</span>';
+      return canTransfer(role)
+        ? `<button class="btn-sm" onclick="event.stopPropagation();openTransferEntry('${r.requestId}', '', 'transfer')">Edit</button> ${canDelete(role)?`<button class="btn-sm" style="color:var(--red)" onclick="event.stopPropagation();deleteResource('${r.requestId}')">Delete</button>`:''}`
+        : '<span style="font-size:11px;color:var(--text-3)">View only</span>';
+    } },
   ], rows, 'No employee assignment records yet. Click + New Assignment to add transfer or project code.');
 }
 
@@ -930,7 +1774,7 @@ function renderProjectCodeView(base) {
     { label:'End', cell:r=>`<span style="font-size:11px">${r.endDate?shortDate(String(r.endDate).slice(0,10)):'-'}</span>` },
     { label:'Status', cell:r=>`<span class="badge ${String(r.status).toLowerCase()==='active'?'badge-green':'badge-amber'}">${esc(r.status||'-')}</span>` },
     { label:'PM Owner', cell:r=>esc(r.pmOwner||'-') },
-    { label:'Action', td:'text-align:center;white-space:nowrap', cell:r=>`<button class="btn-sm" onclick="event.stopPropagation();openProjectCodeMasterEntry('${esc(r.id)}')">Edit</button> <button class="btn-sm" style="color:var(--red)" onclick="event.stopPropagation();deleteProjectCodeMaster('${esc(r.id)}')">Delete</button>` },
+    { label:'Action', td:'text-align:center;white-space:nowrap', cell:r=> canProjectCode(currentRole()) ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectCodeMasterEntry('${esc(r.id)}')">Edit</button> <button class="btn-sm" style="color:var(--red)" onclick="event.stopPropagation();deleteProjectCodeMaster('${esc(r.id)}')">Delete</button>` : '<span style="font-size:11px;color:var(--text-3)">View only</span>' },
   ], rows, 'No Project Code master data yet. Import Project Codes first.');
 }
 
@@ -948,7 +1792,7 @@ function ensureProjectCodeMasterModal() {
       <input type="hidden" id="pcm-id">
       <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px">
         <div class="fg"><label>No</label><input id="pcm-no" class="ri" placeholder="No"></div>
-        <div class="fg"><label>Project *</label><input id="pcm-project" class="ri" placeholder="Project"></div>
+        <div class="fg"><label>Project *</label><select id="pcm-project" class="ri"></select></div>
         <div class="fg"><label>Type</label><input id="pcm-type" class="ri" placeholder="Type"></div>
         <div class="fg"><label>Project Code *</label><input id="pcm-code" class="ri" placeholder="Project Code"></div>
         <div class="fg"><label>Start</label><input id="pcm-start" class="ri" type="date"></div>
@@ -965,25 +1809,28 @@ function ensureProjectCodeMasterModal() {
   m.addEventListener('click', e => { if(e.target===m) closeProjectCodeMasterEntry(); });
 }
 function openProjectCodeMasterEntry(id='') {
-  if(!canInternalOps(currentRole())) { alert('Only PMO/Dir can manage Project Code master data.'); return; }
+  if(!canProjectCode(currentRole())) { alert(`${roleLabel(currentRole())} cannot manage Project Code master data.`); return; }
   ensureProjectCodeMasterModal();
   const list = loadProjectCodeMaster();
   const existing = id ? list.find(c => c.id === id) : null;
   document.getElementById('pcm-title').textContent = existing ? 'Edit Project Code' : 'New Project Code';
   document.getElementById('pcm-id').value = existing?.id || '';
   document.getElementById('pcm-no').value = existing?.no || '';
-  document.getElementById('pcm-project').value = existing?.project || '';
+  const projectSelect = document.getElementById('pcm-project');
+  const projectOptions = knownResourceProjects(existing?.project ? [{ project: existing.project }] : []).map(p => `<option value="${esc(p)}" ${existing?.project===p?'selected':''}>${esc(p)}</option>`).join('');
+  projectSelect.innerHTML = `<option value="">- Select project -</option>${projectOptions}`;
+  projectSelect.value = existing?.project || '';
   document.getElementById('pcm-type').value = existing?.type || '';
   document.getElementById('pcm-code').value = existing?.code || '';
   document.getElementById('pcm-start').value = existing?.startDate || '';
   document.getElementById('pcm-end').value = existing?.endDate || '';
   document.getElementById('pcm-status').value = existing?.status || 'Active';
   document.getElementById('pcm-owner').value = existing?.pmOwner || '';
-  document.getElementById('project-code-master-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('project-code-master-modal'));
 }
 function closeProjectCodeMasterEntry() {
   const m = document.getElementById('project-code-master-modal');
-  if(m) m.style.display = 'none';
+  pmoMotionHide(m);
 }
 function saveProjectCodeMasterEntry() {
   const id = document.getElementById('pcm-id')?.value || '';
@@ -1015,7 +1862,7 @@ function saveProjectCodeMasterEntry() {
 }
 
 function deleteProjectCodeMaster(id) {
-  if(!canInternalOps(currentRole())) { alert('Only PMO/Dir can manage Project Code master data.'); return; }
+  if(!canProjectCode(currentRole())) { alert(`${roleLabel(currentRole())} cannot manage Project Code master data.`); return; }
   const list = loadProjectCodeMaster();
   const item = list.find(c => c.id === id);
   if(!item) return;
@@ -1049,73 +1896,42 @@ function renderMovementView(base) {
   ], rows, 'No resource movements yet.');
 }
 
-function _renderResourceUI(allRaw) {
+function _renderResourceUI(allRaw, options = {}) {
   const role = currentRole();
   if(_resTab === 'allocation' || _resTab === 'movement') _resTab = 'timeline';
 
 
-  // â”€â”€ Sync role bar â”€â”€
-  const roleSel = document.getElementById('res-role-select');
-  if(roleSel) roleSel.value = role;
-  const projWrap = document.getElementById('res-proj-wrap');
-  if(projWrap) {
-    if(role === 'user') {
-      projWrap.style.display = 'inline-flex';
-      const ps = document.getElementById('res-proj-select');
-      if(ps) ps.innerHTML = resProjects().map(p=>`<option ${currentUserProject()===p?'selected':''}>${esc(p)}</option>`).join('');
-    } else projWrap.style.display = 'none';
-  }
-  const roleNote = document.getElementById('res-role-note');
-  if(roleNote) roleNote.textContent =
-      role === 'user' ? '- selected project only'
-    : role === 'bbik' ? '- approved recruiting pipeline only'
-    : '- all projects / approve / change status / delete';
-
-
-  // â”€â”€ Sync tab bar â”€â”€ (BBIK à¹€à¸«à¹‡à¸™à¹€à¸‰à¸žà¸²à¸°à¹à¸—à¹‡à¸š Request)
-  if(role === 'bbik' && _resTab !== 'request') _resTab = 'request';
+  // â”€â”€ Sync tab bar â”€â”€
+  if(!canViewResourceTab(role, _resTab)) _resTab = (roleConfig(role).tabs || ['request'])[0] || 'request';
   document.querySelectorAll('#res-tab-bar .res-tab').forEach(btn => {
     const tab = btn.getAttribute('data-tab');
-    const hideForBbik = role === 'bbik' && tab !== 'request';
-    btn.style.display = hideForBbik ? 'none' : '';
+    btn.style.display = canViewResourceTab(role, tab) ? '' : 'none';
     const on = tab === _resTab;
-    btn.style.background  = on ? 'var(--blue)' : 'var(--surface)';
-    btn.style.color       = on ? '#fff' : 'var(--text)';
-    btn.style.fontWeight  = on ? '700' : '';
-    btn.style.borderColor = on ? 'var(--blue)' : 'var(--border-md)';
+    btn.classList.toggle('is-active', on);
+    btn.setAttribute('aria-selected', String(on));
   });
 
 
-  // â”€â”€ Visibility + tab/chip filter â”€â”€
+  // â”€â”€ Visibility + tab/request filters â”€â”€
   let scoped = visibleToRole(allRaw, role);
-  const chips = document.getElementById('res-view-chips');
   const statusPanel = document.getElementById('res-status-panel');
 
 
   if(_resTab === 'transfer') {
     if(statusPanel) statusPanel.style.display = 'none';
-    if(chips) chips.style.display = 'none';
     scoped = scoped.filter(isTransfer);
   } else if(_resTab === 'code') {
     if(statusPanel) statusPanel.style.display = 'none';
-    if(chips) chips.style.display = 'none';
     scoped = scoped.filter(r => (r.projectCodes||[]).length > 0);
-  } else if(['people','timeline','allocation','movement'].includes(_resTab)) {
+  } else if(['dashboard','people','timeline','allocation','movement'].includes(_resTab)) {
     if(statusPanel) statusPanel.style.display = 'none';
-    if(chips) chips.style.display = 'none';
-  } else { // request tab â†’ status chips
+  } else {
     if(statusPanel) statusPanel.style.display = '';
     scoped = scoped.filter(isRequestRecord);
-    if(chips) {
-      chips.style.display = 'flex';
-      chips.innerHTML = RES_VIEWS.map(v => {
-        const n = scoped.filter(v.match).length;
-        const on = _resView === v.key;
-        return `<button class="btn-sm" onclick="setResView('${v.key}')" style="padding:6px 12px;font-size:11px;background:${on?'var(--blue)':'var(--surface)'};color:${on?'#fff':'var(--text)'};border-color:${on?'var(--blue)':'var(--border-md)'};font-weight:${on?'700':'500'}">${esc(v.label)} <span style="opacity:.72">${n}</span></button>`;
-      }).join('');
-    }
-    const v = RES_VIEWS.find(x=>x.key===_resView) || RES_VIEWS[0];
-    scoped = scoped.filter(v.match);
+    const filterDefs = options.preserveResourceFilters
+      ? refreshResourceDropdownFilters(scoped)
+      : renderResourceDropdownFilters(scoped);
+    scoped = applyResourceDropdownFilters(scoped, filterDefs);
   }
 
 
@@ -1146,11 +1962,11 @@ function _renderResourceUI(allRaw) {
   const newBtn = document.querySelector('#view-resource .filter-row .btn-primary');
   const employeeImportBtns = ['res-employee-template-btn','res-employee-import-btn'].map(id => document.getElementById(id)).filter(Boolean);
   const projectCodeImportBtns = ['res-project-code-template-btn','res-project-code-import-btn'].map(id => document.getElementById(id)).filter(Boolean);
-  employeeImportBtns.forEach(btn => { btn.style.display = _resTab === 'people' ? '' : 'none'; });
-  projectCodeImportBtns.forEach(btn => { btn.style.display = _resTab === 'code' ? '' : 'none'; });
+  employeeImportBtns.forEach(btn => { btn.style.display = (_resTab === 'people' && canImportEmployees(role)) ? '' : 'none'; });
+  projectCodeImportBtns.forEach(btn => { btn.style.display = (_resTab === 'code' && canImportProjectCodes(role)) ? '' : 'none'; });
   if(newBtn) {
-    const canCreateOperational = canInternalOps(role) && ['transfer','code'].includes(_resTab);
-    newBtn.style.display = (canManageRequest(role) && _resTab==='request') || canCreateOperational ? '' : 'none';
+    const canCreateOperational = (_resTab === 'transfer' && canTransfer(role)) || (_resTab === 'code' && canProjectCode(role));
+    newBtn.style.display = (hasRolePermission(role, 'createRequest') && _resTab==='request') || canCreateOperational ? '' : 'none';
     if(_resTab === 'transfer') {
       newBtn.textContent = '+ New Assignment';
       newBtn.setAttribute('onclick', 'openTransferEntry()');
@@ -1163,6 +1979,10 @@ function _renderResourceUI(allRaw) {
     }
   }
 
+  if(_resTab === 'dashboard') {
+    renderResourceDashboard(base);
+    return;
+  }
   if(_resTab === 'transfer') {
     renderTransferView(base);
     return;
@@ -1189,19 +2009,13 @@ function _renderResourceUI(allRaw) {
   }
 
 
-  // â”€â”€ Optional inline filters (if present in index.html) â”€â”€
+  // â”€â”€ Search (facet dropdowns are rendered above the table) â”€â”€
   const search   = (document.getElementById('res-search')?.value||'').toLowerCase();
-  const fHiring  = document.getElementById('res-f-hiring')?.value  || 'all';
-  const fProject = document.getElementById('res-f-project')?.value || 'all';
-  const fLevel   = document.getElementById('res-f-level')?.value   || 'all';
 
 
   let list = scoped;
-  if(fHiring  !== 'all') list = list.filter(r => hiringKind(r.hiringType) === fHiring);
-  if(fProject !== 'all') list = list.filter(r => r.project === fProject);
-  if(fLevel   !== 'all') list = list.filter(r => r.level === fLevel);
   if(search) list = list.filter(r =>
-    `${r.project} ${r.position} ${r.resourceTeam} ${r.level} ${resourcePersonName(r)} ${resourceEmployeeCode(r)} ${primaryProjectCode(r)}`.toLowerCase().includes(search));
+    `${r.project} ${r.position} ${r.level} ${resourcePersonName(r)} ${resourceEmployeeCode(r)} ${primaryProjectCode(r)}`.toLowerCase().includes(search));
 
 
   // Sort + paginate
@@ -1219,10 +2033,12 @@ function _renderResourceUI(allRaw) {
   const cols = resColumns();
   const tbody = document.getElementById('res-table-body');
   if(!tbody) return;
+  if(options.suppressRowEnter) tbody.dataset.motionSuppress = 'true';
 
 
   const table = tbody.closest('table');
   if(table) {
+    table.classList.remove('res-timeline-table');
     table.style.display = '';
     table.style.width = '100%';
     table.style.minWidth = '';
@@ -1243,10 +2059,13 @@ function _renderResourceUI(allRaw) {
   if(!slice.length) {
     tbody.innerHTML = `<tr><td colspan="${cols.length}" style="text-align:center;padding:34px;color:var(--text-3)">${emptyMsg}</td></tr>`;
   } else {
-    tbody.innerHTML = slice.map(r =>
-      `<tr style="cursor:pointer" onclick="openResDetail('${r.id}')">${cols.map(c=>`<td style="${c.td||''}">${c.cell(r)}</td>`).join('')}</tr>`
+    tbody.innerHTML = slice.map((r, rowIndex) => {
+      const absoluteIndex = ((_resPage - 1) * RES_PER_PAGE) + rowIndex;
+      return `<tr style="cursor:pointer" onclick="openResDetail('${r.id}')">${cols.map(c=>`<td style="${c.td||''}">${c.cell(r, { index:absoluteIndex, rowIndex })}</td>`).join('')}</tr>`;
+    }
     ).join('');
   }
+  if(options.suppressRowEnter) requestAnimationFrame(() => { delete tbody.dataset.motionSuppress; });
 
 
   // Pagination
@@ -1265,43 +2084,66 @@ function _renderResourceUI(allRaw) {
 // â”€â”€ New/Edit Modal â”€â”€
 function openResModal(id) {
   const role = currentRole();
-  if(!canManageRequest(role)) { alert(`${RES_ROLES[role]} cannot create or edit requests.`); return; }
   const isEdit = !!id;
   const r = isEdit ? loadResources().find(x => x.id===id) : null;
+  if(isEdit && !canEditPending(role)) { alert(`${roleLabel(role)} cannot edit pending requests.`); return; }
+  if(!isEdit && !hasRolePermission(role, 'createRequest')) { alert(`${roleLabel(role)} cannot create requests.`); return; }
   // User à¸ªà¸£à¹‰à¸²à¸‡/à¹à¸à¹‰à¹„à¸”à¹‰à¹€à¸‰à¸žà¸²à¸°à¹‚à¸„à¸£à¸‡à¸à¸²à¸£à¸•à¸±à¸§à¹€à¸­à¸‡
   const projects = role==='user' ? [currentUserProject()] : resProjects();
   const defProject = r?.project || (role==='user' ? currentUserProject() : '');
   const projectOpts = projects.map(p=>`<option value="${esc(p)}" ${defProject===p?'selected':''}>${esc(p)}</option>`).join('');
+  const primaryCodeOptions = projectCodeOptionsForProject(defProject, r?.primaryProjectCode || '');
 
 
   document.getElementById('res-modal-title').textContent = isEdit ? 'Edit Resource Request' : 'New Resource Request';
   document.getElementById('res-edit-id').value = id||'';
   const g = (fld,def='') => r ? (r[fld]||def) : def;
+  const requesterDefault = g('requesterName', currentRequesterName());
+  const levelOptions = resourceLevels();
 
 
   document.getElementById('res-form-body').innerHTML = `
-    <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px">
-      <div class="fg"><label>Resource Team *</label><input id="rf-team" class="ri" placeholder="e.g. Dev, QA, BA" value="${esc(g('resourceTeam'))}"></div>
-      <div class="fg"><label>Project (Target) *</label><select id="rf-project" class="ri" ${role==='user'?'disabled title="Requester can create requests only for the selected project"':''}>${role==='user'?'':'<option value="">- Select project -</option>'}${projectOpts}</select></div>
+    <div class="form-grid res-form-grid-3" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
+      <div class="fg"><label>Project *</label><select id="rf-project" class="ri" onchange="syncRequestProjectCodeChoices()" ${role==='user'?'disabled title="Requester can create requests only for the selected project"':''}>${role==='user'?'':'<option value="">- Select project -</option>'}${projectOpts}</select></div>
+      <div class="fg"><label>Project Code</label><select id="rf-primary-code" class="ri" onchange="applyRequestProjectCode()"><option value="">${defProject ? '- Select project code -' : 'Select Project first'}</option>${primaryCodeOptions}</select></div>
       <div class="fg"><label>Position *</label><input id="rf-position" class="ri" placeholder="e.g. Senior Backend Developer" value="${esc(g('position'))}"></div>
-      <div class="fg"><label>Level *</label><select id="rf-level" class="ri">${LEVEL_OPTS.map(l=>`<option ${g('level')===l?'selected':''}>${l}</option>`).join('')}</select></div>
+      <div class="fg"><label>Level *</label><select id="rf-level" class="ri">${levelOptions.map(l=>`<option ${g('level')===l?'selected':''}>${esc(l)}</option>`).join('')}</select></div>
       <div class="fg"><label>Employment Type *</label><select id="rf-hiring" class="ri" onchange="toggleEndDateRequired()">
         ${HIRING_OPTS.map(h=>`<option ${hiringKind(g('hiringType'))===hiringKind(h)?'selected':''}>${h}</option>`).join('')}
       </select><div id="rf-hiring-help" style="font-size:10px;color:var(--text-3);line-height:1.35"></div></div>
       <div class="fg"><label>Start Date *</label><input id="rf-start" class="ri" type="date" value="${g('startDate')}"></div>
-      <div class="fg"><label id="rf-end-label">End Date</label><input id="rf-end" class="ri" type="date" value="${g('endDate')}"></div>
-      <div class="fg"><label>Requester Name</label><input id="rf-requester" class="ri" placeholder="Requester name" value="${esc(g('requesterName'))}"></div>
-      <div class="fg"><label>Request Date</label><input id="rf-reqdate" class="ri" type="date" value="${g('requestDate', todayISO)}" readonly style="background:var(--bg)"></div>
-      <div class="fg"><label>Resource Name</label><input id="rf-resource-name" class="ri" placeholder="Actual person name when known" value="${esc(g('resourceName'))}"></div>
-      <div class="fg"><label>Employee Code</label><input id="rf-employee-code" class="ri" placeholder="Optional employee id" value="${esc(g('employeeCode'))}"></div>
-      <div class="fg"><label>Primary Project Code</label><input id="rf-primary-code" class="ri" placeholder="Optional project code" value="${esc(g('primaryProjectCode'))}"></div>
+      <div class="fg" id="rf-end-wrap"><label id="rf-end-label">End Date</label><input id="rf-end" class="ri" type="date" value="${g('endDate')}"></div>
+      <div class="fg"><label>Requester Name</label><input id="rf-requester" class="ri" placeholder="Requester name" value="${esc(requesterDefault)}"></div>
+      <div class="fg"><label>Request Date</label><input id="rf-reqdate" class="ri" type="date" value="${g('requestDate', todayISO)}" readonly title="Locked to the date this request was created" style="background:var(--bg);cursor:not-allowed"></div>
       <div class="fg"><label>Primary Allocation %</label><input id="rf-allocation" class="ri" type="number" min="1" max="100" value="${esc(String(g('allocationPercent', 100)))}"></div>
     </div>
     <div class="fg" style="margin-top:10px"><label>Remark</label><textarea id="rf-remark" class="ri" rows="3" placeholder="Remark / reason">${esc(g('remark'))}</textarea></div>`;
 
 
   toggleEndDateRequired();
-  document.getElementById('resource-modal').style.display = 'flex';
+  syncRequestProjectCodeChoices(false);
+  pmoMotionShow(document.getElementById('resource-modal'));
+}
+
+function syncRequestProjectCodeChoices(clearInvalid=true) {
+  const project = document.getElementById('rf-project')?.value || currentUserProject();
+  const select = document.getElementById('rf-primary-code');
+  if(!select) return;
+  const value = select.value.trim();
+  select.innerHTML = `<option value="">${project ? '- Select project code -' : 'Select Project first'}</option>${projectCodeOptionsForProject(project, value)}`;
+  select.disabled = !project;
+  if(clearInvalid && value && !projectCodeByValue(value, project)) select.value = '';
+  else select.value = value;
+}
+
+function applyRequestProjectCode() {
+  const project = document.getElementById('rf-project')?.value || currentUserProject();
+  const code = document.getElementById('rf-primary-code')?.value || '';
+  const meta = projectCodeByValue(code, project);
+  if(!code || meta) return;
+  alert('Project Code นี้ไม่ได้อยู่ใต้ Project ที่เลือกไว้');
+  const input = document.getElementById('rf-primary-code');
+  if(input) input.value = '';
 }
 
 
@@ -1309,19 +2151,23 @@ function toggleEndDateRequired() {
   const ht = document.getElementById('rf-hiring')?.value||'';
   const lbl = document.getElementById('rf-end-label');
   const inp = document.getElementById('rf-end');
+  const wrap = document.getElementById('rf-end-wrap');
   const req = isFixedTermHiring(ht);
   if(lbl) lbl.textContent = req ? 'End Date *' : 'End Date';
-  if(inp) inp.required = req;
+  if(wrap) wrap.style.display = req ? '' : 'none';
+  if(inp) {
+    inp.required = req;
+    if(!req) inp.value = '';
+  }
   const help = document.getElementById('rf-hiring-help');
   if(help) help.textContent = hiringMeta(ht).fullLabel;
 }
-function closeResModal() { document.getElementById('resource-modal').style.display='none'; }
+function closeResModal() { pmoMotionHide(document.getElementById('resource-modal')); }
 
 
 async function saveResource() {
   const role = currentRole();
   const g = id => document.getElementById(id)?.value?.trim()||'';
-  const team = g('rf-team');
   // à¹‚à¸„à¸£à¸‡à¸à¸²à¸£: User à¸–à¸¹à¸à¸¥à¹‡à¸­à¸à¹€à¸›à¹‡à¸™à¸‚à¸­à¸‡à¸•à¸±à¸§à¹€à¸­à¸‡ (select disabled â†’ à¸­à¹ˆà¸²à¸™à¸„à¹ˆà¸²à¹„à¸¡à¹ˆà¹„à¸”à¹‰ à¹ƒà¸Šà¹‰ currentUserProject)
   const project = role==='user' ? currentUserProject() : g('rf-project');
   const position = g('rf-position');
@@ -1331,31 +2177,37 @@ async function saveResource() {
   if(allocation < 1 || allocation > 100) { alert('Primary Allocation must be between 1 and 100%'); return; }
 
 
-  if(!team||!project||!position||!hiring||!startDate) { alert('Please fill all required fields.'); return; }
+  if(!project||!position||!hiring||!startDate) { alert('Please fill all required fields.'); return; }
   if(isFixedTermHiring(hiring) && !endDate) { alert('End Date is required for Secondment / Sub Con'); return; }
   if(endDate && startDate && endDate < startDate) { alert('End Date must be after Start Date.'); return; }
+  const primaryCode = g('rf-primary-code');
+  if(primaryCode && !projectCodeByValue(primaryCode, project)) {
+    alert('Project Code must belong to the selected Project.');
+    return;
+  }
 
 
   const editId = g('res-edit-id');
   const existing = editId ? loadResources().find(r=>r.id===editId) : null;
-  const actor = RES_ROLES[role];
+  const actor = roleLabel(role);
+  const employeeCode = existing?.employeeCode || nextEmployeeCode(hiring) || '';
 
 
   const data = {
     id: editId || nextResId(),
-    resourceTeam: team, project, position,
+    resourceTeam: existing?.resourceTeam || '', project, position,
     level: g('rf-level'), hc, hiringType: hiring,
-    startDate, endDate: endDate||null,
-    requestDate: g('rf-reqdate') || todayISO,
+    startDate, endDate: isFixedTermHiring(hiring) ? (endDate || null) : null,
+    requestDate: existing?.requestDate || g('rf-reqdate') || todayISO,
     resolvedDate: existing?.resolvedDate||null,
     remark: g('rf-remark'),
     status: existing?.status || 'pending',
     requesterName: g('rf-requester'),
     transferFrom: existing?.transferFrom||null,
     projectCodes: existing?.projectCodes||[],
-    resourceName: g('rf-resource-name') || existing?.resourceName || '',
-    employeeCode: g('rf-employee-code') || existing?.employeeCode || '',
-    primaryProjectCode: g('rf-primary-code') || existing?.primaryProjectCode || '',
+    resourceName: existing?.resourceName || '',
+    employeeCode,
+    primaryProjectCode: primaryCode || existing?.primaryProjectCode || '',
     allocationPercent: allocation,
     onboardDate: existing?.onboardDate||null,
     offboardDate: existing?.offboardDate||null,
@@ -1366,6 +2218,7 @@ async function saveResource() {
   await saveResourceAsync(data);
   closeResModal();
   renderResource();
+  if(typeof refreshNotifications === 'function') refreshNotifications();
 }
 
 
@@ -1376,12 +2229,18 @@ async function approveRequest(id) {
   const list = loadResources(); const idx = list.findIndex(r=>r.id===id); if(idx<0) return;
   const r = list[idx];
   if(r.status!=='pending') { alert('Only pending requests can be approved.'); return; }
-  if(!confirm(`Approve this request?\n\n${r.position} / ${r.project}\n\nAfter approval it will go to BBIK.`)) return;
+  const nextStatus = requiresPreApprovalDocs(r.hiringType) ? 'pendingDocs' : 'approved';
+  const confirmMsg = nextStatus === 'pendingDocs'
+    ? `Move this request to Pending Docs?\n\n${r.position} / ${r.project}\n\nDirect HC / Secondment must complete pre-approval documents before BBIK.`
+    : `Approve this request?\n\n${r.position} / ${r.project}\n\nAfter approval it will go to BBIK.`;
+  if(!confirm(confirmMsg)) return;
   const now = new Date().toISOString();
-  const updated = { ...r, status:'approved', updatedAt:now,
-    activityLog:[...(r.activityLog||[]), { action:'Approved by PMO/Dir', from:'pending', to:'approved', by:RES_ROLES[role], at:now }] };
+  const action = nextStatus === 'pendingDocs' ? 'Sent to Pending Docs' : 'Approved by PMO/Dir';
+  const updated = { ...r, status:nextStatus, updatedAt:now,
+    activityLog:[...(r.activityLog||[]), { action, from:'pending', to:nextStatus, by:roleLabel(role), at:now }] };
   await saveResourceAsync(updated);
   renderResource();
+  if(typeof refreshNotifications === 'function') refreshNotifications();
 }
 async function bbikAccept(id) {
   const role = currentRole();
@@ -1391,9 +2250,10 @@ async function bbikAccept(id) {
   if(r.status!=='approved') { alert('Only approved requests can be accepted by BBIK.'); return; }
   const now = new Date().toISOString();
   const updated = { ...r, status:'sourcing', updatedAt:now,
-    activityLog:[...(r.activityLog||[]), { action:'BBIK accepted (start sourcing)', from:'approved', to:'sourcing', by:RES_ROLES[role], at:now }] };
+    activityLog:[...(r.activityLog||[]), { action:'BBIK accepted (start sourcing)', from:'approved', to:'sourcing', by:roleLabel(role), at:now }] };
   await saveResourceAsync(updated);
   renderResource();
+  if(typeof refreshNotifications === 'function') refreshNotifications();
 }
 
 
@@ -1402,9 +2262,9 @@ function openResStatus(id) {
   const r = loadResources().find(x=>x.id===id);
   if(!r) return;
   const role = currentRole();
-  const nexts = allowedNext(r.status, role);
+  const nexts = allowedNextForRecord(r, role);
   if(!nexts.length) {
-    alert(`${RES_ROLES[role]} cannot change this request status (${RES_STATUS[r.status]?.label||r.status}).`);
+    alert(`${roleLabel(role)} cannot change this request status (${RES_STATUS[r.status]?.label||r.status}).`);
     return;
   }
   const s = RES_STATUS[r.status]||{label:r.status};
@@ -1412,15 +2272,16 @@ function openResStatus(id) {
   document.getElementById('res-status-id').value = id;
   document.getElementById('res-status-current').innerHTML =
     `<span class="badge ${RES_STATUS[r.status]?.cls||'badge-gray'}">${s.label}</span> - ${esc(r.position)} / ${esc(r.project)}
-     <div style="font-size:11px;color:var(--text-3);margin-top:6px">Changing as <strong>${esc(RES_ROLES[role])}</strong></div>`;
+     <div style="font-size:11px;color:var(--text-3);margin-top:6px">Changing as <strong>${esc(roleLabel(role))}</strong></div>`;
   document.getElementById('res-status-select').innerHTML = opts;
   document.getElementById('res-status-select').onchange = toggleStatusOnboardFields;
   ensureStatusOnboardFields(r);
+  ensureStatusCancelFields(r);
   document.getElementById('res-status-remark').value = '';
-  document.getElementById('resource-status-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('resource-status-modal'));
   toggleStatusOnboardFields();
 }
-function closeResStatus() { document.getElementById('resource-status-modal').style.display='none'; }
+function closeResStatus() { pmoMotionHide(document.getElementById('resource-status-modal')); }
 
 function ensureStatusOnboardFields(r) {
   let box = document.getElementById('res-status-onboard-fields');
@@ -1434,25 +2295,73 @@ function ensureStatusOnboardFields(r) {
   box.innerHTML = `
     <div class="fg" style="margin-bottom:8px"><label>Name - Surname *</label><input id="rs-resource-name" class="ri" value="${esc(r.resourceName||'')}" placeholder="Actual onboarded person"></div>
     <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:8px">
-      <div class="fg"><label>Employee Code</label><input id="rs-employee-code" class="ri" value="${esc(r.employeeCode||'')}" placeholder="Optional"></div>
-      <div class="fg"><label>Team *</label><input id="rs-resource-team" class="ri" value="${esc(r.resourceTeam||'')}" placeholder="BA, QA, FE..."></div>
+      <div class="fg"><label>Employee Code</label><div style="display:flex;gap:6px"><input id="rs-employee-code" class="ri" value="${esc(r.employeeCode||'')}" placeholder="Optional"><button class="btn-sm" type="button" onclick="generateEmployeeCode('rs-employee-code','rs-hiring-kind')" style="white-space:nowrap;${employeeCodeFormatConfig(r.hiringType)?'':'display:none'}">Generate</button><input id="rs-hiring-kind" type="hidden" value="${esc(r.hiringType||'')}"></div></div>
       <div class="fg"><label>Position *</label><input id="rs-position" class="ri" value="${esc(r.position||'')}" placeholder="Business Analyst, QA..."></div>
       <div class="fg"><label>Onboard Date</label><input id="rs-onboard-date" class="ri" type="date" value="${r.onboardDate||todayISO}"></div>
-      <div class="fg"><label>Primary Project Code</label><input id="rs-primary-code" class="ri" list="rs-primary-code-list" value="${esc(r.primaryProjectCode||'')}" placeholder="Select or type project code"><datalist id="rs-primary-code-list">${activeProjectCodeMaster().map(c=>`<option value="${esc(c.code)}">${esc(c.project)}${c.pmOwner?` / ${esc(c.pmOwner)}`:''}</option>`).join('')}</datalist></div>
+      <div class="fg"><label>Project Code</label><select id="rs-primary-code" class="ri"><option value="">- Select project code -</option>${projectCodeOptionsForProject(r.project, r.primaryProjectCode||'')}</select></div>
       <div class="fg"><label>Primary Allocation %</label><input id="rs-allocation" class="ri" type="number" min="1" max="100" value="${esc(String(r.allocationPercent||100))}"></div>
     </div>`;
+}
+
+function ensureStatusCancelFields(r) {
+  let box = document.getElementById('res-status-cancel-fields');
+  if(!box) {
+    box = document.createElement('div');
+    box.id = 'res-status-cancel-fields';
+    box.style.cssText = 'display:none;margin:10px 0;padding:10px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg)';
+    const onboard = document.getElementById('res-status-onboard-fields');
+    const selectWrap = document.getElementById('res-status-select')?.closest('.fg');
+    (onboard || selectWrap)?.insertAdjacentElement('afterend', box);
+  }
+  const selected = r.cancelReason || '';
+  const known = CANCEL_REASON_OPTIONS.includes(selected);
+  const options = CANCEL_REASON_OPTIONS.map(reason =>
+    `<option value="${esc(reason)}" ${selected === reason ? 'selected' : ''}>${esc(reason)}</option>`
+  ).join('');
+  box.innerHTML = `
+    <div class="fg" style="margin-bottom:8px">
+      <label>Cancel Reason *</label>
+      <select id="rs-cancel-reason" class="ri" onchange="toggleStatusCancelFields()">
+        <option value="">- Select cancel reason -</option>
+        ${options}
+      </select>
+    </div>
+    <div class="fg" id="rs-cancel-other-wrap" style="display:none;margin-bottom:8px">
+      <label>Other Reason *</label>
+      <input id="rs-cancel-other" class="ri" value="${!known ? esc(selected) : ''}" placeholder="Enter cancel reason">
+    </div>
+    <div style="font-size:11px;color:var(--text-3)">This reason will be saved on the request, detail drawer, export, and transaction log.</div>`;
 }
 
 function toggleStatusOnboardFields() {
   const box = document.getElementById('res-status-onboard-fields');
   const next = document.getElementById('res-status-select')?.value;
   if(box) box.style.display = next === 'filled' ? 'block' : 'none';
+  toggleStatusCancelFields();
+}
+
+function toggleStatusCancelFields() {
+  const box = document.getElementById('res-status-cancel-fields');
+  const next = document.getElementById('res-status-select')?.value;
+  if(box) box.style.display = requiresCancelReason(next) ? 'block' : 'none';
+  const reason = document.getElementById('rs-cancel-reason')?.value;
+  const otherWrap = document.getElementById('rs-cancel-other-wrap');
+  if(otherWrap) otherWrap.style.display = reason === 'Other' ? 'block' : 'none';
+}
+
+function selectedCancelReason() {
+  const selected = document.getElementById('rs-cancel-reason')?.value?.trim() || '';
+  if(selected === 'Other') return document.getElementById('rs-cancel-other')?.value?.trim() || '';
+  return selected;
 }
 
 
 function _transitionAction(prev, next) {
+  if(prev==='pending'  && next==='pendingDocs') return 'Sent to Pending Docs';
+  if(prev==='pendingDocs' && next==='approved') return 'Approved after docs';
   if(prev==='pending'  && next==='approved') return 'Approved by PMO/Dir';
   if(prev==='approved' && next==='sourcing') return 'BBIK accepted (sourcing)';
+  if(prev==='offer'    && next==='filled')   return 'Onboarded by BBIK';
   if(prev==='document' && next==='filled')   return 'Onboarded (Filled)';
   if(next==='resolved')  return 'Closed';
   if(next==='cancelled') return 'Cancelled';
@@ -1464,6 +2373,7 @@ async function saveResStatus() {
   const id = document.getElementById('res-status-id').value;
   const newStatus = document.getElementById('res-status-select').value;
   const remark = document.getElementById('res-status-remark').value.trim();
+  const cancelReason = selectedCancelReason();
   const role = currentRole();
 
 
@@ -1473,27 +2383,29 @@ async function saveResStatus() {
   const prevStatus = list[idx].status;
 
 
-  if(!allowedNext(prevStatus, role).includes(newStatus)) {
-    alert(`${RES_ROLES[role]} cannot change "${RES_STATUS[prevStatus]?.label||prevStatus}" to "${RES_STATUS[newStatus]?.label||newStatus}".`);
+  if(!allowedNextForRecord(list[idx], role).includes(newStatus)) {
+    alert(`${roleLabel(role)} cannot change "${RES_STATUS[prevStatus]?.label||prevStatus}" to "${RES_STATUS[newStatus]?.label||newStatus}".`);
     return;
   }
-  if(newStatus==='cancelled' && !remark) { alert('Please enter a remark when cancelling.'); return; }
+  if(requiresCancelReason(newStatus) && !cancelReason) { alert('Please select or enter a cancel reason.'); return; }
 
 
   const onboardMeta = {};
   if(newStatus === 'filled') {
     const rn = document.getElementById('rs-resource-name')?.value?.trim() || '';
-    const team = document.getElementById('rs-resource-team')?.value?.trim() || '';
     const position = document.getElementById('rs-position')?.value?.trim() || '';
     const onboardDate = document.getElementById('rs-onboard-date')?.value || todayISO;
     const alloc = clampAlloc(document.getElementById('rs-allocation')?.value || 100);
-    if(!rn || !team || !position || !onboardDate) { alert('Name, Team, Position, and Onboard Date are required when status becomes Filled.'); return; }
+    if(!rn || !position || !onboardDate) { alert('Name, Position, and Onboard Date are required when status becomes Filled.'); return; }
     if(alloc < 1 || alloc > 100) { alert('Primary Allocation must be between 1 and 100%'); return; }
     onboardMeta.resourceName = rn;
-    onboardMeta.resourceTeam = team;
     onboardMeta.position = position;
     onboardMeta.employeeCode = document.getElementById('rs-employee-code')?.value?.trim() || '';
     onboardMeta.primaryProjectCode = document.getElementById('rs-primary-code')?.value?.trim() || '';
+    if(onboardMeta.primaryProjectCode && !projectCodeByValue(onboardMeta.primaryProjectCode, list[idx].project)) {
+      alert('Project Code must belong to the request Project.');
+      return;
+    }
     onboardMeta.allocationPercent = alloc;
     onboardMeta.onboardDate = onboardDate;
     onboardMeta.startDate = onboardDate;
@@ -1501,48 +2413,56 @@ async function saveResStatus() {
   }
 
   const now = new Date().toISOString();
+  const transitionRemark = newStatus === 'cancelled'
+    ? [cancelReason, remark].filter(Boolean).join(' / ')
+    : remark;
   const updated = { ...list[idx], ...onboardMeta,
     status: newStatus,
+    cancelReason: newStatus === 'cancelled' ? cancelReason : list[idx].cancelReason,
     resolvedDate: ['filled','resolved','mitigated'].includes(newStatus) ? todayISO : list[idx].resolvedDate,
     updatedAt: now,
     activityLog: [...(list[idx].activityLog||[]), {
       action: _transitionAction(prevStatus, newStatus), from: prevStatus, to: newStatus,
-      by: RES_ROLES[role], remark, at: now
+      by: roleLabel(role), remark, cancelReason: newStatus === 'cancelled' ? cancelReason : '', at: now
     }],
   };
-  if(remark) updated.remark = (updated.remark ? updated.remark+'\n' : '') + `[${new Date().toLocaleDateString('th')}] ${remark}`;
+  if(transitionRemark) {
+    const prefix = newStatus === 'cancelled' ? 'Cancelled' : new Date().toLocaleDateString('th');
+    updated.remark = (updated.remark ? updated.remark+'\n' : '') + `[${prefix}] ${transitionRemark}`;
+  }
 
 
   await saveResourceAsync(updated);
   closeResStatus();
   renderResource();
+  if(typeof refreshNotifications === 'function') refreshNotifications();
 }
 
 
 // â”€â”€ Transfer modal (within Orbit) â”€â”€
 function openResTransfer(id) {
+  const role = currentRole();
+  if(!canTransfer(role)) { alert(`${roleLabel(role)} cannot create transfer records.`); return; }
   openTransferEntry('', id);
   return;
-  const role = currentRole();
-  if(!canInternalOps(role)) { alert(`${RES_ROLES[role]} cannot create transfer records.`); return; }
   const r = loadResources().find(x=>x.id===id);
   if(!r) return;
   const projectOpts = resProjects().filter(p=>p!==r.project).map(p=>`<option>${esc(p)}</option>`).join('');
   document.getElementById('res-transfer-id').value = id;
   document.getElementById('res-transfer-body').innerHTML = `
     <p style="font-size:12px;color:var(--text-2);margin-bottom:12px">
-      Transfer <strong>${esc(r.position)}</strong> (${esc(r.resourceTeam)}) from <strong>${esc(r.project)}</strong> to:
+      Transfer <strong>${esc(r.position)}</strong> from <strong>${esc(r.project)}</strong> to:
     </p>
-    <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px">
+    <div class="form-grid res-form-grid-3" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
       <div class="fg"><label>Destination Project *</label><select id="rtf-project" class="ri"><option value="">- Select -</option>${projectOpts}</select></div>
       <div class="fg"><label>New Start Date *</label><input id="rtf-start" class="ri" type="date" value="${todayISO}"></div>
       <div class="fg"><label>End Date</label><input id="rtf-end" class="ri" type="date" value="${r.endDate||''}"></div>
     </div>
     <div class="fg" style="margin-top:10px"><label>Transfer Reason *</label>
       <textarea id="rtf-remark" class="ri" rows="2" placeholder="Enter reason"></textarea></div>`;
-  document.getElementById('resource-transfer-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('resource-transfer-modal'));
 }
-function closeResTransfer() { document.getElementById('resource-transfer-modal').style.display='none'; }
+function closeResTransfer() { pmoMotionHide(document.getElementById('resource-transfer-modal')); }
 
 function resourceSearchLabel(r) {
   return [resourcePersonName(r)||r.position||r.id, r.project, resourceEmployeeCode(r)].filter(Boolean).join(' - ');
@@ -1557,7 +2477,6 @@ function buildResourceSearchMap(list) {
 }
 function openTransferEntry(editId='', sourceId='', mode='transfer', codeIndex='') {
   const role = currentRole();
-  if(!canInternalOps(role)) { alert(`${RES_ROLES[role]} cannot create transfer records`); return; }
   const list = loadResources();
   const editing = editId ? list.find(x => x.id === editId) : null;
   const source = sourceId ? list.find(x => x.id === sourceId) : null;
@@ -1566,38 +2485,43 @@ function openTransferEntry(editId='', sourceId='', mode='transfer', codeIndex=''
   const editingCodeIndex = codeIndex === '' ? -1 : Number(codeIndex);
   const editingCode = source && editingCodeIndex >= 0 ? (source.projectCodes||[])[editingCodeIndex] : null;
   const actionMode = mode === 'code' || editingCode ? 'code' : 'transfer';
+  if(actionMode === 'transfer' && !canTransfer(role)) { alert(`${roleLabel(role)} cannot create transfer records`); return; }
+  if(actionMode === 'code' && !canProjectCode(role)) { alert(`${roleLabel(role)} cannot add Project Code.`); return; }
   const searchOptions = buildResourceSearchMap(list);
   const selectedResource = source || sourceFromTransfer || null;
   const selectedSearch = selectedResource ? resourceSearchLabel(selectedResource) : '';
   const fromProject = source?.project || sourceFromTransfer?.project || transferFromProject(editing||{}, list);
-  const projectOpts = resProjects().map(p => `<option ${((editingCode?.project||editing?.project)===p)?'selected':''}>${esc(p)}</option>`).join('');
-  const codeOptions = activeProjectCodeMaster().map(c => `<option value="${esc(c.code)}">${esc(c.project)}${c.pmOwner?` / ${esc(c.pmOwner)}`:''}</option>`).join('');
+  const selectedProject = editingCode?.project || editing?.project || '';
+  const selectedCode = editingCode?.code || primaryProjectCode(editing||{}) || '';
+  const projectOpts = resProjects().map(p => `<option ${selectedProject===p?'selected':''}>${esc(p)}</option>`).join('');
+  const codeOptions = projectCodeOptionsForProject(selectedProject, selectedCode);
   document.getElementById('res-transfer-id').value = editId || '';
   document.getElementById('res-transfer-body').innerHTML = `
     <input type="hidden" id="rtf-source-id" value="${esc(selectedSourceId)}">
     <input type="hidden" id="rtf-code-index" value="${esc(codeIndex === '' ? '' : String(codeIndex))}">
     <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px">
       <div class="fg"><label>Action Type *</label><select id="rtf-action" class="ri" onchange="toggleAssignmentMode()">
-        <option value="transfer" ${actionMode==='transfer'?'selected':''}>Transfer Employee</option>
-        <option value="code" ${actionMode==='code'?'selected':''}>Add Project Code to Employee</option>
+        ${canTransfer(role)?`<option value="transfer" ${actionMode==='transfer'?'selected':''}>Transfer Employee</option>`:''}
+        ${canProjectCode(role)?`<option value="code" ${actionMode==='code'?'selected':''}>Add Project Code to Employee</option>`:''}
       </select></div>
       <div class="fg"><label>Search Employee *</label><input id="rtf-source-search" class="ri" list="rtf-source-list" value="${esc(selectedSearch)}" placeholder="Type name, project, or employee code" oninput="setTransferSourceFromSearch(this.value)"><datalist id="rtf-source-list">${searchOptions}</datalist></div>
       <div class="fg"><label>Request Date *</label><input id="rtf-request-date" class="ri" type="date" value="${editing?.requestDate||todayISO}"></div>
       <div class="fg"><label>Request By *</label><input id="rtf-request-by" class="ri" value="${esc(editing?.requesterName||source?.requesterName||'')}" placeholder="Requester / PMO"></div>
       <div class="fg"><label>From Project *</label><input id="rtf-from-project" class="ri" value="${esc(fromProject||'')}" placeholder="Current project"></div>
-      <div class="fg"><label>To Project *</label><select id="rtf-project" class="ri"><option value="">Select project</option>${projectOpts}</select></div>
+      <div class="fg"><label>To Project *</label><select id="rtf-project" class="ri" onchange="syncTransferProjectCodeChoices()"><option value="">Select project</option>${projectOpts}</select></div>
       <div class="fg" style="display:none"><label>Name - Surname *</label><input id="rtf-name" class="ri" value="${esc(resourcePersonName(editing||source||{})||'')}" placeholder="Employee name"></div>
       <div class="fg"><label>First day at new project *</label><input id="rtf-start" class="ri" type="date" value="${editing?.onboardDate||editing?.startDate||todayISO}"></div>
       <div class="fg"><label>Last day at new project *</label><input id="rtf-end" class="ri" type="date" value="${editing?.offboardDate||editing?.endDate||''}"></div>
-      <div class="fg"><label>Project Code</label><input id="rtf-code" class="ri" list="rtf-code-list" value="${esc(editingCode?.code||primaryProjectCode(editing||{})||'')}" placeholder="Timesheet / project code" onchange="applyTransferProjectCode()"><datalist id="rtf-code-list">${codeOptions}</datalist></div>
+      <div class="fg"><label>Project Code</label><select id="rtf-code" class="ri" onchange="applyTransferProjectCode()"><option value="">${selectedProject ? '- Select project code -' : 'Select Project first'}</option>${codeOptions}</select></div>
       <div class="fg"><label>Allocation %</label><input id="rtf-allocation" class="ri" type="number" min="1" max="100" value="${esc(String(editingCode?.allocation||100))}"></div>
       <div class="fg"><label>Supervisor</label><input id="rtf-supervisor" class="ri" value="${esc(editingCode?.supervisor||editing?.supervisor||transferSupervisor(editing||{})||'')}" placeholder="Supervisor name"></div>
     </div>
     <div class="fg" style="margin-top:10px"><label>Remark</label>
       <textarea id="rtf-remark" class="ri" rows="2" placeholder="Reason / note">${esc(editingCode?.note||(editing?.remark||'').replace(/^Transferred from.*\n?/,'').replace(/Supervisor:[^\n]*\n?/i,''))}</textarea></div>`;
-  document.getElementById('resource-transfer-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('resource-transfer-modal'));
   document.querySelector('#resource-transfer-modal .btn-primary').textContent = actionMode === 'code' ? 'Save Project Code' : 'Transfer';
   toggleAssignmentMode();
+  syncTransferProjectCodeChoices(false);
 }
 
 function setTransferSourceFromSearch(value) {
@@ -1631,7 +2555,39 @@ function toggleAssignmentMode() {
   if(last) last.querySelector('label').textContent = mode === 'code' ? 'End Date *' : 'Last day at new project *';
 }
 
+function syncTransferProjectCodeChoices(clearInvalid=true) {
+  const project = document.getElementById('rtf-project')?.value || '';
+  const select = document.getElementById('rtf-code');
+  if(!select) return;
+  const value = select.value.trim();
+  select.innerHTML = `<option value="">${project ? '- Select project code -' : 'Select Project first'}</option>${projectCodeOptionsForProject(project, value)}`;
+  select.disabled = !project;
+  if(clearInvalid && value && !projectCodeByValue(value, project)) select.value = '';
+  else select.value = value;
+}
+
 function applyTransferProjectCode() {
+  const code = document.getElementById('rtf-code')?.value || '';
+  const project = document.getElementById('rtf-project');
+  const selectedProject = project?.value || '';
+  const meta = projectCodeByValue(code, selectedProject);
+  if(!code || meta) {
+    if(meta) {
+      const start = document.getElementById('rtf-start');
+      const end = document.getElementById('rtf-end');
+      const supervisor = document.getElementById('rtf-supervisor');
+      if(start && meta.startDate) start.value = meta.startDate;
+      if(end && meta.endDate) end.value = meta.endDate;
+      if(supervisor && meta.pmOwner) supervisor.value = meta.pmOwner;
+    }
+    return;
+  }
+  alert('Project Code นี้ไม่ได้อยู่ใต้ Project ที่เลือกไว้');
+  const input = document.getElementById('rtf-code');
+  if(input) input.value = '';
+}
+
+function applyTransferProjectCodeLegacy() {
   const code = document.getElementById('rtf-code')?.value || '';
   const meta = projectCodeByValue(code);
   if(!meta) return;
@@ -1652,7 +2608,7 @@ async function saveResTransfer() {
   const startDate = document.getElementById('rtf-start')?.value||'';
   const endDate = document.getElementById('rtf-end')?.value||'';
   const remark = document.getElementById('rtf-remark')?.value?.trim()||'';
-  const actor = RES_ROLES[currentRole()];
+  const actor = roleLabel(currentRole());
   if(!destProject||!startDate||!remark) { alert('Please fill all required fields.'); return; }
 
 
@@ -1697,6 +2653,7 @@ async function saveResTransfer() {
 
 // â”€â”€ Add Project Code modal â”€â”€
 async function saveResTransfer() {
+  const role = currentRole();
   const editId = document.getElementById('res-transfer-id').value;
   const sourceId = document.getElementById('rtf-source-id')?.value || '';
   const actionMode = document.getElementById('rtf-action')?.value || 'transfer';
@@ -1712,18 +2669,20 @@ async function saveResTransfer() {
   const allocation = clampAlloc(document.getElementById('rtf-allocation')?.value || 100);
   const supervisor = document.getElementById('rtf-supervisor')?.value?.trim() || '';
   const remark = document.getElementById('rtf-remark')?.value?.trim() || '';
-  const actor = RES_ROLES[currentRole()];
+  const actor = roleLabel(currentRole());
   const list = loadResources();
   const source = sourceId ? list.find(r => r.id === sourceId) : null;
 
   if(actionMode === 'code') {
+    if(!canProjectCode(role)) { alert(`${roleLabel(role)} cannot add Project Code.`); return; }
     if(!sourceId || !destProject || !code || allocation < 1 || !startDate || !endDate) {
       alert('Please select Employee, Project, Project Code, Allocation, Start Date, and End Date.');
       return;
     }
     if(endDate && endDate < startDate) { alert('End Date must be after Start Date.'); return; }
     if(!source) return;
-    const codeMeta = projectCodeByValue(code, destProject) || projectCodeByValue(code);
+    const codeMeta = projectCodeByValue(code, destProject);
+    if(!codeMeta) { alert('Project Code must belong to the selected Project.'); return; }
     if(codeMeta && String(codeMeta.status||'').toLowerCase() !== 'active') { alert('Selected Project Code is not Active yet.'); return; }
     const editIdx = codeIndexRaw === '' ? -1 : Number(codeIndexRaw);
     const existingCodes = [...(source.projectCodes||[])];
@@ -1756,11 +2715,16 @@ async function saveResTransfer() {
     return;
   }
 
+  if(!canTransfer(role)) { alert(`${roleLabel(role)} cannot create transfer records.`); return; }
   if(!requestDate || !requestBy || !fromProject || !destProject || !personName || !startDate || !endDate) {
     alert('Please fill Request Date, Request By, From Project, To Project, Employee, First Day, and Last Day.');
     return;
   }
   if(endDate && endDate < startDate) { alert('Last day must be after first day.'); return; }
+  if(code && !projectCodeByValue(code, destProject)) {
+    alert('Project Code must belong to the selected To Project.');
+    return;
+  }
 
   const existing = editId ? list.find(r => r.id === editId) : null;
   const now = new Date().toISOString();
@@ -1845,7 +2809,7 @@ function ensureAddCodeModal() {
   document.body.appendChild(m);
   m.addEventListener('click', e => { if(e.target===m) closeAddCode(); });
 }
-function closeAddCode() { const m=document.getElementById('res-addcode-modal'); if(m) m.style.display='none'; }
+function closeAddCode() { pmoMotionHide(document.getElementById('res-addcode-modal')); }
 function syncAddCodeChoices() {
   const project = document.getElementById('addcode-project')?.value || '';
   const codes = activeProjectCodeMaster().filter(c => !project || c.project === project);
@@ -1873,7 +2837,7 @@ function openAddCode(id='', codeIndex='') {
   openTransferEntry('', id, 'code', codeIndex);
   return;
   const role = currentRole();
-  if(!canInternalOps(role)) { alert(`${RES_ROLES[role]} cannot add Project Code.`); return; }
+  if(!canProjectCode(role)) { alert(`${roleLabel(role)} cannot add Project Code.`); return; }
   ensureAddCodeModal();
   if(!document.getElementById('addcode-person')) {
     const projectWrap = document.getElementById('addcode-project')?.closest('.fg');
@@ -1901,7 +2865,7 @@ function openAddCode(id='', codeIndex='') {
   document.getElementById('addcode-index').value = codeIndex === '' ? '' : String(codeIndex);
   document.getElementById('addcode-person').innerHTML = peopleOptions;
   document.getElementById('addcode-target').innerHTML =
-    `<strong>${esc(r.position)}</strong> / ${esc(r.level||'')} <span style="color:var(--text-3)">(${esc(r.resourceTeam||'-')})</span>
+    `<strong>${esc(r.position)}</strong> / ${esc(r.level||'')}
      <div style="font-size:11px;color:var(--text-3);margin-top:3px">Primary project: <strong>${esc(r.project)}</strong></div>`;
 
 
@@ -1923,9 +2887,9 @@ function openAddCode(id='', codeIndex='') {
   document.getElementById('addcode-cap').textContent = `Allocation available ${Math.max(0, 100-used)}% (primary + extra codes used ${used}%)`;
   syncAddCodeChoices();
   applySelectedProjectCode();
-  document.getElementById('res-addcode-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('res-addcode-modal'));
 }
-function closeAddCode() { const m=document.getElementById('res-addcode-modal'); if(m) m.style.display='none'; }
+function closeAddCode() { pmoMotionHide(document.getElementById('res-addcode-modal')); }
 
 
 async function saveAddCode() {
@@ -1938,7 +2902,7 @@ async function saveAddCode() {
   const startDate = document.getElementById('addcode-start')?.value || '';
   const endDate = document.getElementById('addcode-end')?.value || '';
   const note = document.getElementById('addcode-note').value.trim();
-  const actor = RES_ROLES[currentRole()];
+  const actor = roleLabel(currentRole());
   const codeMeta = projectCodeByValue(code, project) || projectCodeByValue(code);
   if(endDate && startDate && endDate < startDate) { alert('End Date must be after Start Date.'); return; }
   if(!project||!code||alloc<1) { alert('Please fill Project, Code, and Allocation.'); return; }
@@ -1986,7 +2950,7 @@ async function saveAddCode() {
 // â”€â”€ Delete (hard remove) â€” PMO only â”€â”€
 async function deleteProjectCode(id, codeIndex) {
   const role = currentRole();
-  if(!canInternalOps(role)) { alert(`${RES_ROLES[role]} cannot delete project codes`); return; }
+  if(!canProjectCode(role)) { alert(`${roleLabel(role)} cannot delete project codes`); return; }
   const list = loadResources();
   const r = list.find(x => x.id === id);
   if(!r) return;
@@ -1999,7 +2963,7 @@ async function deleteProjectCode(id, codeIndex) {
   await saveResourceAsync({ ...r,
     projectCodes: codes,
     updatedAt: now,
-    activityLog: [...(r.activityLog||[]), { action:'Project code deleted', from:c.project, by:RES_ROLES[role], remark:c.code||'', at:now }],
+    activityLog: [...(r.activityLog||[]), { action:'Project code deleted', from:c.project, by:roleLabel(role), remark:c.code||'', at:now }],
     remark: (r.remark ? r.remark+'\n' : '') + `[Delete Code] ${c.code||'-'} (${c.project||'-'})`,
   });
   renderResource();
@@ -2007,7 +2971,7 @@ async function deleteProjectCode(id, codeIndex) {
 
 function deleteResource(id) {
   const role = currentRole();
-  if(!canDelete(role)) { alert(`${RES_ROLES[role]} cannot delete requests. Only PMO/Dir can delete.`); return; }
+  if(!canDelete(role)) { alert(`${roleLabel(role)} cannot delete requests.`); return; }
   const r = loadResources().find(x => x.id === id);
   if(!r) return;
   if(!confirm(`Delete this request permanently?\n\n${r.position} / ${r.project}\n${r.id}\n\nThis action cannot be undone.`)) return;
@@ -2025,7 +2989,7 @@ async function _doDeleteResource(id) {
 // à¸ªà¸£à¹‰à¸²à¸‡ drawer à¹€à¸­à¸‡à¸–à¹‰à¸² index.html à¹„à¸¡à¹ˆà¸¡à¸µ (à¸à¸±à¸™à¸›à¸¸à¹ˆà¸¡ "à¸ˆà¸±à¸”à¸à¸²à¸£" à¸à¸”à¹à¸¥à¹‰à¸§à¹€à¸‡à¸µà¸¢à¸š)
 async function offboardResource(id) {
   const role = currentRole();
-  if(!canInternalOps(role)) { alert(`${RES_ROLES[role]} cannot offboard resources`); return; }
+  if(!canOffboard(role)) { alert(`${roleLabel(role)} cannot offboard resources`); return; }
   const r = loadResources().find(x => x.id === id);
   if(!r) return;
   if(r.status !== 'filled') { alert('Offboard is available only for filled / onboarded resources'); return; }
@@ -2037,7 +3001,7 @@ async function offboardResource(id) {
     resolvedDate: todayISO,
     offboardDate: todayISO,
     updatedAt: now,
-    activityLog: [...(r.activityLog||[]), { action:'Offboarded', from:'filled', to:'resolved', by:RES_ROLES[role], remark:reason.trim(), at:now }],
+    activityLog: [...(r.activityLog||[]), { action:'Offboarded', from:'filled', to:'resolved', by:roleLabel(role), remark:reason.trim(), at:now }],
     remark: (r.remark ? r.remark+'\n' : '') + `[Offboard] ${reason.trim()}`,
   };
   await saveResourceAsync(updated);
@@ -2087,6 +3051,7 @@ function openResDetail(id) {
   const log = (r.activityLog||[]).slice().reverse().map(l=>
     `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
       <div style="font-size:12px;font-weight:600">${esc(l.action)}${l.from?` (${RES_STATUS[l.from]?.label||l.from} -> ${RES_STATUS[l.to]?.label||l.to||''})`:''}${l.to&&!l.from?` -> ${esc(l.to)}`:''}</div>
+      ${l.cancelReason?`<div style="font-size:11px;color:var(--red);margin-top:2px">Cancel: ${esc(l.cancelReason)}</div>`:''}
       ${l.remark?`<div style="font-size:11px;color:var(--text-2);margin-top:2px">${esc(l.remark)}</div>`:''}
       <div style="font-size:10px;color:var(--text-3);margin-top:2px">${esc(l.by||'System')} / ${l.at?new Date(l.at).toLocaleString('th-TH'):''}</div>
     </div>`
@@ -2107,7 +3072,7 @@ function openResDetail(id) {
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div>
         <div style="font-size:15px;font-weight:700">${esc(r.position)}</div>
-        <div style="font-size:12px;color:var(--text-2)">${esc(r.resourceTeam)} / ${esc(r.project)}</div>
+        <div style="font-size:12px;color:var(--text-2)">${esc(r.project)}</div>
       </div>
       <span class="badge ${s.cls}">${s.label}</span>
     </div>
@@ -2116,28 +3081,29 @@ function openResDetail(id) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div><span style="color:var(--text-3)">Resource</span><br><strong>${esc(resourcePersonName(r)||'-')}</strong></div>
         <div><span style="color:var(--text-3)">Employee Code</span><br><strong>${esc(resourceEmployeeCode(r)||'-')}</strong></div>
-        <div><span style="color:var(--text-3)">Primary Code</span><br><strong>${esc(primaryProjectCode(r)||'-')}</strong></div>
+        <div><span style="color:var(--text-3)">Project Code</span><br><strong>${esc(primaryProjectCode(r)||'-')}</strong></div>
         <div><span style="color:var(--text-3)">Primary Allocation</span><br><strong>${primaryAllocation(r)}%</strong></div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;font-size:12px">
       ${[['Level',r.level],['Employment Type',hiringMeta(r.hiringType).fullLabel],
-         ['Start Date',r.startDate?shortDate(r.startDate):'-'],['End Date',r.endDate?shortDate(r.endDate):'-'],
+         ['Start Date',r.startDate?shortDate(r.startDate):'-'],['End Date',resourceEndDate(r)?shortDate(resourceEndDate(r)):'-'],
          ['Request Date',r.requestDate?shortDate(r.requestDate):'-'],['Resolved Date',r.resolvedDate?shortDate(r.resolvedDate):'-'],
          ['Requester',r.requesterName||'-'],['Transfer From',r.transferFrom||'-']
         ].map(([k,v])=>`<div><span style="color:var(--text-3)">${k}</span><br><strong>${esc(String(v))}</strong></div>`).join('')}
     </div>
     ${codesHtml}
+    ${r.cancelReason?`<div style="background:color-mix(in srgb,var(--red) 8%,var(--surface));border:1px solid color-mix(in srgb,var(--red) 24%,var(--border));border-radius:var(--r-sm);padding:10px;font-size:12px;margin:16px 0"><strong>Cancel Reason:</strong> ${esc(r.cancelReason)}</div>`:''}
     ${r.remark?`<div style="background:var(--bg);border-radius:var(--r-sm);padding:10px;font-size:12px;margin:16px 0;white-space:pre-wrap">${esc(r.remark)}</div>`:''}
     <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--text-2)">Activity Log</div>
     ${log || '<div style="color:var(--text-3);font-size:12px">No activity log</div>'}
     <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
-      ${(canManageRequest(role)&&r.status==='pending')?`<button class="btn-sm" onclick="openResModal('${r.id}');closeResDetail()">Edit</button>`:''}
+      ${(canEditPending(role)&&r.status==='pending')?`<button class="btn-sm" onclick="openResModal('${r.id}');closeResDetail()">Edit</button>`:''}
       ${(canApprove(role)&&r.status==='pending')?`<button class="btn-sm" style="color:var(--green)" onclick="approveRequest('${r.id}');closeResDetail()">Approve</button>`:''}
       ${(canRecruit(role)&&r.status==='approved')?`<button class="btn-sm" style="color:var(--blue)" onclick="bbikAccept('${r.id}');closeResDetail()">Accept</button>`:''}
       ${allowedNext(r.status,role).length?`<button class="btn-sm" onclick="openResStatus('${r.id}');closeResDetail()">Change Status</button>`:''}
-      ${(r.status==='filled'&&canInternalOps(role))?`<button class="btn-sm" style="color:var(--blue)" onclick="openResTransfer('${r.id}');closeResDetail()">Transfer</button>`:''}
-      ${(r.status==='filled'&&canInternalOps(role))?`<button class="btn-sm" style="color:var(--green)" onclick="openAddCode('${r.id}');closeResDetail()">Add Project Code</button>`:''}
+      ${(r.status==='filled'&&canTransfer(role))?`<button class="btn-sm" style="color:var(--blue)" onclick="openResTransfer('${r.id}');closeResDetail()">Transfer</button>`:''}
+      ${(r.status==='filled'&&canProjectCode(role))?`<button class="btn-sm" style="color:var(--green)" onclick="openAddCode('${r.id}');closeResDetail()">Add Project Code</button>`:''}
       ${canDelete(role)?`<button class="btn-sm" style="color:var(--red)" onclick="deleteResource('${r.id}')">Delete</button>`:''}
     </div>`;
 
@@ -2167,8 +3133,8 @@ function closeResDetail() {
 function exportResourceCsv() {
   const list = visibleToRole(loadResources(), currentRole());
   if(!list.length) { alert('No data to export.'); return; }
-  const headers = ['ID','Resource Name','Employee Code','Resource Team','Project','Primary Project Code','Primary Allocation %','Position','Level','Hiring Type','Start Date','End Date','Onboard Date','Offboard Date','Request Date','Resolved Date','Updated','Status','Requester','Transfer From','Project Codes','Remark'];
-  const rows = list.map(r=>[r.id,resourcePersonName(r),resourceEmployeeCode(r),r.resourceTeam,r.project,primaryProjectCode(r),primaryAllocation(r),r.position,r.level,r.hiringType,r.startDate||'',r.endDate||'',r.onboardDate||'',r.offboardDate||'',r.requestDate||'',r.resolvedDate||'',r.updatedAt?String(r.updatedAt).slice(0,10):'',RES_STATUS[r.status]?.label||r.status,r.requesterName||'',r.transferFrom||'',(r.projectCodes||[]).map(c=>`${c.code}(${c.project}:${c.allocation}%)`).join(' | '),r.remark||'']);
+  const headers = ['ID','Resource Name','Employee Code','Project','Project Code','Primary Allocation %','Position','Level','Hiring Type','Start Date','End Date','Onboard Date','Offboard Date','Request Date','Resolved Date','Updated','Status','Requester','Cancel Reason','Transfer From','Project Codes','Remark'];
+  const rows = list.map(r=>[r.id,resourcePersonName(r),resourceEmployeeCode(r),r.project,primaryProjectCode(r),primaryAllocation(r),r.position,r.level,r.hiringType,r.startDate||'',resourceEndDate(r)||'',r.onboardDate||'',r.offboardDate||'',r.requestDate||'',r.resolvedDate||'',r.updatedAt?String(r.updatedAt).slice(0,10):'',RES_STATUS[r.status]?.label||r.status,r.requesterName||'',r.cancelReason||'',r.transferFrom||'',(r.projectCodes||[]).map(c=>`${c.code}(${c.project}:${c.allocation}%)`).join(' | '),r.remark||'']);
   const csv = [headers,...rows].map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
   const a = document.createElement('a'); a.href=URL.createObjectURL(blob);
@@ -2179,7 +3145,16 @@ function exportResourceCsv() {
 
 // Close modals on backdrop
 document.addEventListener('click', e => {
+  if(!e.target.closest('.res-filter-menu')) closeResourceFilterMenus();
   if(e.target===document.getElementById('resource-modal')) closeResModal();
   if(e.target===document.getElementById('resource-status-modal')) closeResStatus();
   if(e.target===document.getElementById('resource-transfer-modal')) closeResTransfer();
+});
+
+window.addEventListener('pmo:session-change', () => {
+  _role = null;
+  _userProject = null;
+  _resPage = 1;
+  if(document.getElementById('view-resource')?.classList.contains('active')) renderResource();
+  if(typeof refreshNotifications === 'function') refreshNotifications();
 });

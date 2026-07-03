@@ -76,13 +76,16 @@ body {
   gap: 9px;
 }
 .sb-dot {
-  width: 28px; height: 28px;
-  border-radius: 7px;
-  background: var(--blue);
-  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px;
+  display: block;
   flex-shrink: 0;
 }
-.sb-dot svg { width: 14px; height: 14px; fill: #fff; }
+.sb-dot img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
 .sb-brand { font-size: 12px; font-weight: 600; color: var(--text); line-height: 1.3; }
 .sb-brand-sub { font-size: 10px; color: var(--text-3); font-weight: 400; }
 
@@ -675,7 +678,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 .cost-stab.active::after { content:""; position:absolute; left:-1px; right:-1px; bottom:-2px; height:2px; background:#FFFFFF; }
 .cost-tab-panel { border:1px solid rgba(0,0,0,0.12); border-top:none; border-radius:0 6px 6px 6px; padding:14px; background:#FFFFFF; margin-bottom:14px; }
 </style>
-<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="theme.css?v=0.1.4">
 <script>
   (function () {
     try {
@@ -694,8 +697,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
   <!-- ════════ SIDEBAR ════════ -->
   <div class="sidebar">
     <div class="sb-logo">
-      <div class="sb-dot">
-        <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5"/></svg>
+      <div class="sb-dot" aria-hidden="true">
+        <img src="assets/orbit-digital-mark.png" alt="">
       </div>
       <div>
         <div class="sb-brand">Orbit Digital</div>
@@ -748,21 +751,19 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Resource
       </div>
+
+      <div class="sb-section">System</div>
+      <div class="sb-item" onclick="swView('log',this,'Transaction Log')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 2 5-6"/><circle cx="7" cy="14" r="1"/><circle cx="10" cy="11" r="1"/><circle cx="13" cy="13" r="1"/><circle cx="18" cy="7" r="1"/></svg>
+        Transaction Log
+      </div>
       <div class="sb-item" onclick="swView('settings',this,'Settings')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Settings
       </div>
     </div>
 
-    <div class="sb-footer">
-      <div class="sb-user">
-        <div class="sb-avatar">CK</div>
-        <div>
-          <div class="sb-uname">Chuen K.</div>
-          <div class="sb-urole">PMO</div>
-        </div>
-      </div>
-    </div>
+    <div class="sb-footer"></div>
   </div>
 
   <!-- ════════ MAIN ════════ -->
@@ -772,6 +773,10 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <div class="topbar-title" id="page-title">Create Memo</div>
       </div>
       <div class="topbar-right">
+        <button class="auth-status-chip" id="auth-status-chip" type="button" onclick="openAuthModal()" aria-label="Open sign in session">
+          <span class="auth-status-dot" aria-hidden="true"></span>
+          <span class="auth-status-text">Sign in</span>
+        </button>
         <button class="theme-toggle" id="theme-toggle" type="button" onclick="toggleTheme()" aria-label="เปลี่ยนเป็นโหมดสว่าง" aria-pressed="true" title="สลับ Light / Dark mode">
           <span class="theme-toggle-track" aria-hidden="true">
             <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
@@ -781,10 +786,11 @@ svg.icon { display: inline-block; vertical-align: middle; }
           </span>
           <span class="theme-toggle-label">Dark</span>
         </button>
-        <button class="topbar-btn notification-btn notification-btn--active" title="Notifications" aria-label="Notifications, 1 unread">
+        <button class="topbar-btn notification-btn" id="notification-btn" type="button" onclick="toggleNotifications()" title="Notifications" aria-label="Notifications">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-          <span class="notification-badge">1</span>
+          <span class="notification-badge" id="notification-badge" hidden>0</span>
         </button>
+        <div id="notification-panel" class="notification-panel" aria-hidden="true"></div>
       </div>
     </div>
 
@@ -1695,12 +1701,13 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
         <!-- Filter row -->
         <div class="filter-row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">
-          <input type="text" id="res-search" placeholder="🔍 ค้นหา Project, Position, Team..."
+          <input type="text" id="res-search" placeholder="🔍 ค้นหา Project, Position..."
             style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface);min-width:200px"
-            oninput="renderResource()">
+            oninput="renderResourceSearch()">
           <select id="res-f-status" onchange="renderResource()" style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
             <option value="all">ทุกสถานะ</option>
             <option value="pending">Pending</option>
+            <option value="pendingDocs">Pending Docs</option>
             <option value="sourcing">Sourcing</option>
             <option value="interviewing">Interviewing</option>
             <option value="offer">Offer in Progress</option>
@@ -1745,8 +1752,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <table class="hist-table">
             <thead><tr>
               <th style="padding-left:12px;width:12%">Request ID</th>
-              <th style="width:9%">Team</th>
-              <th style="width:9%">Project</th>
+              <th style="width:12%">Project</th>
               <th style="width:12%">Position</th>
               <th style="width:7%">Level</th>
               <th style="width:4%;text-align:center">HC</th>
@@ -1768,7 +1774,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
       <!-- ════ RESOURCE: New/Edit Modal ════ -->
       <div id="resource-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:300;align-items:center;justify-content:center">
-        <div class="card" style="width:640px;max-width:95vw;max-height:90vh;overflow-y:auto;padding:24px;position:relative">
+        <div class="card" style="width:920px;max-width:95vw;max-height:90vh;overflow-y:auto;padding:24px;position:relative">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
             <span id="res-modal-title" style="font-size:15px;font-weight:700">New Resource Request</span>
             <button class="btn-sm" onclick="closeResModal()" style="padding:4px 10px">✕</button>
@@ -1791,8 +1797,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <div class="fg" style="margin-bottom:10px"><label>สถานะใหม่</label>
             <select id="res-status-select" class="ri" style="width:100%"></select>
           </div>
-          <div class="fg"><label>Remark (จำเป็นเมื่อ Cancelled)</label>
-            <textarea id="res-status-remark" class="ri" rows="2" placeholder="หมายเหตุ"></textarea>
+          <div class="fg"><label>Additional Remark</label>
+            <textarea id="res-status-remark" class="ri" rows="2" placeholder="Optional note"></textarea>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
             <button class="btn-ghost" onclick="closeResStatus()">Cancel</button>
@@ -1803,7 +1809,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
       <!-- ════ RESOURCE: Transfer Modal ════ -->
       <div id="resource-transfer-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:300;align-items:center;justify-content:center">
-        <div class="card" style="width:500px;max-width:95vw;padding:24px">
+        <div class="card" style="width:880px;max-width:95vw;max-height:90vh;overflow:auto;padding:24px">
           <div style="font-size:15px;font-weight:700;margin-bottom:12px">Employee Assignment</div>
           <input type="hidden" id="res-transfer-id">
           <div id="res-transfer-body"></div>
@@ -1823,6 +1829,10 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <div id="res-detail-body"></div>
       </div>
 
+      <div id="view-log" class="view">
+        <div id="transaction-log-root"></div>
+      </div>
+
     </div><!-- /content -->
   </div><!-- /main -->
 </div><!-- /layout -->
@@ -1832,8 +1842,10 @@ svg.icon { display: inline-block; vertical-align: middle; }
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <!-- Runtime environment config; generated locally/CI and intentionally not committed. -->
 <script src="config.js"></script>
+<!-- Auth/session facade: mock session now, OAuth-ready later. -->
+<script src="auth.js"></script>
 <!-- Core: shared utils, storage, navigation, PDF -->
-<script src="app.js"></script>
+<script src="app.js?v=0.1.3"></script>
 <!-- Views -->
 <script src="views/create.js"></script>
 <script src="views/pending.js"></script>
@@ -1841,9 +1853,11 @@ svg.icon { display: inline-block; vertical-align: middle; }
 <script src="views/budget.js"></script>
 <script src="views/license.js"></script>
 <script src="views/device.js"></script>
-<script src="views/bulk_import.js"></script>
-<script src="views/settings.js"></script>
-<script src="views/resource_module.js?v=0.3.0"></script>
+<script src="views/bulk_import.js?v=0.1.1"></script>
+<script src="views/settings.js?v=0.2.1"></script>
+<script src="views/resource_flow.js"></script>
+<script src="views/resource_module.js?v=0.5.2"></script>
+<script src="views/log.js"></script>
 <script src="views/cost.js"></script>
 <style>
   #resource-detail-drawer { transform:translateX(100%);visibility:hidden;z-index:1100; }

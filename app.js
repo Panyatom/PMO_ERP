@@ -14,7 +14,7 @@ async function supaFetch(table, method='GET', body=null, query='') {
   const url = SUPA_URL + '/rest/v1/' + table + query;
   const headers = {
     'apikey': SUPA_KEY,
-    'Authorization': 'Bearer ' + SUPA_KEY,
+    'Authorization': 'Bearer ' + ((typeof pmoAuthAccessToken === 'function' && pmoAuthAccessToken()) || SUPA_KEY),
     'Content-Type': 'application/json',
     'Prefer': method === 'POST' ? 'return=representation' : 'return=representation',
   };
@@ -313,6 +313,7 @@ function updateMemoStatus(memoNo, status, extra={}) {
   if(status==='completed') memos[idx].approvedAt = memos[idx].updatedAt;
   if(status==='rejected')  memos[idx].rejectedAt = memos[idx].updatedAt;
   storeMemos(memos);
+  refreshNotifications();
   _memCache = null; // force fresh read
   renderPendingMemos();
   renderHistoryMemos();
@@ -321,6 +322,196 @@ function updateMemoStatus(memoNo, status, extra={}) {
     .then(() => { renderPendingMemos(); renderHistoryMemos(); })
     .catch(e => console.warn('Supabase status update failed', e));
   return memos[idx];
+}
+
+// Notification center
+const NOTIFICATION_READ_KEY = 'orbit-pmo-notifications-read-v1';
+let _notificationRead = null;
+
+function notificationSettings() {
+  const s = typeof loadSettings === 'function' ? loadSettings() : null;
+  return {
+    memoPending: s?.notifications?.memoPending !== false,
+    resourceApproval: s?.notifications?.resourceApproval !== false,
+    recruiting: s?.notifications?.recruiting !== false,
+    onboarding: s?.notifications?.onboarding !== false,
+  };
+}
+function notificationReadMap() {
+  if(_notificationRead) return _notificationRead;
+  try { _notificationRead = JSON.parse(localStorage.getItem(NOTIFICATION_READ_KEY) || '{}') || {}; }
+  catch(e) { _notificationRead = {}; }
+  return _notificationRead;
+}
+function storeNotificationReadMap(map) {
+  _notificationRead = map || {};
+  try { localStorage.setItem(NOTIFICATION_READ_KEY, JSON.stringify(_notificationRead)); } catch(e) {}
+}
+function isNotificationRead(id) {
+  return !!notificationReadMap()[id];
+}
+function markNotificationRead(id) {
+  if(!id) return;
+  const map = notificationReadMap();
+  map[id] = new Date().toISOString();
+  storeNotificationReadMap(map);
+}
+function markAllNotificationsRead() {
+  const map = notificationReadMap();
+  collectNotifications().forEach(item => { map[item.id] = new Date().toISOString(); });
+  storeNotificationReadMap(map);
+  refreshNotifications();
+}
+function clearNotificationReads() {
+  storeNotificationReadMap({});
+  refreshNotifications();
+}
+function collectNotifications() {
+  const cfg = notificationSettings();
+  const items = [];
+  const role = typeof currentRole === 'function' ? currentRole() : 'pmo';
+  if(cfg.memoPending) {
+    loadMemos().filter(m => (m.status || 'pending') === 'pending').forEach(m => {
+      items.push({
+        id: `memo:${m.memoNo}`,
+        kind: 'memo',
+        priority: 30,
+        title: `Memo waiting approval: ${m.memoNo || '-'}`,
+        note: `${m.project || '-'} / ${m.subject || m.typeLabel || '-'}`,
+        meta: m.updatedAt || m.createdAt || m.date || '',
+        action: () => swView('pending', document.querySelector('#memo-sub .sb-sub-item:nth-child(2)'), 'Pending Approval'),
+      });
+    });
+  }
+  if(typeof loadResources === 'function') {
+    const resources = typeof visibleToRole === 'function' ? visibleToRole(loadResources(), role) : loadResources();
+    resources.forEach(r => {
+      if(cfg.resourceApproval && r.status === 'pending' && typeof canApprove === 'function' && canApprove(role)) {
+        items.push({
+          id: `resource:${r.id}:pending`,
+          kind: 'resource',
+          priority: 25,
+          title: `Resource request needs approval`,
+          note: `${r.position || '-'} / ${r.project || '-'} / ${r.requesterName || '-'}`,
+          meta: r.updatedAt || r.requestDate || '',
+          action: () => openResourceNotification(r.id),
+        });
+      }
+      if(cfg.recruiting && r.status === 'approved' && typeof canRecruit === 'function' && canRecruit(role)) {
+        items.push({
+          id: `resource:${r.id}:approved`,
+          kind: 'resource',
+          priority: 20,
+          title: `Approved request waiting for BBIK`,
+          note: `${r.position || '-'} / ${r.project || '-'}`,
+          meta: r.updatedAt || r.requestDate || '',
+          action: () => openResourceNotification(r.id),
+        });
+      }
+      if(cfg.recruiting && ['sourcing','interviewing','offer'].includes(r.status) && role !== 'user') {
+        items.push({
+          id: `resource:${r.id}:${r.status}`,
+          kind: 'resource',
+          priority: 12,
+          title: `Recruiting in progress: ${(typeof RES_STATUS !== 'undefined' && RES_STATUS[r.status]?.label) || r.status}`,
+          note: `${r.position || '-'} / ${r.project || '-'}`,
+          meta: r.updatedAt || r.requestDate || '',
+          action: () => openResourceNotification(r.id),
+        });
+      }
+      if(cfg.onboarding && r.status === 'document' && typeof canApprove === 'function' && canApprove(role)) {
+        items.push({
+          id: `resource:${r.id}:document`,
+          kind: 'resource',
+          priority: 22,
+          title: `Ready for onboard confirmation`,
+          note: `${r.position || '-'} / ${r.project || '-'}`,
+          meta: r.updatedAt || r.requestDate || '',
+          action: () => openResourceNotification(r.id),
+        });
+      }
+    });
+  }
+  return items.sort((a,b) => (b.priority - a.priority) || String(b.meta || '').localeCompare(String(a.meta || '')));
+}
+function openResourceNotification(id) {
+  swView('resource', document.querySelector('.sb-item[onclick*="resource"]'), 'Resource Management');
+  window.setTimeout(() => { if(typeof openResDetail === 'function') openResDetail(id); }, 80);
+}
+function renderNotifications() {
+  const panel = ensureNotificationPanel();
+  if(!panel) return [];
+  const items = collectNotifications();
+  const unread = items.filter(item => !isNotificationRead(item.id)).length;
+  panel.innerHTML = `
+    <div class="notification-head">
+      <div><strong>Notifications</strong><span>${items.length ? `${unread} unread / ${items.length} active` : 'No active alerts'}</span></div>
+      <div class="notification-actions">
+        <button class="btn-sm" type="button" onclick="markAllNotificationsRead()">Mark read</button>
+        <button class="btn-sm" type="button" onclick="clearNotificationReads()">Reset</button>
+      </div>
+    </div>
+    <div class="notification-list">
+      ${items.length ? items.map(item => `
+        <button class="notification-item ${isNotificationRead(item.id) ? 'is-read' : ''}" type="button" data-notification-id="${esc(item.id)}">
+          <span class="notification-dot" aria-hidden="true"></span>
+          <span>
+            <span class="notification-title">${esc(item.title)}</span>
+            <span class="notification-meta">${item.meta ? esc(shortDate(String(item.meta).slice(0,10))) : esc(item.kind)}</span>
+            <span class="notification-note">${esc(item.note)}</span>
+          </span>
+        </button>`).join('') : '<div class="notification-empty">All clear. No pending memo or resource actions.</div>'}
+    </div>
+    <div class="notification-foot"><button class="btn-sm" type="button" onclick="swView('settings', document.querySelector('.sb-item[onclick*=settings]'), 'Settings'); switchSettingsTab('later'); closeNotifications()">Settings</button></div>`;
+  panel.querySelectorAll('[data-notification-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const item = items.find(x => x.id === btn.dataset.notificationId);
+      if(!item) return;
+      markNotificationRead(item.id);
+      closeNotifications();
+      item.action?.();
+      refreshNotifications();
+    });
+  });
+  return items;
+}
+function ensureNotificationPanel() {
+  let panel = document.getElementById('notification-panel');
+  if(!panel) {
+    panel = document.createElement('div');
+    panel.id = 'notification-panel';
+    panel.className = 'notification-panel';
+    panel.setAttribute('aria-hidden', 'true');
+  }
+  if(panel.parentElement !== document.body) document.body.appendChild(panel);
+  return panel;
+}
+function refreshNotifications() {
+  const items = renderNotifications();
+  const unread = items.filter(item => !isNotificationRead(item.id)).length;
+  const btn = document.getElementById('notification-btn');
+  const badge = document.getElementById('notification-badge');
+  if(btn) {
+    btn.classList.toggle('notification-btn--active', unread > 0);
+    btn.setAttribute('aria-label', unread ? `Notifications, ${unread} unread` : 'Notifications');
+  }
+  if(badge) {
+    badge.hidden = unread < 1;
+    badge.textContent = unread > 99 ? '99+' : String(unread);
+  }
+}
+function toggleNotifications() {
+  const panel = ensureNotificationPanel();
+  if(!panel) return;
+  refreshNotifications();
+  const next = !panel.classList.contains('is-open');
+  panel.classList.toggle('is-open', next);
+  panel.setAttribute('aria-hidden', String(!next));
+}
+function closeNotifications() {
+  const panel = document.getElementById('notification-panel');
+  panel?.classList.remove('is-open');
+  panel?.setAttribute('aria-hidden', 'true');
 }
 
 // ── Navigation ──
@@ -336,6 +527,7 @@ function swView(id, el, title) {
   if(id === 'license') renderLicense();
   if(id === 'device') renderDevice();
   if(id === 'history') renderHistoryMemos();
+  if(id === 'log') { if(typeof renderTransactionLog==='function') renderTransactionLog(); }
   if(id === 'settings') { if(typeof renderSettings==='function') renderSettings(); }
   if(id === 'resource') { if(typeof renderResource==='function') renderResource(); }
   if(id === 'cost') { if(typeof renderCost==='function') renderCost(); }
@@ -575,18 +767,73 @@ function openMemoPdf(memoNo) {
 }
 
 // ── Micro interactions ──
+function pmoMotionHide(el, afterHide) {
+  if(!el) return;
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const finish = (force = false) => {
+    if(!force && !el.classList.contains('motion-closing')) return;
+    el.classList.remove('motion-closing');
+    el.style.display = 'none';
+    el.style.pointerEvents = '';
+    el._pmoMotionHideTimer = null;
+    if(typeof afterHide === 'function') afterHide();
+  };
+  if(reduce || getComputedStyle(el).display === 'none') {
+    finish(true);
+    return;
+  }
+  if(el.classList.contains('motion-closing')) return;
+  el.classList.add('motion-closing');
+  el.style.pointerEvents = 'none';
+  el._pmoMotionHideTimer = window.setTimeout(finish, 170);
+}
+
+function pmoMotionShow(el, display = 'flex') {
+  if(!el) return;
+  if(el._pmoMotionHideTimer) {
+    window.clearTimeout(el._pmoMotionHideTimer);
+    el._pmoMotionHideTimer = null;
+  }
+  el.classList.remove('motion-closing');
+  el.style.pointerEvents = '';
+  el.style.display = display;
+}
+
 function initMicroInteractions() {
   if(window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
   const rippleSelector = [
     'button', '.btn-primary', '.btn-ghost', '.btn-sm', '.btn-export',
     '.btn-approve', '.btn-reject', '.add-btn', '.rm-btn', '.type-btn',
-    '.cost-stab', '.sb-item', '.sb-sub-item', '[role="button"]'
+    '.cost-stab', '.sb-item', '.sb-sub-item', '.pend-tab-btn', '.res-tab',
+    '.hist-filter-toggle', '.hist-menu-btn', '.hist-pdf-btn', '[role="button"]'
   ].join(',');
+  const changedControlSelector = [
+    '.filter-row select', '.filter-row input[type="search"]', '.filter-row input[type="text"]',
+    '.filter-row input[type="date"]', '.filter-row input[type="number"]',
+    '.hist-toolbar select', '.hist-filters-advanced select',
+    '.hist-filters-advanced input[type="date"]', '.hist-amt-input',
+    '.fg input', '.fg select', '.fg textarea', '.ri', '.hist-search'
+  ].join(',');
+  const rowSelector = [
+    '.hist-table tbody tr.hist-row',
+    '#lic-table-body tr',
+    '#dev-table-body tr',
+    '#res-table-body tr'
+  ].join(',');
+
+  const pulse = (el, cls) => {
+    if(!el || !(el instanceof HTMLElement)) return;
+    el.classList.remove(cls);
+    void el.offsetWidth;
+    el.classList.add(cls);
+    el.addEventListener('animationend', () => el.classList.remove(cls), { once:true });
+  };
 
   document.addEventListener('click', event => {
     const target = event.target.closest(rippleSelector);
     if(!target || target.disabled || target.getAttribute('aria-disabled') === 'true') return;
+    if(target.id === 'notification-btn') return;
 
     const rect = target.getBoundingClientRect();
     const ripple = document.createElement('span');
@@ -600,13 +847,26 @@ function initMicroInteractions() {
     ripple.addEventListener('animationend', () => ripple.remove(), { once:true });
   });
 
+  document.addEventListener('change', event => {
+    const target = event.target.closest(changedControlSelector);
+    if(target) pulse(target, 'motion-value-change');
+  });
+
+  document.addEventListener('click', event => {
+    const row = event.target.closest(rowSelector);
+    if(!row || event.target.closest('button,a,input,select,textarea,label')) return;
+    pulse(row, 'motion-row-tap');
+  });
+
   const animateAddedNodes = new MutationObserver(records => {
     records.forEach(record => record.addedNodes.forEach(node => {
       if(!(node instanceof HTMLElement)) return;
-      const items = node.matches('.item-row, .row-name, .pend-card')
+      if(node.closest?.('[data-motion-suppress="true"]')) return;
+      const items = node.matches('.item-row, .row-name, .pend-card, .metric-card, #lic-table-body tr, #dev-table-body tr, #res-table-body tr')
         ? [node]
-        : [...node.querySelectorAll('.item-row, .row-name, .pend-card')];
+        : [...node.querySelectorAll('.item-row, .row-name, .pend-card, .metric-card, #lic-table-body tr, #dev-table-body tr, #res-table-body tr')];
       items.forEach(item => {
+        if(item.closest?.('[data-motion-suppress="true"]')) return;
         item.classList.remove('motion-enter');
         void item.offsetWidth;
         item.classList.add('motion-enter');
@@ -617,9 +877,290 @@ function initMicroInteractions() {
   animateAddedNodes.observe(document.body, { childList:true, subtree:true });
 }
 
+const PMO_DATE_PICKER = { input:null, view:null, selected:null, original:'' };
+function pmoIsoToDate(value) {
+  const m = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function pmoDateToIso(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+function pmoSameDay(a, b) {
+  return !!a && !!b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+function pmoMonthLabel(date) {
+  return date.toLocaleDateString('en-US', { month:'long', year:'numeric' });
+}
+function pmoShortDateLabel(date) {
+  return date.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+}
+function ensurePmoDatePicker() {
+  let picker = document.getElementById('pmo-date-picker');
+  if(picker) return picker;
+  picker = document.createElement('div');
+  picker.id = 'pmo-date-picker';
+  picker.className = 'pmo-date-picker';
+  picker.setAttribute('role', 'dialog');
+  picker.innerHTML = `
+    <div class="pmo-date-head">
+      <button type="button" class="pmo-date-nav" data-date-nav="-1" aria-label="Previous month">‹</button>
+      <div class="pmo-date-month"></div>
+      <button type="button" class="pmo-date-nav" data-date-nav="1" aria-label="Next month">›</button>
+    </div>
+    <div class="pmo-date-controls">
+      <div class="pmo-date-current"></div>
+      <button type="button" class="pmo-date-today">Today</button>
+    </div>
+    <div class="pmo-date-weekdays">${['Mo','Tu','We','Th','Fr','Sat','Su'].map(d => `<span>${d}</span>`).join('')}</div>
+    <div class="pmo-date-days"></div>
+    <div class="pmo-date-actions">
+      <button type="button" class="pmo-date-cancel">Cancel</button>
+      <button type="button" class="pmo-date-apply">Apply</button>
+    </div>`;
+  document.body.appendChild(picker);
+  picker.addEventListener('pointerdown', event => {
+    event.stopPropagation();
+  });
+  picker.addEventListener('click', event => {
+    event.stopPropagation();
+    const nav = event.target.closest('[data-date-nav]');
+    if(nav) {
+      PMO_DATE_PICKER.view.setMonth(PMO_DATE_PICKER.view.getMonth() + Number(nav.dataset.dateNav || 0));
+      renderPmoDatePicker();
+      return;
+    }
+    if(event.target.closest('.pmo-date-today')) {
+      const t = new Date();
+      PMO_DATE_PICKER.selected = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+      PMO_DATE_PICKER.view = new Date(PMO_DATE_PICKER.selected.getFullYear(), PMO_DATE_PICKER.selected.getMonth(), 1);
+      renderPmoDatePicker();
+      return;
+    }
+    const day = event.target.closest('[data-date-day]');
+    if(day) {
+      PMO_DATE_PICKER.selected = pmoIsoToDate(day.dataset.dateDay);
+      PMO_DATE_PICKER.view = new Date(PMO_DATE_PICKER.selected.getFullYear(), PMO_DATE_PICKER.selected.getMonth(), 1);
+      renderPmoDatePicker();
+      return;
+    }
+    if(event.target.closest('.pmo-date-cancel')) closePmoDatePicker(false);
+    if(event.target.closest('.pmo-date-apply')) closePmoDatePicker(true);
+  });
+  return picker;
+}
+function positionPmoDatePicker(input, picker) {
+  const rect = input.getBoundingClientRect();
+  const width = 286;
+  const height = 344;
+  const left = Math.min(Math.max(12, rect.left), window.innerWidth - width - 12);
+  const below = rect.bottom + 8;
+  const above = rect.top - height - 8;
+  picker.style.left = `${left}px`;
+  picker.style.top = `${below + height < window.innerHeight ? below : Math.max(12, above)}px`;
+}
+function renderPmoDatePicker() {
+  const picker = ensurePmoDatePicker();
+  const view = PMO_DATE_PICKER.view || new Date();
+  const selected = PMO_DATE_PICKER.selected;
+  const t = new Date();
+  const today = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+  picker.querySelector('.pmo-date-month').textContent = pmoMonthLabel(view);
+  picker.querySelector('.pmo-date-current').textContent = selected ? pmoShortDateLabel(selected) : 'Select date';
+  const first = new Date(view.getFullYear(), view.getMonth(), 1);
+  const start = new Date(first);
+  start.setDate(first.getDate() - ((first.getDay() + 6) % 7));
+  const days = [];
+  for(let i = 0; i < 42; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    days.push(`<button type="button" data-date-day="${pmoDateToIso(d)}" class="pmo-date-day ${d.getMonth() !== view.getMonth() ? 'is-muted' : ''} ${pmoSameDay(d, selected) ? 'is-selected' : ''} ${pmoSameDay(d, today) ? 'is-today' : ''}">${d.getDate()}</button>`);
+  }
+  picker.querySelector('.pmo-date-days').innerHTML = days.join('');
+}
+function enhancePmoDateInput(input) {
+  if(!input || input.dataset.nativeDate === 'true' || input.dataset.pmoDateEnhanced === 'true') return;
+  input.dataset.pmoDateEnhanced = 'true';
+  input.dataset.pmoDateType = input.type || 'date';
+  input.classList.add('pmo-date-input');
+  input.setAttribute('autocomplete', 'off');
+  input.setAttribute('placeholder', input.getAttribute('placeholder') || 'YYYY-MM-DD');
+  if(input.type === 'date') input.type = 'text';
+}
+function openPmoDatePicker(input) {
+  if(!input || input.disabled || input.dataset.nativeDate === 'true') return;
+  enhancePmoDateInput(input);
+  const picker = ensurePmoDatePicker();
+  PMO_DATE_PICKER.input = input;
+  PMO_DATE_PICKER.original = input.value || '';
+  const current = pmoIsoToDate(input.value) || new Date();
+  PMO_DATE_PICKER.selected = pmoIsoToDate(input.value);
+  PMO_DATE_PICKER.view = new Date(current.getFullYear(), current.getMonth(), 1);
+  renderPmoDatePicker();
+  positionPmoDatePicker(input, picker);
+  picker.classList.add('is-open');
+}
+function closePmoDatePicker(apply=false) {
+  const input = PMO_DATE_PICKER.input;
+  if(apply && input && PMO_DATE_PICKER.selected) {
+    input.value = pmoDateToIso(PMO_DATE_PICKER.selected);
+    input.dispatchEvent(new Event('input', { bubbles:true }));
+    input.dispatchEvent(new Event('change', { bubbles:true }));
+  }
+  document.getElementById('pmo-date-picker')?.classList.remove('is-open');
+  PMO_DATE_PICKER.input = null;
+}
+function initDatePicker() {
+  document.querySelectorAll('input[type="date"]').forEach(enhancePmoDateInput);
+  document.addEventListener('pointerdown', event => {
+    const input = event.target.closest?.('input[type="date"], .pmo-date-input');
+    if(!input || input.disabled || input.dataset.nativeDate === 'true') return;
+    event.preventDefault();
+    input.focus({ preventScroll:true });
+    openPmoDatePicker(input);
+  }, true);
+  document.addEventListener('keydown', event => {
+    if(event.key === 'Escape' && document.getElementById('pmo-date-picker')?.classList.contains('is-open')) closePmoDatePicker(false);
+    if((event.key === 'Enter' || event.key === ' ') && event.target?.matches?.('input[type="date"], .pmo-date-input')) {
+      event.preventDefault();
+      openPmoDatePicker(event.target);
+    }
+  });
+  document.addEventListener('click', event => {
+    const picker = document.getElementById('pmo-date-picker');
+    if(!picker?.classList.contains('is-open')) return;
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    if(path.includes(picker) || event.target.closest('#pmo-date-picker') || event.target.closest('input[type="date"], .pmo-date-input')) return;
+    closePmoDatePicker(false);
+  });
+  const observer = new MutationObserver(records => {
+    records.forEach(record => record.addedNodes.forEach(node => {
+      if(!(node instanceof Element)) return;
+      if(node.matches('input[type="date"]')) enhancePmoDateInput(node);
+      node.querySelectorAll?.('input[type="date"]').forEach(enhancePmoDateInput);
+    }));
+  });
+  observer.observe(document.body, { childList:true, subtree:true });
+  window.addEventListener('resize', () => {
+    const picker = document.getElementById('pmo-date-picker');
+    if(picker?.classList.contains('is-open') && PMO_DATE_PICKER.input) positionPmoDatePicker(PMO_DATE_PICKER.input, picker);
+  });
+}
+
+function closePmoSelects(except=null) {
+  document.querySelectorAll('.pmo-select.is-open').forEach(el => {
+    if(el !== except) el.classList.remove('is-open');
+  });
+}
+
+function renderPmoSelect(select) {
+  const wrap = select?.closest?.('.pmo-select');
+  if(!wrap) return;
+  const button = wrap.querySelector('.pmo-select-trigger');
+  const menu = wrap.querySelector('.pmo-select-menu');
+  if(!button || !menu) return;
+  const selected = select.options[select.selectedIndex] || select.options[0];
+  button.disabled = select.disabled;
+  button.querySelector('span').textContent = selected ? selected.textContent.trim() : 'Select';
+  menu.innerHTML = Array.from(select.options).map((option, index) => `
+    <button type="button"
+      class="pmo-select-option ${option.selected ? 'is-selected' : ''}"
+      data-pmo-option-index="${index}"
+      ${option.disabled ? 'disabled' : ''}>
+      <span>${esc(option.textContent.trim())}</span>
+      ${option.selected ? '<b aria-hidden="true">✓</b>' : '<b aria-hidden="true"></b>'}
+    </button>
+  `).join('') || '<div class="pmo-select-empty">No values</div>';
+}
+
+function enhancePmoSelect(select) {
+  if(!select || select.multiple || select.dataset.nativeSelect === 'true') return;
+  if(select.closest('.res-filter-menu')) return;
+  if(select.dataset.pmoEnhanced === 'true') {
+    renderPmoSelect(select);
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'pmo-select';
+  select.parentNode.insertBefore(wrap, select);
+  wrap.appendChild(select);
+  select.dataset.pmoEnhanced = 'true';
+  select.classList.add('pmo-select-native');
+  select.setAttribute('aria-hidden', 'true');
+  select.tabIndex = -1;
+  wrap.insertAdjacentHTML('beforeend', `
+    <button type="button" class="pmo-select-trigger">
+      <span></span><b aria-hidden="true">▾</b>
+    </button>
+    <div class="pmo-select-menu"></div>
+  `);
+  wrap.querySelector('.pmo-select-trigger').addEventListener('click', event => {
+    event.stopPropagation();
+    if(select.disabled) return;
+    const next = !wrap.classList.contains('is-open');
+    closePmoSelects(wrap);
+    wrap.classList.toggle('is-open', next);
+    if(next) renderPmoSelect(select);
+  });
+  wrap.querySelector('.pmo-select-menu').addEventListener('click', event => {
+    event.stopPropagation();
+    const optionBtn = event.target.closest('[data-pmo-option-index]');
+    if(!optionBtn || optionBtn.disabled) return;
+    const nextIndex = Number(optionBtn.dataset.pmoOptionIndex);
+    if(Number.isNaN(nextIndex)) return;
+    select.selectedIndex = nextIndex;
+    select.dispatchEvent(new Event('input', { bubbles:true }));
+    select.dispatchEvent(new Event('change', { bubbles:true }));
+    wrap.classList.remove('is-open');
+    renderPmoSelect(select);
+  });
+  select.addEventListener('change', () => renderPmoSelect(select));
+  renderPmoSelect(select);
+}
+
+function enhancePmoSelects(root=document) {
+  const scope = root instanceof Element || root instanceof Document ? root : document;
+  const selects = scope.matches?.('select.ri, .fg select')
+    ? [scope]
+    : [...scope.querySelectorAll('select.ri, .fg select')];
+  selects.forEach(enhancePmoSelect);
+}
+
+function initCustomSelects() {
+  enhancePmoSelects(document);
+  document.addEventListener('click', event => {
+    if(event.target.closest('.pmo-select')) return;
+    closePmoSelects();
+  });
+  const observer = new MutationObserver(records => {
+    const touched = new Set();
+    records.forEach(record => {
+      if(record.target instanceof HTMLSelectElement) touched.add(record.target);
+      if(record.target instanceof Element) {
+        const select = record.target.closest?.('select');
+        if(select) touched.add(select);
+      }
+      record.addedNodes.forEach(node => {
+        if(!(node instanceof Element)) return;
+        if(node.matches('select.ri, .fg select')) touched.add(node);
+        node.querySelectorAll?.('select.ri, .fg select').forEach(select => touched.add(select));
+      });
+    });
+    touched.forEach(select => {
+      enhancePmoSelect(select);
+      renderPmoSelect(select);
+    });
+  });
+  observer.observe(document.body, { childList:true, subtree:true });
+}
+
 // ── Init ──
 function initApp() {
   initMicroInteractions();
+  initDatePicker();
+  initCustomSelects();
+  if(typeof initAuthSession === 'function') initAuthSession();
   syncThemeControl();
   ['f-date','f-signdate','f-apprdate','sl-ratedate'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = todayISO;
@@ -627,14 +1168,22 @@ function initApp() {
 
   renderPendingMemos();
   renderHistoryMemos();
+  refreshNotifications();
   rebuildAcct();
   setInterval(() => fetch('https://memo-pdf-server.onrender.com/ping').catch(()=>{}), 4*60*1000);
   // Load from Supabase on startup and refresh UI
   loadMemosAsync().then(() => {
-    renderPendingMemos();
-    renderHistoryMemos();
+      renderPendingMemos();
+      renderHistoryMemos();
+      refreshNotifications();
   
   }).catch(e => console.warn('Supabase init load failed', e));
   // Load settings and refresh all dropdowns
   if(typeof initSettings === 'function') initSettings();
+  document.addEventListener('click', event => {
+    const panel = document.getElementById('notification-panel');
+    if(!panel?.classList.contains('is-open')) return;
+    if(event.target.closest('#notification-panel, #notification-btn')) return;
+    closeNotifications();
+  });
 }

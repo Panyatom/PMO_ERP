@@ -394,10 +394,10 @@ function openBulkNameModal(containerId, cls, doCalc) {
   _bulkCls = cls;
   _bulkCalc = doCalc;
   document.getElementById('bulk-name-input').value = '';
-  document.getElementById('bulk-name-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('bulk-name-modal'));
 }
 function closeBulkNameModal() {
-  document.getElementById('bulk-name-modal').style.display = 'none';
+  pmoMotionHide(document.getElementById('bulk-name-modal'));
 }
 function saveBulkNames() {
   const lines = document.getElementById('bulk-name-input').value
@@ -424,10 +424,10 @@ document.addEventListener('click', e => {
 // ── Bulk Account Modal ──
 function openBulkAcctModal() {
   document.getElementById('bulk-acct-input').value = '';
-  document.getElementById('bulk-acct-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('bulk-acct-modal'));
 }
 function closeBulkAcctModal() {
-  document.getElementById('bulk-acct-modal').style.display = 'none';
+  pmoMotionHide(document.getElementById('bulk-acct-modal'));
 }
 function saveBulkAcct() {
   const emails = document.getElementById('bulk-acct-input').value

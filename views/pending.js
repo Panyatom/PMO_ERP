@@ -291,9 +291,9 @@ function openApproveModal(memoNo, bulk) {
   }
   el('approve-note').value = '';
   el('approve-modal').dataset.targets = JSON.stringify(targets);
-  el('approve-modal').style.display   = 'flex';
+  pmoMotionShow(el('approve-modal'));
 }
-function closeApproveModal() { document.getElementById('approve-modal').style.display='none'; }
+function closeApproveModal() { pmoMotionHide(document.getElementById('approve-modal')); }
 function confirmApprove() {
   const targets = JSON.parse(document.getElementById('approve-modal').dataset.targets || '[]');
   const note    = document.getElementById('approve-note').value.trim();
@@ -316,9 +316,9 @@ function openRejectModal(memoNo, bulk) {
   document.getElementById('reject-reason-select').value  = '';
   document.getElementById('reject-comment').value        = '';
   document.getElementById('reject-modal').dataset.targets = JSON.stringify(targets);
-  document.getElementById('reject-modal').style.display  = 'flex';
+  pmoMotionShow(document.getElementById('reject-modal'));
 }
-function closeRejectModal() { document.getElementById('reject-modal').style.display='none'; }
+function closeRejectModal() { pmoMotionHide(document.getElementById('reject-modal')); }
 function confirmReject() {
   const targets = JSON.parse(document.getElementById('reject-modal').dataset.targets || '[]');
   const reason  = document.getElementById('reject-reason-select').value;
@@ -368,9 +368,9 @@ function openDetailModal(memoNo) {
        <button class="btn-reject" onclick="closeDetailModal();openRejectModal('${esc(memo.memoNo)}')">✕ Reject</button>`
     : '';
   acts.innerHTML += `<button class="btn-sm" onclick="openMemoPdf('${esc(memo.memoNo)}')">📄 PDF</button>`;
-  document.getElementById('detail-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('detail-modal'));
 }
-function closeDetailModal() { document.getElementById('detail-modal').style.display='none'; }
+function closeDetailModal() { pmoMotionHide(document.getElementById('detail-modal')); }
 
 // ── Budget Settings ──
 function openBudgetSettings() {
@@ -383,9 +383,9 @@ function openBudgetSettings() {
         style="flex:1;font-size:13px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm)">
       <div style="font-size:11px;color:var(--text-3);white-space:nowrap">Used: ${money(getProjectUsed(p))}</div>
     </div>`).join('');
-  document.getElementById('budget-settings-modal').style.display='flex';
+  pmoMotionShow(document.getElementById('budget-settings-modal'));
 }
-function closeBudgetSettings() { document.getElementById('budget-settings-modal').style.display='none'; }
+function closeBudgetSettings() { pmoMotionHide(document.getElementById('budget-settings-modal')); }
 function saveBudgetSettings() {
   const b = loadBudgets();
   document.querySelectorAll('.budget-ceiling-input').forEach(inp => { b[inp.dataset.project]=Number(inp.value)||0; });

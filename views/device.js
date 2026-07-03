@@ -207,7 +207,7 @@ function renderDevice() {
 
 // ── Modal ──
 function openDeviceModal(id) {
-  document.getElementById('device-modal').style.display = 'flex';
+  pmoMotionShow(document.getElementById('device-modal'));
   const setVal = (elId, v) => { const el=document.getElementById(elId); if(el) el.value=v||''; };
 
   if(id) {
@@ -234,7 +234,7 @@ function openDeviceModal(id) {
     setVal('dev-assigned-date', new Date().toISOString().slice(0,10));
   }
 }
-function closeDeviceModal() { document.getElementById('device-modal').style.display='none'; }
+function closeDeviceModal() { pmoMotionHide(document.getElementById('device-modal')); }
 
 function saveDevice() {
   const name = document.getElementById('dev-name').value.trim();

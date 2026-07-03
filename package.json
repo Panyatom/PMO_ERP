@@ -1,0 +1,11 @@
+{
+  "name": "pmo-erp",
+  "version": "0.2.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "test:resource-flow": "node --test tests/resource_flow.test.js",
+    "uat:resource": "node scripts/serve-uat.mjs"
+  }
+}
