@@ -1,34 +1,1278 @@
-// ─────────────────────────────────────────
+﻿// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Supabase client + storage layer
 // Replaces localStorage for memos, licenses, devices
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const PMO_CONFIG = window.__PMO_CONFIG__ || {};
 const SUPA_URL = String(PMO_CONFIG.supabaseUrl || '').replace(/\/$/, '');
 const SUPA_KEY = String(PMO_CONFIG.supabaseAnonKey || '');
 
-// ── Supabase REST helper ──
+// â”€â”€ Supabase REST helper â”€â”€
+const SUPA_FETCH_TIMEOUT_MS = 6000;
+
 async function supaFetch(table, method='GET', body=null, query='') {
   if(!SUPA_URL || !SUPA_KEY) {
     throw new Error('Supabase is not configured. Generate config.js from config.example.js.');
   }
   const url = SUPA_URL + '/rest/v1/' + table + query;
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeout = ctrl ? setTimeout(() => ctrl.abort(), SUPA_FETCH_TIMEOUT_MS) : null;
   const headers = {
     'apikey': SUPA_KEY,
     'Authorization': 'Bearer ' + ((typeof pmoAuthAccessToken === 'function' && pmoAuthAccessToken()) || SUPA_KEY),
     'Content-Type': 'application/json',
-    'Prefer': method === 'POST' ? 'return=representation' : 'return=representation',
+    'Prefer': method === 'POST' && query.includes('on_conflict') ? 'return=representation,resolution=merge-duplicates' : 'return=representation',
   };
   if(method === 'GET') headers['Accept'] = 'application/json';
-  const resp = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : null });
-  if(!resp.ok) {
-    const err = await resp.text();
-    throw new Error('Supabase ' + method + ' ' + table + ': ' + err);
+  try {
+    const resp = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : null, signal: ctrl?.signal });
+    if(!resp.ok) {
+      const err = await resp.text();
+      throw new Error('Supabase ' + method + ' ' + table + ': ' + err);
+    }
+    const text = await resp.text();
+    return text ? JSON.parse(text) : null;
+  } catch(e) {
+    if(e && e.name === 'AbortError') throw new Error('Supabase ' + method + ' ' + table + ' timed out');
+    throw e;
+  } finally {
+    if(timeout) clearTimeout(timeout);
   }
-  const text = await resp.text();
-  return text ? JSON.parse(text) : null;
 }
 
-// ── Memo field mapping: JS camelCase ↔ DB snake_case ──
+// â”€â”€ Memo field mapping: JS camelCase â†” DB snake_case â”€â”€
+// â”€â”€ Shared financial models (Phase 1A â€” local storage only) â”€â”€
+const SPEND_TYPES = Object.freeze({
+  SOFTWARE: 'Software',
+  HARDWARE: 'Hardware',
+  TEAM_ACTIVITY: 'Team Activity',
+  CLIENT_EXPENSE: 'Client Expense',
+  DEPLOYMENT: 'Deployment',
+  INFRA: 'Infra',
+  OTHERS: 'Others',
+});
+const SPEND_TYPE_VALUES = Object.freeze(Object.values(SPEND_TYPES));
+const MEMO_TYPE_TO_SPEND_TYPE = Object.freeze({
+  sl: SPEND_TYPES.SOFTWARE,
+  hw: SPEND_TYPES.HARDWARE,
+  int: SPEND_TYPES.TEAM_ACTIVITY,
+  ent: SPEND_TYPES.CLIENT_EXPENSE,
+  dep: SPEND_TYPES.DEPLOYMENT,
+  infra: SPEND_TYPES.INFRA,
+  other: SPEND_TYPES.OTHERS,
+});
+const SPEND_TYPE_TO_MEMO_TYPE = Object.freeze({
+  [SPEND_TYPES.SOFTWARE]: 'sl',
+  [SPEND_TYPES.HARDWARE]: 'hw',
+  [SPEND_TYPES.TEAM_ACTIVITY]: 'int',
+  [SPEND_TYPES.CLIENT_EXPENSE]: 'ent',
+  [SPEND_TYPES.DEPLOYMENT]: 'dep',
+  [SPEND_TYPES.INFRA]: 'infra',
+  [SPEND_TYPES.OTHERS]: 'other',
+});
+const ACTUAL_SPEND_SOURCES = Object.freeze({
+  APPROVED_MEMO: 'Approved Memo',
+  MANUAL_EXPENSE: 'Manual / Historical Expense',
+  INFRA_COST: 'Infra Cost',
+});
+const ACTUAL_SPEND_SOURCE_VALUES = Object.freeze(Object.values(ACTUAL_SPEND_SOURCES));
+const FINANCIAL_STORAGE_KEYS = Object.freeze({
+  actualSpend: 'orbit-pmo-actual-spend-v1',
+  budgetPools: 'orbit-pmo-budget-pools-v1',
+});
+const BUDGET_STATUSES = Object.freeze({
+  MANUAL_OVERRIDE: 'Manual Override',
+  MAPPED: 'Mapped',
+  NEEDS_PMO_REVIEW: 'Needs PMO Review',
+  UNBUDGETED: 'Unbudgeted',
+});
+
+function spendTypeFromMemoType(memoType) {
+  return MEMO_TYPE_TO_SPEND_TYPE[String(memoType || '').trim().toLowerCase()] || SPEND_TYPES.OTHERS;
+}
+
+function parseStrictCalendarValue(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = match[3] == null ? null : Number(match[3]);
+  if (month < 1 || month > 12) return null;
+  if (day != null) {
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  }
+  return { text, year, month, day, precision: day == null ? 'month' : 'date' };
+}
+
+function isValidCalendarRange(startValue, endValue) {
+  const start = parseStrictCalendarValue(startValue);
+  const end = parseStrictCalendarValue(endValue);
+  if (!start || !end || start.precision !== end.precision) return false;
+  return start.text <= end.text;
+}
+
+function inclusiveCoverageMonths(startDate, endDate) {
+  if (!startDate || !endDate) return null;
+  const start = parseStrictCalendarValue(startDate);
+  const end = parseStrictCalendarValue(endDate);
+  if (!start || !end || !isValidCalendarRange(startDate, endDate)) return null;
+  return (end.year - start.year) * 12 + end.month - start.month + 1;
+}
+
+function generateFinancialRecordId(prefix = 'record') {
+  const uuid = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}-${uuid}`;
+}
+
+function normalizeActualSpendDetailLines(detailLines) {
+  if (!Array.isArray(detailLines)) return [];
+  return detailLines.filter(line => line && typeof line === 'object' && !Array.isArray(line)).map(line => ({
+    program: String(line.program || ''),
+    plan: String(line.plan || ''),
+    description: String(line.description || ''),
+    quantity: Number(line.quantity) || 0,
+    unitCost: Number(line.unitCost) || 0,
+    monthlyCost: Number(line.monthlyCost) || 0,
+    coverageStart: line.coverageStart || null,
+    coverageEnd: line.coverageEnd || null,
+    coverageMonths: Number(line.coverageMonths) > 0 ? Number(line.coverageMonths) : null,
+    lineAmount: Number(line.lineAmount) || 0,
+  }));
+}
+
+function createActualSpendRecord(input = {}) {
+  const now = new Date().toISOString();
+  const startDate = input.startDate || null;
+  const endDate = input.endDate || null;
+  const coverageMonths = inclusiveCoverageMonths(startDate, endDate);
+  const coverageStatus = !startDate || !endDate ? 'Missing Coverage'
+    : coverageMonths ? 'Complete' : 'Invalid Coverage';
+  const effectiveDate = startDate || input.date || null;
+  return {
+    id: input.id || generateFinancialRecordId('actual-spend'),
+    source: input.source || '',
+    referenceNo: input.referenceNo || '',
+    memoId: input.memoId || null,
+    project: input.project || '',
+    spendType: input.spendType || SPEND_TYPES.OTHERS,
+    amount: Number(input.amount) || 0,
+    currency: input.currency || 'THB',
+    startDate,
+    endDate,
+    month: input.month || (effectiveDate ? String(effectiveDate).slice(0, 7) : null),
+    year: input.year || (effectiveDate ? String(effectiveDate).slice(0, 4) : null),
+    coverageMonths,
+    coverageStatus,
+    vendorProgram: input.vendorProgram || '',
+    description: input.description || '',
+    notes: input.notes || '',
+    detailLines: normalizeActualSpendDetailLines(input.detailLines),
+    autoBudgetPoolId: input.autoBudgetPoolId || null,
+    manualBudgetPoolId: input.manualBudgetPoolId || null,
+    finalBudgetPoolId: input.manualBudgetPoolId || input.finalBudgetPoolId || input.autoBudgetPoolId || null,
+    budgetStatus: input.budgetStatus || 'Unbudgeted',
+    // Preserved across normalization so a blocked cross-year override (Phase 7A-3) stays
+    // detectable after a store/reload cycle, not only in mapBudgetPool()'s immediate return value.
+    mappingWarning: input.mappingWarning || null,
+    createdBy: input.createdBy || '',
+    createdAt: input.createdAt || now,
+    updatedBy: input.updatedBy || '',
+    updatedAt: input.updatedAt || now,
+  };
+}
+
+function validateActualSpendRecord(input) {
+  const record = createActualSpendRecord(input);
+  const errors = [];
+  if (!ACTUAL_SPEND_SOURCE_VALUES.includes(record.source)) errors.push('Invalid Source');
+  if (!record.project) errors.push('Project is required');
+  if (!SPEND_TYPE_VALUES.includes(record.spendType)) errors.push('Invalid Spend Type');
+  if (!(record.amount > 0)) errors.push('Amount must be greater than zero');
+  if (!SUPPORTED_CURRENCIES.includes(record.currency)) errors.push(`Currency must be ${SUPPORTED_CURRENCIES.join(' or ')}`);
+  if (record.startDate && !parseStrictCalendarValue(record.startDate)) errors.push('Invalid Start Date');
+  if (record.endDate && !parseStrictCalendarValue(record.endDate)) errors.push('Invalid End Date');
+  if (record.coverageStatus === 'Invalid Coverage') errors.push('Invalid coverage period');
+  return { valid: errors.length === 0, errors, record };
+}
+
+function actualSpendDuplicateKey(input = {}) {
+  const record = createActualSpendRecord(input);
+  return [
+    record.source,
+    record.referenceNo,
+    record.project,
+    record.spendType,
+    record.amount,
+    record.startDate || '',
+    record.endDate || '',
+  ].map(v => String(v).trim().toLowerCase()).join('|');
+}
+
+function validateActualSpendImport(rows, existingRows = []) {
+  const existingKeys = new Set(existingRows.map(actualSpendDuplicateKey));
+  const batchKeys = new Set();
+  const records = [];
+  const duplicates = [];
+  const errors = [];
+  (rows || []).forEach((row, index) => {
+    const result = validateActualSpendRecord(row);
+    if (!result.valid) {
+      errors.push({ row: index + 1, errors: result.errors });
+      return;
+    }
+    const key = actualSpendDuplicateKey(result.record);
+    if (existingKeys.has(key) || batchKeys.has(key)) {
+      duplicates.push({ row: index + 1, record: result.record });
+      return;
+    }
+    batchKeys.add(key);
+    records.push(result.record);
+  });
+  return {
+    valid: errors.length === 0,
+    errors,
+    duplicates,
+    records: errors.length ? [] : records,
+  };
+}
+
+function createBudgetPoolRecord(input = {}) {
+  const hasCanonicalTypes = Object.prototype.hasOwnProperty.call(input, 'spendTypes');
+  const legacyTypes = Array.isArray(input.memoTypes)
+    ? (input.memoTypes.length ? input.memoTypes.map(spendTypeFromMemoType) : SPEND_TYPE_VALUES)
+    : [];
+  const spendTypes = (hasCanonicalTypes && Array.isArray(input.spendTypes) ? input.spendTypes : legacyTypes)
+    .filter(t => SPEND_TYPE_VALUES.includes(t));
+  const memoTypes = spendTypes.map(t => SPEND_TYPE_TO_MEMO_TYPE[t]).filter(Boolean);
+  // Phase 7A-9A: createBudgetPoolRecord() is THE canonicalizer, so it must itself normalize a
+  // legacy/typed BE value (e.g. "2569-01") to Gregorian before deriving year â€” otherwise
+  // gregorianYearToBuddhistEra() double-converts into the "3112" bug at the model layer, and only
+  // call sites that separately remembered to normalize first (e.g. the Edit modal) were protected.
+  // Every canonical read (Budget Settings, BvA, exports, mapping) now inherits this for free.
+  const effectiveStartDate = normalizeMonthValueToGregorian(input.startDate || input.startMonth) || null;
+  const effectiveEndDate = normalizeMonthValueToGregorian(input.endDate || input.endMonth) || null;
+  // Year is derived from the pool's own normalized coverage start whenever date data exists â€” an
+  // independently-supplied input.year is never allowed to disagree with the pool's dates
+  // (see docs/BvA_REQUIREMENT.md "Phase 7A-1" Â§2). Only fall back to input.year when there is
+  // no date data to derive from at all.
+  const derivedYear = effectiveStartDate ? gregorianYearToBuddhistEra(effectiveStartDate) : '';
+  return {
+    id: input.id || '',
+    project: input.project || '',
+    name: input.name || '',
+    budget: Number(input.budget) || 0,
+    currency: input.currency || 'THB',
+    spendTypes,
+    startDate: effectiveStartDate,
+    endDate: effectiveEndDate,
+    year: derivedYear || input.year || null,
+    startMonth: effectiveStartDate,
+    endMonth: effectiveEndDate,
+    memoTypes,
+    createdBy: input.createdBy || '',
+    createdAt: input.createdAt || new Date().toISOString(),
+    updatedBy: input.updatedBy || '',
+    updatedAt: input.updatedAt || new Date().toISOString(),
+  };
+}
+
+function validateBudgetPoolRecord(input) {
+  const record = createBudgetPoolRecord(input);
+  const errors = [];
+  if (!record.id) errors.push('ID is required');
+  if (!record.project) errors.push('Project is required');
+  if (!(record.budget > 0)) errors.push('Budget must be greater than zero');
+  if (!SUPPORTED_CURRENCIES.includes(record.currency)) errors.push(`Currency must be ${SUPPORTED_CURRENCIES.join(' or ')}`);
+  if (!record.spendTypes.length) errors.push('At least one Spend Type is required');
+  if (!record.startDate || !record.endDate || !isValidCalendarRange(record.startDate, record.endDate)) {
+    errors.push('Valid start/end month or date range is required');
+  } else {
+    const startParts = parseStrictCalendarValue(record.startDate);
+    const endParts = parseStrictCalendarValue(record.endDate);
+    if (startParts && endParts && startParts.year !== endParts.year) {
+      errors.push('Budget Pool must not span multiple years');
+    }
+  }
+  return { valid: errors.length === 0, errors, record };
+}
+
+function budgetPoolPeriodsOverlap(first, second) {
+  const firstStart = first.startDate || first.startMonth;
+  const firstEnd = first.endDate || first.endMonth;
+  const secondStart = second.startDate || second.startMonth;
+  const secondEnd = second.endDate || second.endMonth;
+  return Boolean(firstStart && firstEnd && secondStart && secondEnd && firstStart <= secondEnd && secondStart <= firstEnd);
+}
+
+function validateBudgetPoolChange(input, existingPools = [], editId = null) {
+  const result = validateBudgetPoolRecord(input);
+  const errors = [...result.errors];
+  const record = result.record;
+  if (!record.name.trim()) errors.push('Pool Name is required');
+  if (!String(record.year || '').trim()) errors.push('Year is required');
+  const others = existingPools.map(createBudgetPoolRecord).filter(pool => pool.id !== (editId || record.id));
+  const duplicate = others.find(pool =>
+    pool.project === record.project &&
+    pool.name.trim().toLowerCase() === record.name.trim().toLowerCase() &&
+    String(pool.year || '') === String(record.year || '')
+  );
+  if (duplicate) errors.push('Duplicate Budget Pool for Project, Pool Name, and Year');
+  const conflicts = others.filter(pool =>
+    pool.project === record.project &&
+    String(pool.year || '') === String(record.year || '') &&
+    budgetPoolPeriodsOverlap(pool, record) &&
+    pool.spendTypes.some(type => record.spendTypes.includes(type))
+  );
+  return { valid: errors.length === 0, errors, conflicts, record };
+}
+
+// Phase 7A-9D: Budget Pool bulk import validation â€” Create + Update in one workbook.
+// Reuses validateBudgetPoolChange() row-by-row â€” no separate validation/duplicate engine â€” against
+// a context that grows with every row already accepted earlier in the SAME batch, so two identical
+// rows in one file are caught by the exact same duplicate check that already protects manual
+// add/edit, not just rows vs. pre-existing pools.
+// Import is strict all-or-nothing (docs/BvA_REQUIREMENT.md "Phase 7A-1" Â§7/Â§8, TD-7A-04): a
+// row-level overlap conflict â€” merely a confirmable warning in the manual single-save flow â€” is
+// escalated to a hard failure here, since Budget Pool is master data and there is no per-row
+// "confirm through it" UI in a batch import.
+//
+// Update-decision contract (per the redesigned Bulk Upload workflow): Pool ID (`row.id`) is the
+// ONLY thing that decides Create vs. Update. Business identity (project, name, year) remains
+// validated for uniqueness via validateBudgetPoolChange() exactly as before, but it is never used
+// to infer which pool a row updates â€” that inference was the pre-7A-9D behavior and could silently
+// overwrite the wrong pool. A blank Pool ID always creates; a non-blank Pool ID must match a real
+// existing pool.
+function validateBudgetPoolImportBatch(rows, existingPools = []) {
+  const canonicalExisting = existingPools.map(createBudgetPoolRecord);
+  const existingById = new Map(canonicalExisting.map(pool => [pool.id, pool]));
+  const accepted = [];
+  const rowResults = [];
+  let valid = true;
+
+  const idOccurrences = new Map();
+  (rows || []).forEach(row => {
+    const id = String(row.id || '').trim();
+    if (!id) return;
+    idOccurrences.set(id, (idOccurrences.get(id) || 0) + 1);
+  });
+
+  (rows || []).forEach((row, index) => {
+    const rowNumber = index + 2; // header is row 1, matching the template's own row numbering
+    const rowId = String(row.id || '').trim();
+
+    if (rowId && idOccurrences.get(rowId) > 1) {
+      valid = false;
+      rowResults.push({
+        row: rowNumber, ok: false,
+        errors: ['Duplicate Pool ID â€” this Pool ID appears more than once in this file. Each Pool ID may be used by only one row.'],
+        input: row,
+      });
+      return;
+    }
+
+    const existingMatch = rowId ? (existingById.get(rowId) || null) : null;
+    if (rowId && !existingMatch) {
+      valid = false;
+      rowResults.push({
+        row: rowNumber, ok: false,
+        errors: ['Unknown Pool ID â€” no existing Budget Pool has this ID. Leave Pool ID blank to create a new pool instead.'],
+        input: row,
+      });
+      return;
+    }
+
+    const candidate = createBudgetPoolRecord({
+      project: row.proj,
+      name: row.name,
+      budget: row.budget,
+      year: row.yr,
+      startMonth: row.start,
+      endMonth: row.end,
+      memoTypes: row.memoTypes,
+    });
+    const id = existingMatch
+      ? existingMatch.id
+      : `pool-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}-${index}`;
+    const context = canonicalExisting.concat(accepted);
+    const result = validateBudgetPoolChange({ ...candidate, id }, context, existingMatch ? existingMatch.id : null);
+    const errors = [...result.errors];
+
+    if (row.invalidSpendTypes && row.invalidSpendTypes.length) {
+      errors.push('Invalid Spend Type: ' + row.invalidSpendTypes.join(', '));
+    }
+    // Business rule update: overlapping Project + Spend Type + Period is allowed (PMO may
+    // intentionally create multiple buckets for the same project/type/period to separate budget
+    // purposes) -- result.conflicts is informational only and must never become an import error.
+    // A record that resolves to more than one matching pool still becomes Needs PMO Review at
+    // mapping time (mapBudgetPool(), unchanged) -- that is where ambiguity is handled, not here.
+    // A blank Pool ID that nonetheless collides with an existing pool's business identity gets its
+    // own explicit, actionable message â€” in addition to (not instead of) the generic duplicate
+    // message above â€” since the fix ("restore the Pool ID, or rename") is different from the
+    // fix for a genuine two-new-rows duplicate ("rename one of them").
+    if (!rowId && result.errors.some(message => message.includes('Duplicate Budget Pool for Project, Pool Name, and Year'))) {
+      errors.push('Existing Budget Pool detected, but Pool ID is blank. Restore Pool ID to update this Pool, or change Project / Pool Name / Budget Year to create a new Pool.');
+    }
+
+    if (errors.length) {
+      valid = false;
+      rowResults.push({ row: rowNumber, ok: false, errors, input: row });
+      return;
+    }
+
+    let record = result.record;
+    let action;
+    if (!existingMatch) {
+      action = 'create';
+      record = { ...record, createdBy: currentUser(), updatedBy: currentUser() };
+    } else {
+      const sameSpendTypes = JSON.stringify([...existingMatch.spendTypes].sort()) === JSON.stringify([...record.spendTypes].sort());
+      const unchanged = existingMatch.project === record.project &&
+        existingMatch.name === record.name &&
+        Number(existingMatch.budget) === Number(record.budget) &&
+        String(existingMatch.year || '') === String(record.year || '') &&
+        existingMatch.startMonth === record.startMonth &&
+        existingMatch.endMonth === record.endMonth &&
+        sameSpendTypes;
+      if (unchanged) {
+        // True no-op: reuse the existing record as-is so nothing (not even updatedAt/updatedBy)
+        // changes if this row is later saved â€” callers should skip saving 'none' rows entirely.
+        action = 'none';
+        record = existingMatch;
+      } else {
+        action = 'update';
+        record = { ...record, createdBy: existingMatch.createdBy, createdAt: existingMatch.createdAt, updatedBy: currentUser(), updatedAt: new Date().toISOString() };
+      }
+    }
+
+    accepted.push(record);
+    rowResults.push({ row: rowNumber, ok: true, record, action, previous: existingMatch || null });
+  });
+
+  return { valid, rowResults, records: valid ? accepted : [] };
+}
+
+function budgetPoolDeletionBlockers(poolId, records = [], manualExpenses = [], memos = []) {
+  // A cross-year Manual Override being blocked (Phase 7A-3) clears the CANONICAL Actual Spend
+  // record's manualBudgetPoolId/finalBudgetPoolId â€” but it never touches the underlying manual
+  // expense's or memo's own persisted budgetPoolId field. Deletion must still be blocked if any
+  // of those raw, persisted sources still reference this pool, even though canonical
+  // reconciliation would no longer show an effective mapping to it.
+  const canonicalBlockers = records.filter(record => getFinalBudgetPoolId(record) === poolId);
+  const manualBlockers = manualExpenses.filter(expense => expense && expense.budgetPoolId === poolId);
+  const memoBlockers = memos.filter(memo => memo && memo.budgetPoolId === poolId);
+  return [...canonicalBlockers, ...manualBlockers, ...memoBlockers];
+}
+
+function loadFinancialRecords(storageKey) {
+  try {
+    const rows = JSON.parse(localStorage.getItem(storageKey) || '[]');
+    return Array.isArray(rows) ? rows : [];
+  } catch(e) { return []; }
+}
+
+function storeFinancialRecords(storageKey, rows) {
+  if (!Array.isArray(rows)) throw new Error('Financial storage requires an array');
+  let validated;
+  if (storageKey === FINANCIAL_STORAGE_KEYS.actualSpend) {
+    validated = rows.map(validateActualSpendRecord);
+  } else if (storageKey === FINANCIAL_STORAGE_KEYS.budgetPools) {
+    validated = rows.map(validateBudgetPoolRecord);
+  } else {
+    throw new Error('Unsupported financial storage key');
+  }
+  const invalid = validated.find(result => !result.valid);
+  if (invalid) throw new Error(invalid.errors.join('; '));
+  const records = validated.map(result => result.record);
+  localStorage.setItem(storageKey, JSON.stringify(records));
+  return records;
+}
+
+function loadActualSpendRecords() {
+  return loadFinancialRecords(FINANCIAL_STORAGE_KEYS.actualSpend).map(createActualSpendRecord);
+}
+
+function storeActualSpendRecords(rows) {
+  return storeFinancialRecords(FINANCIAL_STORAGE_KEYS.actualSpend, rows.map(createActualSpendRecord));
+}
+
+function loadBudgetPoolRecords() {
+  return loadFinancialRecords(FINANCIAL_STORAGE_KEYS.budgetPools).map(createBudgetPoolRecord);
+}
+
+function storeBudgetPoolRecords(rows) {
+  return storeFinancialRecords(FINANCIAL_STORAGE_KEYS.budgetPools, rows.map(createBudgetPoolRecord));
+}
+
+function queryActualSpend(filters = {}, rows = loadActualSpendRecords()) {
+  return rows.filter(record =>
+    (!filters.source || record.source === filters.source) &&
+    (!filters.project || record.project === filters.project) &&
+    (!filters.spendType || record.spendType === filters.spendType) &&
+    (!filters.currency || record.currency === filters.currency) &&
+    (!filters.budgetStatus || record.budgetStatus === filters.budgetStatus) &&
+    (!filters.fromDate || (record.startDate && record.startDate >= filters.fromDate)) &&
+    (!filters.toDate || (record.endDate && record.endDate <= filters.toDate))
+  );
+}
+
+function queryBudgetPools(filters = {}, rows = loadBudgetPoolRecords()) {
+  return rows.filter(pool =>
+    (!filters.project || pool.project === filters.project) &&
+    (!filters.spendType || pool.spendTypes.includes(filters.spendType)) &&
+    (!filters.currency || pool.currency === filters.currency) &&
+    (!filters.date || ((!pool.startDate || filters.date >= pool.startDate) && (!pool.endDate || filters.date <= pool.endDate)))
+  );
+}
+
+function getActualSpendByProject(project, rows) {
+  return queryActualSpend({ project }, rows || loadActualSpendRecords());
+}
+
+function getBudgetPoolsByProject(project, rows) {
+  return queryBudgetPools({ project }, rows || loadBudgetPoolRecords());
+}
+
+function getFinalBudgetPoolId(actualSpend = {}) {
+  return actualSpend.manualBudgetPoolId || actualSpend.finalBudgetPoolId || actualSpend.autoBudgetPoolId || null;
+}
+
+function calendarValueInRange(value, startValue, endValue) {
+  const date = parseStrictCalendarValue(value);
+  const start = parseStrictCalendarValue(startValue);
+  const end = parseStrictCalendarValue(endValue);
+  if (!date || !start || !end) return false;
+  if (date.precision === 'date' && start.precision === 'date' && end.precision === 'date') {
+    return date.text >= start.text && date.text <= end.text;
+  }
+  const monthIndex = part => part.year * 12 + part.month;
+  return monthIndex(date) >= monthIndex(start) && monthIndex(date) <= monthIndex(end);
+}
+
+function actualSpendMappingDate(actualSpend = {}) {
+  return actualSpend.startDate || actualSpend.month || (actualSpend.year ? `${actualSpend.year}-01` : null);
+}
+
+function findMatchingBudgetPools(actualSpend, pools = []) {
+  const mappingDate = actualSpendMappingDate(actualSpend);
+  if (!mappingDate) return [];
+  const recordYear = gregorianYearToBuddhistEra(mappingDate);
+  return pools.filter(pool =>
+    pool.project === actualSpend.project &&
+    Array.isArray(pool.spendTypes) && pool.spendTypes.includes(actualSpend.spendType) &&
+    calendarValueInRange(mappingDate, pool.startDate || pool.startMonth, pool.endDate || pool.endMonth) &&
+    String(pool.year || '') === recordYear
+  );
+}
+
+function mapBudgetPool(actualSpend, pools = []) {
+  if (actualSpend.manualBudgetPoolId) {
+    const selectedPool = pools.find(pool => pool.id === actualSpend.manualBudgetPoolId);
+    if (selectedPool) {
+      // Manual Override must match both project and year (docs/BvA_REQUIREMENT.md
+      // "Phase 7A-1" Â§2/Â§4). A cross-project override otherwise "succeeds" but never appears in
+      // BvA, which groups by project/pool scope â€” the amount looks silently missing rather than
+      // Unbudgeted. Checked before year so the flag reports whichever mismatch is present.
+      const sameProject = !actualSpend.project || !selectedPool.project || selectedPool.project === actualSpend.project;
+      const mappingDate = actualSpendMappingDate(actualSpend);
+      const sameYear = !mappingDate || String(selectedPool.year || '') === gregorianYearToBuddhistEra(mappingDate);
+      if (!sameProject || !sameYear) {
+        // Cross-project or cross-year Manual Override is blocked: clear every override/mapping
+        // field so getFinalBudgetPoolId() cannot resurrect the blocked pool, and flag it so this
+        // is detected/warned rather than silently normalized.
+        return {
+          ...actualSpend,
+          manualBudgetPoolId: null,
+          autoBudgetPoolId: null,
+          finalBudgetPoolId: null,
+          budgetStatus: BUDGET_STATUSES.UNBUDGETED,
+          mappingWarning: !sameProject ? 'blocked-cross-project-override' : 'blocked-cross-year-override',
+        };
+      }
+    }
+    return {
+      ...actualSpend,
+      finalBudgetPoolId: actualSpend.manualBudgetPoolId,
+      budgetStatus: BUDGET_STATUSES.MANUAL_OVERRIDE,
+    };
+  }
+  if (actualSpend.source === ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE) {
+    return {
+      ...actualSpend,
+      autoBudgetPoolId: null,
+      finalBudgetPoolId: null,
+      budgetStatus: BUDGET_STATUSES.UNBUDGETED,
+    };
+  }
+  const matches = findMatchingBudgetPools(actualSpend, pools);
+  if (matches.length === 1) {
+    return {
+      ...actualSpend,
+      autoBudgetPoolId: matches[0].id,
+      finalBudgetPoolId: matches[0].id,
+      budgetStatus: BUDGET_STATUSES.MAPPED,
+    };
+  }
+  return {
+    ...actualSpend,
+    autoBudgetPoolId: null,
+    finalBudgetPoolId: null,
+    budgetStatus: matches.length > 1 ? BUDGET_STATUSES.NEEDS_PMO_REVIEW : BUDGET_STATUSES.UNBUDGETED,
+  };
+}
+
+function mapActualSpendRecords(records = [], pools = []) {
+  return records.map(record => mapBudgetPool(record, pools));
+}
+
+function calculateActualSpend(records = [], filters = {}) {
+  return queryActualSpend(filters, records).reduce((sum, record) => sum + (Number(record.amount) || 0), 0);
+}
+
+function actualSpendMonthlyAllocations(record = {}) {
+  const start = String(record.startDate || record.month || '').slice(0, 7);
+  const end = String(record.endDate || record.month || start).slice(0, 7);
+  const months = inclusiveCoverageMonths(start, end);
+  if (!months) {
+    const fallback = String(record.createdAt || record.updatedAt || '').slice(0, 7);
+    return fallback ? { [fallback]: Number(record.amount) || 0 } : {};
+  }
+  const result = {};
+  const startParts = start.split('-').map(Number);
+  const monthlyAmount = (Number(record.amount) || 0) / months;
+  for (let index = 0; index < months; index++) {
+    const date = new Date(Date.UTC(startParts[0], startParts[1] - 1 + index, 1));
+    const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+    result[key] = monthlyAmount;
+  }
+  return result;
+}
+
+function calculateActualSpendInRange(records = [], fromMonth, toMonth, filters = {}) {
+  return queryActualSpend(filters, records).reduce((sum, record) => {
+    const allocations = actualSpendMonthlyAllocations(record);
+    return sum + Object.entries(allocations).reduce((subtotal, [month, amount]) =>
+      subtotal + ((!fromMonth || month >= fromMonth) && (!toMonth || month <= toMonth) ? amount : 0), 0);
+  }, 0);
+}
+
+function calculateForecast(records = [], asOfDate = new Date(), filters = {}) {
+  const anchor = new Date(asOfDate);
+  const anchorYear = anchor.getFullYear();
+  const anchorMonth = anchor.getMonth();
+  const months = [];
+  for (let offset = -5; offset <= 6; offset++) {
+    const date = new Date(anchorYear, anchorMonth + offset, 1);
+    months.push({
+      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
+      kind: offset <= 0 ? 'actual' : 'forecast',
+    });
+  }
+  const eligible = queryActualSpend(filters, records).filter(record =>
+    (record.spendType === SPEND_TYPES.SOFTWARE || record.spendType === SPEND_TYPES.INFRA) &&
+    record.coverageStatus === 'Complete'
+  );
+  const grouped = new Map();
+  eligible.forEach(record => {
+    const program = record.vendorProgram || record.description || record.referenceNo || record.spendType;
+    const key = [record.project, program, record.spendType].join('\u0000');
+    if (!grouped.has(key)) grouped.set(key, {
+      project: record.project,
+      program,
+      spendType: record.spendType,
+      values: Object.fromEntries(months.map(month => [month.key, 0])),
+    });
+    const row = grouped.get(key);
+    const allocations = actualSpendMonthlyAllocations(record);
+    const coverageEnd = String(record.endDate).slice(0, 7);
+    const monthlyCost = (Number(record.amount) || 0) / record.coverageMonths;
+    months.forEach(month => {
+      const allocated = Number(allocations[month.key]) || 0;
+      const carriedForecast = month.kind === 'forecast' && month.key > coverageEnd ? monthlyCost : 0;
+      row.values[month.key] += allocated || carriedForecast;
+    });
+  });
+  const rows = [...grouped.values()].sort((a, b) =>
+    a.project.localeCompare(b.project) || a.spendType.localeCompare(b.spendType) || a.program.localeCompare(b.program)
+  ).map(row => ({
+    ...row,
+    total: months.reduce((sum, month) => sum + row.values[month.key], 0),
+  }));
+  return { months, rows };
+}
+
+function forecastExportDataset(forecast = { months:[], rows:[] }) {
+  const months = forecast.months || [];
+  const rows = forecast.rows || [];
+  return {
+    headers: ['Project','Program','Spend Type', ...months.map(month => `${month.key} ${month.kind}`), 'Total'],
+    rows: rows.map(row => [
+      row.project, row.program, row.spendType,
+      ...months.map(month => row.values[month.key] || 0),
+      row.total,
+    ]),
+  };
+}
+
+function calculateBudgetUtilization(pool, records = []) {
+  const actual = calculateActualSpend(
+    records.filter(record => getFinalBudgetPoolId(record) === pool.id),
+    { project: pool.project },
+  );
+  const budget = Number(pool.budget) || 0;
+  return {
+    budget,
+    actual,
+    remaining: budget - actual,
+    utilizationPercent: budget > 0 ? actual / budget * 100 : 0,
+  };
+}
+
+function financialYearToGregorian(year) {
+  const numeric = Number(year);
+  return numeric > 2400 ? String(numeric - 543) : String(numeric || '');
+}
+
+// Normalizes the year of a "YYYY-MM" / "YYYY-MM-DD" value that looks like Buddhist Era (e.g. a
+// user typing "2569-01" into a Gregorian month input) down to Gregorian, via the same >2400
+// threshold as financialYearToGregorian() above. An already-Gregorian value (or anything that
+// isn't a plain "YYYY-..." string) passes through unchanged. Fixes the "3112" bug: deriving BE
+// from an un-normalized BE-typed value double-converts (2569 + 543 = 3112) instead of converting
+// once (2569 -> 2026 -> 2569).
+function normalizeMonthValueToGregorian(value) {
+  const str = String(value || '');
+  const match = str.match(/^(\d{4})(-.*)?$/);
+  if (!match) return str;
+  return financialYearToGregorian(match[1]) + (match[2] || '');
+}
+
+// Shared Gregorian -> Buddhist Era year helper (the inverse of financialYearToGregorian above).
+// Accepts either a full calendar value ("2026-01", "2026-01-15") or a bare year. Used wherever a
+// Budget Pool or Actual Spend coverage year needs to be derived and compared consistently, so year
+// conversion exists in exactly one place per docs/BvA_REQUIREMENT.md "Phase 7A-1" Â§2.
+function gregorianYearToBuddhistEra(dateOrYear) {
+  const parsed = parseStrictCalendarValue(dateOrYear);
+  const numeric = parsed ? parsed.year : Number(String(dateOrYear || '').slice(0, 4));
+  return numeric ? String(numeric + 543) : '';
+}
+
+// Shared "what year is it right now, in Thai Buddhist Era" helper. Every year filter/default that
+// needs "today's" BE year (Budget vs Actual, Budget Settings, Overview KPIs) must call this instead
+// of re-deriving `new Date().getFullYear() + 543` locally â€” Phase 7A-9A closes
+// docs/BvA_REQUIREMENT.md "Phase 7A-1" Â§2 Known Issue #2.
+function getCurrentBuddhistYear() {
+  return gregorianYearToBuddhistEra(new Date().getFullYear());
+}
+
+// Phase 7A-9B: shared user-facing display helper for a Gregorian "YYYY-MM" (or full date) Budget
+// Pool month value, e.g. "2026-01" -> "01/2569". Mirrors the app's existing dd/mm/yyyy-BE date
+// convention (see parseThaiDate()) so month-only values read consistently with full dates
+// elsewhere. Display-only: internal storage, comparison, and matching remain Gregorian and must
+// keep using the raw "YYYY-MM" value, never this formatted string.
+function formatMonthBE(value) {
+  const parsed = parseStrictCalendarValue(value);
+  if (!parsed) return '';
+  return `${String(parsed.month).padStart(2, '0')}/${gregorianYearToBuddhistEra(value)}`;
+}
+
+// Canonical Project list â€” the single source of truth for "Project" dropdowns that should reflect
+// Settings' configured project list (as opposed to dropdowns that intentionally derive their
+// options from observed data, e.g. Pending's project filter). Phase 7A-9A foundation: only
+// Budget Pool Settings (`bpool-project`) is migrated onto this helper in this phase; the rest of
+// the app's Project dropdowns are deferred, not redesigned, here â€” see docs/TECHNICAL_DEBT.md.
+function getCanonicalProjectList() {
+  const s = typeof loadSettings === 'function' ? loadSettings() : null;
+  return s?.projects || [];
+}
+
+function actualSpendOverlapsYear(record = {}, year) {
+  const target = financialYearToGregorian(year);
+  if (!target) return true;
+  const start = String(record.startDate || record.month || record.year || record.createdAt || '').slice(0, 4);
+  const end = String(record.endDate || record.month || record.year || record.updatedAt || record.createdAt || '').slice(0, 4);
+  return (!start || start <= target) && (!end || end >= target);
+}
+
+// Free-text search shared by the Budget vs Actual filter bar â€” same substring-over-lowercased-
+// fields convention as Manual Entries' search (renderManualEntries(), views/budget.js), so search
+// behavior stays identical across the app instead of a second implementation.
+function bvaRecordMatchesSearch(record = {}, search = '') {
+  if (!search) return true;
+  const haystack = [record.referenceNo, record.description, record.project, record.spendType]
+    .filter(Boolean).join(' ').toLowerCase();
+  return haystack.includes(search);
+}
+
+function calculateBudgetVsActualDataset(pools = [], records = [], filters = {}) {
+  const selectedPools = pools.filter(pool =>
+    (!filters.year || String(pool.year || '') === String(filters.year)) &&
+    (!filters.project || pool.project === filters.project)
+  );
+  const selectedPoolIds = new Set(selectedPools.map(pool => pool.id));
+  const search = String(filters.search || '').trim().toLowerCase();
+  // Reuses the shared queryActualSpend() project/spendType predicates instead of re-implementing
+  // them here, so a Spend Type filter added to the Budget vs Actual UI cannot silently diverge from
+  // the identical filter already used by Actual Spend (filteredActualSpendRecords()). Passing no
+  // spendType/search (existing callers) is a no-op, so prior behavior/totals are unchanged.
+  const scopedRecords = queryActualSpend({ project: filters.project, spendType: filters.spendType }, records)
+    .filter(record => actualSpendOverlapsYear(record, filters.year) && bvaRecordMatchesSearch(record, search));
+  const rows = selectedPools.map(pool => ({
+    pool,
+    records: scopedRecords.filter(record =>
+      getFinalBudgetPoolId(record) === pool.id && record.project === pool.project
+    ),
+    ...calculateBudgetUtilization(pool, scopedRecords),
+  }));
+  const unbudgetedRecords = scopedRecords.filter(record =>
+    !getFinalBudgetPoolId(record) && record.budgetStatus === BUDGET_STATUSES.UNBUDGETED
+  );
+  // Needs PMO Review records (ambiguous multi-pool matches) never carry a finalBudgetPoolId
+  // (see mapBudgetPool()), so without this bucket they fell through every row filter above AND
+  // the Unbudgeted filter (status check excludes them), silently vanishing from totals.actual.
+  // They must be counted, but kept out of unbudgetedRecords so they are not mislabeled.
+  const needsReviewRecords = scopedRecords.filter(record =>
+    !getFinalBudgetPoolId(record) && record.budgetStatus === BUDGET_STATUSES.NEEDS_PMO_REVIEW
+  );
+  const mappedActual = rows.reduce((sum, row) => sum + row.actual, 0);
+  const unbudgetedActual = calculateActualSpend(unbudgetedRecords);
+  const needsReviewActual = calculateActualSpend(needsReviewRecords);
+  const budget = rows.reduce((sum, row) => sum + row.budget, 0);
+  const actual = mappedActual + unbudgetedActual + needsReviewActual;
+  return {
+    filters: { ...filters },
+    rows,
+    unbudgetedRecords,
+    needsReviewRecords,
+    totals: {
+      budget,
+      actual,
+      mappedActual,
+      unbudgetedActual,
+      needsReviewActual,
+      remaining: budget - actual,
+      utilizationPercent: budget > 0 ? actual / budget * 100 : 0,
+    },
+  };
+}
+
+function budgetVsActualExportDataset(dataset = { rows:[], unbudgetedRecords:[], needsReviewRecords:[], totals:{} }) {
+  const rows = dataset.rows || [];
+  const unbudgeted = dataset.unbudgetedRecords || [];
+  const needsReview = dataset.needsReviewRecords || [];
+  const detailRows = rows.map(row => [
+    row.pool.id, row.pool.project, row.pool.name, row.pool.year,
+    (row.pool.spendTypes || []).join(' + '), row.budget, row.actual, row.remaining,
+    row.utilizationPercent, row.records.length, 'Budgeted',
+  ]);
+  if (unbudgeted.length) {
+    detailRows.push([
+      '', dataset.filters?.project || 'All Projects', 'Unbudgeted', dataset.filters?.year || '',
+      '', 0, dataset.totals.unbudgetedActual, -dataset.totals.unbudgetedActual,
+      0, unbudgeted.length, 'Unbudgeted',
+    ]);
+  }
+  if (needsReview.length) {
+    detailRows.push([
+      '', dataset.filters?.project || 'All Projects', 'Needs PMO Review', dataset.filters?.year || '',
+      '', 0, dataset.totals.needsReviewActual, -dataset.totals.needsReviewActual,
+      0, needsReview.length, 'Needs PMO Review',
+    ]);
+  }
+  return {
+    headers: ['Pool ID','Project','Pool','Year','Spend Types','Budget','Actual Spend','Remaining Budget','Budget Utilization %','Items','Budget Status'],
+    rows: detailRows,
+    totals: { ...dataset.totals },
+  };
+}
+
+const FINANCIAL_HELPERS = Object.freeze({
+  queryActualSpend,
+  queryBudgetPools,
+  getActualSpendByProject,
+  getBudgetPoolsByProject,
+  getFinalBudgetPoolId,
+  findMatchingBudgetPools,
+  mapBudgetPool,
+  mapActualSpendRecords,
+  calculateActualSpend,
+  actualSpendMonthlyAllocations,
+  calculateActualSpendInRange,
+  calculateForecast,
+  forecastExportDataset,
+  calculateBudgetUtilization,
+  validateBudgetPoolChange,
+  budgetPoolDeletionBlockers,
+  calculateBudgetVsActualDataset,
+  budgetVsActualExportDataset,
+});
+
+function importActualSpendRecords(rows) {
+  const existing = loadActualSpendRecords();
+  const result = validateActualSpendImport(rows, existing);
+  if (!result.valid) return { ...result, saved: 0 };
+  storeActualSpendRecords([...existing, ...result.records]);
+  return { ...result, saved: result.records.length };
+}
+
+function memoCoveragePeriod(memo = {}) {
+  const ranges = (memo.slItems || [])
+    .filter(item => item.startMonth && item.endMonth && isValidCalendarRange(item.startMonth, item.endMonth));
+  if (ranges.length) {
+    return {
+      startDate: ranges.map(item => item.startMonth).sort()[0],
+      endDate: ranges.map(item => item.endMonth).sort().at(-1),
+    };
+  }
+  if (memo.depStart && memo.depEnd && isValidCalendarRange(memo.depStart, memo.depEnd)) {
+    return { startDate: memo.depStart, endDate: memo.depEnd };
+  }
+  return { startDate: null, endDate: null };
+}
+
+function softwareMemoDetailLines(slItems) {
+  if (!Array.isArray(slItems)) return [];
+  return slItems.map(item => {
+    const quantity = Number(item.qty) || 0;
+    const unitCost = Number(item.price) || 0;
+    const enteredMonths = Number(item.months);
+    const coverageMonths = enteredMonths > 0
+      ? enteredMonths
+      : inclusiveCoverageMonths(item.startMonth, item.endMonth);
+    return {
+      program: String(item.name || ''),
+      plan: String(item.plan || ''),
+      description: '',
+      quantity,
+      unitCost,
+      monthlyCost: unitCost * quantity,
+      coverageStart: item.startMonth || null,
+      coverageEnd: item.endMonth || null,
+      coverageMonths,
+      lineAmount: unitCost * (coverageMonths || 0) * quantity,
+    };
+  });
+}
+
+function actualSpendFromMemo(memo, existing = null) {
+  if (!memo || memo.status !== 'completed') return null;
+  const coverage = memoCoveragePeriod(memo);
+  const effectiveDate = String(memo.approvedAt || memo.updatedAt || memo.createdAt || '').slice(0, 10);
+  const hasStructuredSoftwareItems = memo.type === 'sl' && Array.isArray(memo.slItems) && memo.slItems.length > 0;
+  return createActualSpendRecord({
+    ...existing,
+    id: existing?.id || `actual-spend-memo-${memo.memoNo}`,
+    source: ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    referenceNo: memo.memoNo,
+    memoId: memo.memoNo,
+    project: memo.project,
+    spendType: spendTypeFromMemoType(memo.type),
+    amount: memo.total,
+    currency: memo.currency || 'THB',
+    startDate: coverage.startDate,
+    endDate: coverage.endDate,
+    date: parseStrictCalendarValue(effectiveDate) ? effectiveDate : null,
+    vendorProgram: (memo.slItems || []).map(item => item.name).filter(Boolean).join(', '),
+    description: memo.subject || memo.reason || '',
+    detailLines: memo.type === 'sl'
+      ? (hasStructuredSoftwareItems ? softwareMemoDetailLines(memo.slItems) : existing?.detailLines)
+      : [],
+    manualBudgetPoolId: memo.manualBudgetPoolId || memo.budgetPoolId || existing?.manualBudgetPoolId || null,
+    createdBy: memo.requesterName || existing?.createdBy || '',
+    createdAt: existing?.createdAt || memo.createdAt,
+    updatedBy: currentUser(),
+  });
+}
+
+function syncMemoToActualSpend(memo, pools = loadBudgetPoolRecords()) {
+  const records = loadActualSpendRecords();
+  const index = records.findIndex(record => record.memoId === memo.memoNo || (
+    record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO && record.referenceNo === memo.memoNo
+  ));
+  if (memo.status !== 'completed') {
+    if (index >= 0) storeActualSpendRecords(records.filter((_, i) => i !== index));
+    return null;
+  }
+  const mapped = mapBudgetPool(actualSpendFromMemo(memo, index >= 0 ? records[index] : null), pools);
+  if (index >= 0) records[index] = mapped; else records.push(mapped);
+  storeActualSpendRecords(records);
+  return mapped;
+}
+
+function updateActualSpendBudgetOverride(memoNo, manualBudgetPoolId, pools = loadBudgetPoolRecords()) {
+  const records = loadActualSpendRecords();
+  const index = records.findIndex(record => record.memoId === memoNo);
+  if (index < 0) return null;
+  const updated = mapBudgetPool({ ...records[index], manualBudgetPoolId: manualBudgetPoolId || null }, pools);
+  records[index] = updated;
+  storeActualSpendRecords(records);
+  return updated;
+}
+
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// GLOBAL: User profiles & authority limits cache
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+let _userProfilesCache = null;
+let _authorityCache    = null;
+
+async function loadUserProfilesAsync() {
+  if(_userProfilesCache) return _userProfilesCache;
+  try {
+    const rows = await supaFetch('user_profiles','GET',null,'?order=full_name.asc');
+    if(rows && rows.length){ _userProfilesCache = rows; return rows; }
+  } catch(e){ console.warn('user_profiles load failed',e.message); }
+  _userProfilesCache = [
+    {id:1, full_name:'à¸™à¸²à¸¢ à¸™à¸§à¸žà¸¥ à¸‡à¸²à¸¡à¸§à¸£à¹‚à¸£à¸ˆà¸™à¹Œà¸ªà¸à¸¸à¸¥',  title:'à¸œà¸¹à¹‰à¸­à¸³à¸™à¸§à¸¢à¸à¸²à¸£à¹‚à¸„à¸£à¸‡à¸à¸²à¸£',     name_aliases:['à¸™à¸§à¸žà¸¥','Nawaphon'],      is_approver:true, can_review:true, can_approve:true, is_active:true, is_pmo:true, email:'nawaphon@orbitdigital.co.th'},
+    {id:2, full_name:'à¸™à¸²à¸¢ à¸›à¸à¸£à¸“à¹Œ à¹€à¸ˆà¸µà¸¢à¸¡à¸ªà¸à¸¸à¸¥à¸—à¸´à¸žà¸¢à¹Œ', title:'à¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸šà¸£à¸´à¸«à¸²à¸£', name_aliases:['à¸›à¸à¸£à¸“à¹Œ','CEO','Pakorn'],  is_approver:true, can_review:true, can_approve:true, is_active:true, is_pmo:true, email:'pakorn@orbitdigital.co.th'},
+    {id:3, full_name:'à¸™à¸²à¸‡à¸ªà¸²à¸§ à¸Šà¸·à¹ˆà¸™à¸à¸¡à¸¥ à¸ªà¸²à¸£à¸¡à¸²à¸™à¸´à¸•à¸¢à¹Œ', title:'à¸œà¸¹à¹‰à¸ˆà¸±à¸”à¸à¸²à¸£à¹‚à¸„à¸£à¸‡à¸à¸²à¸£',        name_aliases:['à¸Šà¸·à¹ˆà¸™à¸à¸¡à¸¥','Chuenkamon'], is_approver:true, can_review:true, can_approve:true, is_active:true, is_pmo:true, email:'somying@orbitdigital.co.th'},
+  ];
+  return _userProfilesCache;
+}
+async function loadAuthorityAsync() {
+  if(_authorityCache) return _authorityCache;
+  try {
+    const rows = await supaFetch('authority_limits','GET',null,'?order=title.asc');
+    if(rows && rows.length){ _authorityCache = rows; return rows; }
+  } catch(e){ console.warn('authority_limits load failed',e.message); }
+  return null;
+}
+function getApprovers(stage = 'approve') {
+  return (_userProfilesCache||[]).filter(u => {
+    if (u.is_active === false) return false;
+    if (stage === 'review') return u.can_review ?? u.is_approver;
+    return u.can_approve ?? u.is_approver;
+  });
+}
+function findUserByName(name) {
+  if(!name||!_userProfilesCache) return null;
+  const n = name.trim();
+  return _userProfilesCache.find(u=>u.full_name===n||(u.name_aliases||[]).some(a=>a.toLowerCase()===n.toLowerCase()))||null;
+}
+function getAuthorityLimit(title, memoType) {
+  if(_authorityCache){
+    const r = _authorityCache.find(r=>r.title===title&&r.memo_type===memoType);
+    if(r) return Number(r.limit_thb)||0;
+  }
+  const fb={
+    'à¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸šà¸£à¸´à¸«à¸²à¸£':          {sl:2000000,hw:2000000,int:0,ent:150000,dep:2000000},
+    'à¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸ªà¸²à¸¢à¸à¸²à¸£à¹€à¸‡à¸´à¸™ (CFO)':{sl:1000000,hw:500000, int:0,ent:50000, dep:500000},
+    'à¸œà¸¹à¹‰à¸­à¸³à¸™à¸§à¸¢à¸à¸²à¸£ (Team Director)':       {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
+    'à¸œà¸¹à¹‰à¸­à¸³à¸™à¸§à¸¢à¸à¸²à¸£à¹‚à¸„à¸£à¸‡à¸à¸²à¸£':                {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
+    'Senior Manager / Manager':          {sl:50000,  hw:50000,  int:0,ent:10000, dep:50000},
+    'Team Leader':                       {sl:30000,  hw:30000,  int:0,ent:5000,  dep:30000},
+  };
+  return fb[title]?.[memoType]??0;
+}
+
+// isPMO â€” single source of truth (moved from budget.js)
+function currentUserProfileId() {
+  const raw = document.getElementById('sb-user-btn')?.dataset?.profileId;
+  const id = Number(raw);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+function currentUserProfile() {
+  const id = currentUserProfileId();
+  if (id == null) return null;
+  return (_userProfilesCache || []).find(u => Number(u.id) === id) || null;
+}
+function isPMO() {
+  const simulated = document.getElementById('sb-user-btn')?.dataset?.isPmo;
+  if (simulated === 'true' || simulated === 'false') return simulated === 'true';
+  const profile = currentUserProfile();
+  if (profile) return profile.is_pmo === true;
+  return (document.getElementById('sb-urole')?.textContent?.trim()||'') === 'PMO';
+}
+// currentUser â€” single source of truth (moved from pending.js)
+function currentUser() {
+  return document.getElementById('sb-uname')?.textContent?.trim()||'';
+}
+
+function profileMatches(profileId, name, targetProfileId = currentUserProfileId(), targetName = currentUser()) {
+  if (profileId != null && targetProfileId != null) return Number(profileId) === Number(targetProfileId);
+  if (!name || !targetName) return false;
+  if (String(name).trim() === String(targetName).trim()) return true;
+  const profile = (_userProfilesCache || []).find(u => Number(u.id) === Number(targetProfileId));
+  return !!profile && (
+    profile.full_name === name ||
+    (profile.name_aliases || []).some(alias => String(alias).toLowerCase() === String(name).toLowerCase())
+  );
+}
+
+function memoCurrentStageIndex(memo) {
+  return memo?.status === 'pending_a2' ? 1 : memo?.status === 'pending_a3' ? 2 : 0;
+}
+function memoCurrentApprover(memo) {
+  return (memo?.approvers || [])[memoCurrentStageIndex(memo)] || null;
+}
+function isMemoRequester(memo) {
+  return profileMatches(memo?.requesterProfileId, memo?.requesterName);
+}
+function isMemoCurrentApprover(memo) {
+  const approver = memoCurrentApprover(memo);
+  if (!approver) return false;
+  return profileMatches(approver.profileId, approver.name);
+}
+function isMemoVisibleInPending(memo) {
+  if (!memo || !['pending','pending_a2','pending_a3'].includes(memo.status)) return false;
+  return isPMO() || isMemoRequester(memo) || isMemoCurrentApprover(memo);
+}
+function canCurrentUserActOnMemo(memo) {
+  if (!memo || !['pending','pending_a2','pending_a3'].includes(memo.status)) return false;
+  if (isMemoRequester(memo)) return false;
+  return isMemoCurrentApprover(memo) || isPMO();
+}
+
+// Milestone 1A Task 1.3 â€” an approver step is "resolved" (locked, no longer the
+// pending one awaiting action) whether it was approved in-system, bypassed via
+// A1 self-review, or overridden by PMO. Views use this instead of checking
+// status === 'approved' alone, so bypassed/overridden steps still render as
+// locked/checked exactly like an in-system approval did before this change.
+function isApproverStepResolved(status) {
+  return status === 'approved' || status === 'bypassed' || status === 'overridden';
+}
+
+// memoStatusKey / histStatusLabel / histStatusBadgeClass â€” single source of truth
+// (moved from views/history.js, Milestone 1A Task 1.4). Behavior unchanged; this
+// only centralizes what was already implicitly global so budget.js and pending.js
+// can reuse it without redefining their own copy â€” see docs/TECHNICAL_DEBT.md
+// for the follow-up on pending.js's separately-styled inline status pill.
+function memoStatusKey(memo) {
+  return memo.status || 'pending';
+}
+function histStatusLabel(memo) {
+  const key = memoStatusKey(memo);
+  const map = {
+    completed: 'Completed', rejected: 'Rejected', pending: 'Pending A1',
+    pending_a2: 'Pending A2', pending_a3: 'Pending A3',
+    draft: 'Draft', cancelled: 'Cancelled', expired: 'Expired',
+    voided: 'Voided', // Milestone 1B
+  };
+  return map[key] || key;
+}
+function histStatusBadgeClass(memo) {
+  const key = memoStatusKey(memo);
+  const map = {
+    completed: 'badge-green', rejected: 'badge-red', pending: 'badge-amber',
+    pending_a2: 'badge-amber', pending_a3: 'badge-amber',
+    draft: 'badge-gray', cancelled: 'badge-gray', expired: 'badge-red',
+    voided: 'badge-gray', // Milestone 1B â€” distinct from Approved, matches Cancelled/Draft's neutral tone
+  };
+  return map[key] || 'badge-gray';
+}
+
+// appendAuditLog â€” single source of truth (moved from views/pending.js, Milestone 1A Task 1.2)
+function appendAuditLog(memos, memoNo, action, comment, extra = {}) {
+  const idx = memos.findIndex(m => m.memoNo === memoNo);
+  if(idx<0) return;
+  if(!memos[idx].auditLog) memos[idx].auditLog = [];
+  memos[idx].auditLog.push({
+    actor:        currentUser(),
+    actorProfileId: typeof currentUserProfileId === 'function' ? currentUserProfileId() : null,
+    action,
+    comment:      comment || '',
+    timestamp:    new Date().toISOString(),
+    statusBefore: extra.statusBefore || null,
+    statusAfter:  extra.statusAfter  || null,
+    evidenceUrl:  extra.evidenceUrl  || null,
+    channel:      extra.channel      || 'in-app',
+    // Milestone 2 Task 2.4 â€” Budget tag audit: previous/new Budget Pool id,
+    // generic enough to be reused by any other future "value changed" event.
+    previousBudgetPoolId: extra.previousBudgetPoolId ?? null,
+    newBudgetPoolId:      extra.newBudgetPoolId      ?? null,
+  });
+}
+
+function prepareMemoForSubmission(data, now = new Date().toISOString()) {
+  const approvers = (data.approvers || []).map(a => ({...a}));
+  const requesterProfileId = data.requesterProfileId ?? currentUserProfileId();
+  const requesterName = data.requesterName || currentUser();
+  const selfA1 = !!approvers[0] && profileMatches(
+    approvers[0].profileId,
+    approvers[0].name,
+    requesterProfileId,
+    requesterName
+  );
+  const next = selfA1 ? approvers[1] : approvers[0];
+  if (selfA1) {
+    // Milestone 1A Task 1.3: A1 self-review is a Bypassed step, not a genuine
+    // in-system Approved one â€” see MEMO_LIFECYCLE.md Â§7 / SYSTEM_STATE_MACHINE.md Â§5.
+    approvers[0] = {
+      ...approvers[0],
+      status: 'bypassed',
+      approvedAt: now,
+      approvedBy: requesterName,
+      approvedByProfileId: requesterProfileId,
+      selfReviewed: true,
+    };
+  }
+  const status = next ? (selfA1 ? 'pending_a2' : 'pending') : 'completed';
+  const auditLog = [...(data.auditLog || [])];
+  if (selfA1) {
+    auditLog.push({
+      actor: requesterName,
+      actorProfileId: requesterProfileId,
+      action: 'A1 Self-reviewed on submission',
+      comment: 'Requester is also the A1 reviewer; routed directly to A2',
+      timestamp: now,
+      statusBefore: data.status || 'draft',
+      statusAfter: status,
+    });
+  }
+  return {
+    ...data,
+    requesterProfileId,
+    approvers,
+    auditLog,
+    status,
+    submittedAt: data.submittedAt || now,
+    selfReviewedAt: selfA1 ? now : null,
+    currentApproverProfileId: next?.profileId ?? null,
+    approvedAt: status === 'completed' ? now : null,
+  };
+}
+
+function draftFromMemo(memo, sourceMemoNo = memo?.memoNo) {
+  return {
+    ...memo,
+    id: undefined,
+    memoNo: undefined,
+    date: undefined,
+    status: 'draft',
+    sourceMemoNo,
+    createdAt: undefined,
+    updatedAt: undefined,
+    submittedAt: undefined,
+    approvedAt: undefined,
+    rejectedAt: undefined,
+    cancelledAt: undefined,
+    selfReviewedAt: undefined,
+    approvedBy: undefined,
+    rejectedBy: undefined,
+    cancelledBy: undefined,
+    approvalNote: undefined,
+    rejectionReason: undefined,
+    cancellationReason: undefined,
+    // Milestone 1B â€” a duplicated memo must not inherit its source's Void or
+    // soft-delete metadata.
+    voidedAt: undefined, voidedBy: undefined, voidReason: undefined, voidEvidenceUrl: undefined,
+    deleted: false, deletedAt: undefined, deletedBy: undefined, deleteReason: undefined,
+    currentApproverProfileId: null,
+    auditLog: [],
+    approvers: (memo?.approvers || []).map(a => ({
+      ...a,
+      status: 'pending',
+      approvedAt: null,
+      approvedBy: null,
+      approvedByProfileId: null,
+      rejectedAt: null,
+      rejectedBy: null,
+      selfReviewed: false,
+    })),
+  };
+}
+
+// â”€â”€ Memo field mapping: JS camelCase â†” DB snake_case â”€â”€
 function memoToDb(m) {
   return {
     id: m.id || m.memoNo,
@@ -68,7 +1312,7 @@ function dbToMemo(r) {
   };
 }
 
-// ── Memo storage (async, with localStorage fallback) ──
+// â”€â”€ Memo storage (async, with localStorage fallback) â”€â”€
 const MEMO_KEY = 'orbit-pmo-memos-v1';
 let _memCache = null;
 let _supaAvailable = null;
@@ -134,7 +1378,7 @@ async function updateMemoStatusAsync(memoNo, status, extra={}) {
 
   if(await checkSupa()) {
     try {
-      // camelCase → snake_case: approvalNote → approval_note
+      // camelCase â†’ snake_case: approvalNote â†’ approval_note
       const toSnake = s => s.replace(/([A-Z])/g, '_$1').toLowerCase();
       const patch = { status, updated_at: updated.updatedAt, ...Object.fromEntries(
         Object.entries(extra).map(([k,v]) => [toSnake(k), v])
@@ -154,7 +1398,7 @@ async function updateMemoStatusAsync(memoNo, status, extra={}) {
   return updated;
 }
 
-// ── Sync: push all localStorage memos to Supabase ──
+// â”€â”€ Sync: push all localStorage memos to Supabase â”€â”€
 async function syncLocalToSupabase() {
   if(!(await checkSupa())) return { ok:false, msg:'Supabase unavailable' };
   const local = loadMemos();
@@ -170,12 +1414,12 @@ async function syncLocalToSupabase() {
   return { ok:true, pushed };
 }
 
-// ─────────────────────────────────────────
-// app.js — shared utils, storage, nav, PDF
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// app.js â€” shared utils, storage, nav, PDF
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-// ── Date helpers ──
-const MONTHS_TH = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+// â”€â”€ Date helpers â”€â”€
+const MONTHS_TH = ['à¸¡à¸à¸£à¸²à¸„à¸¡','à¸à¸¸à¸¡à¸ à¸²à¸žà¸±à¸™à¸˜à¹Œ','à¸¡à¸µà¸™à¸²à¸„à¸¡','à¹€à¸¡à¸©à¸²à¸¢à¸™','à¸žà¸¤à¸©à¸ à¸²à¸„à¸¡','à¸¡à¸´à¸–à¸¸à¸™à¸²à¸¢à¸™','à¸à¸£à¸à¸Žà¸²à¸„à¸¡','à¸ªà¸´à¸‡à¸«à¸²à¸„à¸¡','à¸à¸±à¸™à¸¢à¸²à¸¢à¸™','à¸•à¸¸à¸¥à¸²à¸„à¸¡','à¸žà¸¤à¸¨à¸ˆà¸´à¸à¸²à¸¢à¸™','à¸˜à¸±à¸™à¸§à¸²à¸„à¸¡'];
 function thaiDate(d) { return `${d.getDate()} ${MONTHS_TH[d.getMonth()]} ${d.getFullYear()+543}`; }
 const TODAY = thaiDate(new Date());
 const todayISO = new Date().toISOString().slice(0,10);
@@ -188,7 +1432,7 @@ function syncThemeControl() {
   const theme = currentTheme();
   const button = document.getElementById('theme-toggle');
   if(!button) return;
-  const nextLabel = theme === 'dark' ? 'เปลี่ยนเป็นโหมดสว่าง' : 'เปลี่ยนเป็นโหมดมืด';
+  const nextLabel = theme === 'dark' ? 'à¹€à¸›à¸¥à¸µà¹ˆà¸¢à¸™à¹€à¸›à¹‡à¸™à¹‚à¸«à¸¡à¸”à¸ªà¸§à¹ˆà¸²à¸‡' : 'à¹€à¸›à¸¥à¸µà¹ˆà¸¢à¸™à¹€à¸›à¹‡à¸™à¹‚à¸«à¸¡à¸”à¸¡à¸·à¸”';
   button.setAttribute('aria-label', nextLabel);
   button.setAttribute('aria-pressed', String(theme === 'dark'));
   button.title = nextLabel;
@@ -220,10 +1464,10 @@ function toggleTheme() {
   }, 720);
 }
 
-// ── Shared utils ──
+// â”€â”€ Shared utils â”€â”€
 function esc(v) { return String(v ?? '').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch])); }
 function val(sel, root=document) { return root.querySelector(sel)?.value?.trim() || ''; }
-function money(n) { return '฿' + (Number(n)||0).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }
+function money(n) { return 'à¸¿' + (Number(n)||0).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }
 function shortDate(iso) {
   if(!iso) return '-';
   const d = new Date(iso);
@@ -257,7 +1501,7 @@ function table(headers, rows, numericIndexes=[], centerIndexes=[]) {
     + '</table>';
 }
 
-// ── Storage ──
+// â”€â”€ Storage â”€â”€
 // MEMO_KEY defined in Supabase layer above
 let _memMemos = [];
 function canUseLocalStorage() {
@@ -293,7 +1537,7 @@ function setNextMemoNo() {
   if(el && !el.value.trim()) el.value = nextMemoNo();
 }
 function saveMemo(data) {
-  // Sync version for backward compat — also triggers async save to Supabase
+  // Sync version for backward compat â€” also triggers async save to Supabase
   const now = new Date().toISOString();
   const memos = loadMemos();
   const idx = memos.findIndex(m => m.memoNo === data.memoNo);
@@ -308,7 +1552,7 @@ function saveMemo(data) {
 function updateMemoStatus(memoNo, status, extra={}) {
   const memos = loadMemos();
   const idx = memos.findIndex(m => m.memoNo === memoNo);
-  if(idx<0) { alert('ไม่พบ Memo ที่เลือก'); return null; }
+  if(idx<0) { alert('à¹„à¸¡à¹ˆà¸žà¸š Memo à¸—à¸µà¹ˆà¹€à¸¥à¸·à¸­à¸'); return null; }
   memos[idx] = { ...memos[idx], ...extra, status, updatedAt: new Date().toISOString() };
   if(status==='completed') memos[idx].approvedAt = memos[idx].updatedAt;
   if(status==='rejected')  memos[idx].rejectedAt = memos[idx].updatedAt;
@@ -514,7 +1758,7 @@ function closeNotifications() {
   panel?.setAttribute('aria-hidden', 'true');
 }
 
-// ── Navigation ──
+// â”€â”€ Navigation â”€â”€
 function swView(id, el, title) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.sb-sub-item').forEach(s => s.classList.remove('active'));
@@ -537,36 +1781,36 @@ function toggleMemoSub(el) {
   swView('create', document.querySelector('#memo-sub .sb-sub-item'), 'Create Memo');
 }
 
-// ── PDF ──
+// â”€â”€ PDF â”€â”€
 function renderMemoPdf(data) {
-  // Use server CSS classes (.mp-*) — injected by PDF server with THSarabun font
+  // Use server CSS classes (.mp-*) â€” injected by PDF server with THSarabun font
   function fmtDate(v) {
     if(!v || v === '-') return '';
-    // Already a Thai date string (e.g. "20 พฤษภาคม 2569") — return as-is
-    if(/[ก-๙]/.test(v)) return v;
-    // ISO date YYYY-MM-DD → convert to Thai Buddhist era DD/MM/YYYY
+    // Already a Thai date string (e.g. "20 à¸žà¸¤à¸©à¸ à¸²à¸„à¸¡ 2569") â€” return as-is
+    if(/[à¸-à¹™]/.test(v)) return v;
+    // ISO date YYYY-MM-DD â†’ convert to Thai Buddhist era DD/MM/YYYY
     const d = new Date(v.length===10 ? v+'T00:00:00' : v);
     if(isNaN(d.getTime())) return v;
     return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()+543}`;
   }
 
   const typeBody = {
-    sl: `เนื่องด้วยพนักงานโครงการ ${esc(data.project||'-')} - บริษัท ออร์บิท ดิจิทัล จำกัด มีความจำเป็นต้องใช้งานโปรแกรม เพื่อพัฒนาโครงการและช่วยทีมพัฒนาสามารถทำงานได้อย่างมีประสิทธิภาพ จึงขออนุมัติงบประมาณเพื่อต่ออายุการใช้งานโปรแกรม ตามรายละเอียดดังต่อไปนี้`,
-    hw: `เนื่องด้วยพนักงานโครงการ ${esc(data.project||'-')} - บริษัท ออร์บิท ดิจิทัล จำกัด มีความจำเป็นต้องจัดซื้ออุปกรณ์ Hardware เพื่อสนับสนุนการดำเนินงานของโครงการ จึงขออนุมัติงบประมาณตามรายละเอียดดังต่อไปนี้`,
-    int: `เนื่องด้วยฝ่าย PMO มีความประสงค์จัดกิจกรรม Team Activity เพื่อเสริมสร้างกำลังใจและส่งเสริมการทำงานเป็นทีมของพนักงานโครงการ ${esc(data.project||'-')} จึงขออนุมัติงบประมาณตามรายละเอียดดังต่อไปนี้`,
-    ent: `เนื่องด้วยฝ่าย PMO มีความประสงค์จัดงานเลี้ยงรับรองลูกค้าโครงการ ${esc(data.project||'-')} เพื่อเสริมสร้างความสัมพันธ์อันดีและรักษาความพึงพอใจของลูกค้า จึงขออนุมัติงบประมาณตามรายละเอียดดังต่อไปนี้`,
-    dep: `เนื่องด้วยโครงการ ${esc(data.project||'-')} มีความจำเป็นต้อง Deployment ระบบ จึงขออนุมัติงบประมาณค่าใช้จ่ายในการ Deployment ตามรายละเอียดดังต่อไปนี้`,
+    sl: `à¹€à¸™à¸·à¹ˆà¸­à¸‡à¸”à¹‰à¸§à¸¢à¸žà¸™à¸±à¸à¸‡à¸²à¸™à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} - à¸šà¸£à¸´à¸©à¸±à¸— à¸­à¸­à¸£à¹Œà¸šà¸´à¸— à¸”à¸´à¸ˆà¸´à¸—à¸±à¸¥ à¸ˆà¸³à¸à¸±à¸” à¸¡à¸µà¸„à¸§à¸²à¸¡à¸ˆà¸³à¹€à¸›à¹‡à¸™à¸•à¹‰à¸­à¸‡à¹ƒà¸Šà¹‰à¸‡à¸²à¸™à¹‚à¸›à¸£à¹à¸à¸£à¸¡ à¹€à¸žà¸·à¹ˆà¸­à¸žà¸±à¸’à¸™à¸²à¹‚à¸„à¸£à¸‡à¸à¸²à¸£à¹à¸¥à¸°à¸Šà¹ˆà¸§à¸¢à¸—à¸µà¸¡à¸žà¸±à¸’à¸™à¸²à¸ªà¸²à¸¡à¸²à¸£à¸–à¸—à¸³à¸‡à¸²à¸™à¹„à¸”à¹‰à¸­à¸¢à¹ˆà¸²à¸‡à¸¡à¸µà¸›à¸£à¸°à¸ªà¸´à¸—à¸˜à¸´à¸ à¸²à¸ž à¸ˆà¸¶à¸‡à¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¹€à¸žà¸·à¹ˆà¸­à¸•à¹ˆà¸­à¸­à¸²à¸¢à¸¸à¸à¸²à¸£à¹ƒà¸Šà¹‰à¸‡à¸²à¸™à¹‚à¸›à¸£à¹à¸à¸£à¸¡ à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¸±à¸‡à¸•à¹ˆà¸­à¹„à¸›à¸™à¸µà¹‰`,
+    hw: `à¹€à¸™à¸·à¹ˆà¸­à¸‡à¸”à¹‰à¸§à¸¢à¸žà¸™à¸±à¸à¸‡à¸²à¸™à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} - à¸šà¸£à¸´à¸©à¸±à¸— à¸­à¸­à¸£à¹Œà¸šà¸´à¸— à¸”à¸´à¸ˆà¸´à¸—à¸±à¸¥ à¸ˆà¸³à¸à¸±à¸” à¸¡à¸µà¸„à¸§à¸²à¸¡à¸ˆà¸³à¹€à¸›à¹‡à¸™à¸•à¹‰à¸­à¸‡à¸ˆà¸±à¸”à¸‹à¸·à¹‰à¸­à¸­à¸¸à¸›à¸à¸£à¸“à¹Œ Hardware à¹€à¸žà¸·à¹ˆà¸­à¸ªà¸™à¸±à¸šà¸ªà¸™à¸¸à¸™à¸à¸²à¸£à¸”à¸³à¹€à¸™à¸´à¸™à¸‡à¸²à¸™à¸‚à¸­à¸‡à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ à¸ˆà¸¶à¸‡à¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¸±à¸‡à¸•à¹ˆà¸­à¹„à¸›à¸™à¸µà¹‰`,
+    int: `à¹€à¸™à¸·à¹ˆà¸­à¸‡à¸”à¹‰à¸§à¸¢à¸à¹ˆà¸²à¸¢ PMO à¸¡à¸µà¸„à¸§à¸²à¸¡à¸›à¸£à¸°à¸ªà¸‡à¸„à¹Œà¸ˆà¸±à¸”à¸à¸´à¸ˆà¸à¸£à¸£à¸¡ Team Activity à¹€à¸žà¸·à¹ˆà¸­à¹€à¸ªà¸£à¸´à¸¡à¸ªà¸£à¹‰à¸²à¸‡à¸à¸³à¸¥à¸±à¸‡à¹ƒà¸ˆà¹à¸¥à¸°à¸ªà¹ˆà¸‡à¹€à¸ªà¸£à¸´à¸¡à¸à¸²à¸£à¸—à¸³à¸‡à¸²à¸™à¹€à¸›à¹‡à¸™à¸—à¸µà¸¡à¸‚à¸­à¸‡à¸žà¸™à¸±à¸à¸‡à¸²à¸™à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} à¸ˆà¸¶à¸‡à¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¸±à¸‡à¸•à¹ˆà¸­à¹„à¸›à¸™à¸µà¹‰`,
+    ent: `à¹€à¸™à¸·à¹ˆà¸­à¸‡à¸”à¹‰à¸§à¸¢à¸à¹ˆà¸²à¸¢ PMO à¸¡à¸µà¸„à¸§à¸²à¸¡à¸›à¸£à¸°à¸ªà¸‡à¸„à¹Œà¸ˆà¸±à¸”à¸‡à¸²à¸™à¹€à¸¥à¸µà¹‰à¸¢à¸‡à¸£à¸±à¸šà¸£à¸­à¸‡à¸¥à¸¹à¸à¸„à¹‰à¸²à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} à¹€à¸žà¸·à¹ˆà¸­à¹€à¸ªà¸£à¸´à¸¡à¸ªà¸£à¹‰à¸²à¸‡à¸„à¸§à¸²à¸¡à¸ªà¸±à¸¡à¸žà¸±à¸™à¸˜à¹Œà¸­à¸±à¸™à¸”à¸µà¹à¸¥à¸°à¸£à¸±à¸à¸©à¸²à¸„à¸§à¸²à¸¡à¸žà¸¶à¸‡à¸žà¸­à¹ƒà¸ˆà¸‚à¸­à¸‡à¸¥à¸¹à¸à¸„à¹‰à¸² à¸ˆà¸¶à¸‡à¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¸±à¸‡à¸•à¹ˆà¸­à¹„à¸›à¸™à¸µà¹‰`,
+    dep: `à¹€à¸™à¸·à¹ˆà¸­à¸‡à¸”à¹‰à¸§à¸¢à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} à¸¡à¸µà¸„à¸§à¸²à¸¡à¸ˆà¸³à¹€à¸›à¹‡à¸™à¸•à¹‰à¸­à¸‡ Deployment à¸£à¸°à¸šà¸š à¸ˆà¸¶à¸‡à¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸„à¹ˆà¸²à¹ƒà¸Šà¹‰à¸ˆà¹ˆà¸²à¸¢à¹ƒà¸™à¸à¸²à¸£ Deployment à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¸±à¸‡à¸•à¹ˆà¸­à¹„à¸›à¸™à¸µà¹‰`,
   };
-  const bodyText = typeBody[data.type] || `ด้วยฝ่าย PMO มีความประสงค์ขออนุมัติรายการตามรายละเอียดด้านล่าง เพื่อสนับสนุนการดำเนินงานของโครงการ ${esc(data.project||'-')} ให้เป็นไปตามแผนงาน`;
+  const bodyText = typeBody[data.type] || `à¸”à¹‰à¸§à¸¢à¸à¹ˆà¸²à¸¢ PMO à¸¡à¸µà¸„à¸§à¸²à¸¡à¸›à¸£à¸°à¸ªà¸‡à¸„à¹Œà¸‚à¸­à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸£à¸²à¸¢à¸à¸²à¸£à¸•à¸²à¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¹‰à¸²à¸™à¸¥à¹ˆà¸²à¸‡ à¹€à¸žà¸·à¹ˆà¸­à¸ªà¸™à¸±à¸šà¸ªà¸™à¸¸à¸™à¸à¸²à¸£à¸”à¸³à¹€à¸™à¸´à¸™à¸‡à¸²à¸™à¸‚à¸­à¸‡à¹‚à¸„à¸£à¸‡à¸à¸²à¸£ ${esc(data.project||'-')} à¹ƒà¸«à¹‰à¹€à¸›à¹‡à¸™à¹„à¸›à¸•à¸²à¸¡à¹à¸œà¸™à¸‡à¸²à¸™`;
 
   // Per-type closing paragraphs with authority reference
-  const authorityRef = 'อ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงิน (ที่มีการตั้งงบประมาณไว้) หมวดการชำระค่าบริการ ซึ่งให้อำนาจแก่ประธานเจ้าหน้าที่บริหารในวงเงินไม่เกิน 2,000,000 บาท';
-  const authorityRef500k = 'อ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงิน (ที่มีการตั้งงบประมาณไว้) หมวดการชำระค่าบริการสำหรับพนักงาน ซึ่งให้อำนาจแก่ผู้บริหารในวงเงินไม่เกิน 500,000 บาท';
+  const authorityRef = 'à¸­à¹‰à¸²à¸‡à¸­à¸´à¸‡à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸ˆà¸²à¸à¸„à¸¹à¹ˆà¸¡à¸·à¸­à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´ à¸ž.à¸¨. 2566 à¸‚à¹‰à¸­ 3.2 à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™ (à¸—à¸µà¹ˆà¸¡à¸µà¸à¸²à¸£à¸•à¸±à¹‰à¸‡à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¹„à¸§à¹‰) à¸«à¸¡à¸§à¸”à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¸„à¹ˆà¸²à¸šà¸£à¸´à¸à¸²à¸£ à¸‹à¸¶à¹ˆà¸‡à¹ƒà¸«à¹‰à¸­à¸³à¸™à¸²à¸ˆà¹à¸à¹ˆà¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸šà¸£à¸´à¸«à¸²à¸£à¹ƒà¸™à¸§à¸‡à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ 2,000,000 à¸šà¸²à¸—';
+  const authorityRef500k = 'à¸­à¹‰à¸²à¸‡à¸­à¸´à¸‡à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸ˆà¸²à¸à¸„à¸¹à¹ˆà¸¡à¸·à¸­à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´ à¸ž.à¸¨. 2566 à¸‚à¹‰à¸­ 3.2 à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™ (à¸—à¸µà¹ˆà¸¡à¸µà¸à¸²à¸£à¸•à¸±à¹‰à¸‡à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¹„à¸§à¹‰) à¸«à¸¡à¸§à¸”à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¸„à¹ˆà¸²à¸šà¸£à¸´à¸à¸²à¸£à¸ªà¸³à¸«à¸£à¸±à¸šà¸žà¸™à¸±à¸à¸‡à¸²à¸™ à¸‹à¸¶à¹ˆà¸‡à¹ƒà¸«à¹‰à¸­à¸³à¸™à¸²à¸ˆà¹à¸à¹ˆà¸œà¸¹à¹‰à¸šà¸£à¸´à¸«à¸²à¸£à¹ƒà¸™à¸§à¸‡à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ 500,000 à¸šà¸²à¸—';
   const amtStr = data.total ? `<strong>${esc(money(data.total||0))}</strong> (${esc(data.amountWords||'-')})` : '';
 
   const closingMap = {
     sl:  data.total ? (function(){
-      const slSection = (data.sections||[]).find(s => s.title === 'รายการ Software');
+      const slSection = (data.sections||[]).find(s => s.title === 'à¸£à¸²à¸¢à¸à¸²à¸£ Software');
       let totalSeats = 0, months = 12;
       if(slSection && slSection.html) {
         const doc = new DOMParser().parseFromString(slSection.html, 'text/html');
@@ -580,24 +1824,24 @@ function renderMemoPdf(data) {
           }
         });
       }
-      const seatsStr = totalSeats ? `จำนวนรวมทั้งหมด ${totalSeats} Seats ` : '';
-      const monthsStr = `ระยะเวลา ${months} เดือน `;
-      return `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณสำหรับค่าใช้จ่ายดังกล่าว รวมเป็นจำนวนเงินไม่เกิน ${amtStr} ${seatsStr}${monthsStr}${authorityRef}`;
+      const seatsStr = totalSeats ? `à¸ˆà¸³à¸™à¸§à¸™à¸£à¸§à¸¡à¸—à¸±à¹‰à¸‡à¸«à¸¡à¸” ${totalSeats} Seats ` : '';
+      const monthsStr = `à¸£à¸°à¸¢à¸°à¹€à¸§à¸¥à¸² ${months} à¹€à¸”à¸·à¸­à¸™ `;
+      return `à¹ƒà¸™à¸à¸²à¸£à¸™à¸µà¹‰à¸ˆà¸¶à¸‡à¸‚à¸­à¹ƒà¸«à¹‰à¸—à¹ˆà¸²à¸™à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸ªà¸³à¸«à¸£à¸±à¸šà¸„à¹ˆà¸²à¹ƒà¸Šà¹‰à¸ˆà¹ˆà¸²à¸¢à¸”à¸±à¸‡à¸à¸¥à¹ˆà¸²à¸§ à¸£à¸§à¸¡à¹€à¸›à¹‡à¸™à¸ˆà¸³à¸™à¸§à¸™à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ ${amtStr} ${seatsStr}${monthsStr}${authorityRef}`;
     })() : '',
-    hw:  data.total ? `จึงขอความกรุณาโปรดพิจารณาอนุมัติค่าใช้จ่ายสำหรับรายการจัดซื้อจ้างอ้างต้น ในวงเงิน ${amtStr} ถ้าอ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงิน (ที่มีการตั้งงบประมาณไว้) หมวดการชำระค่าบริการ ซึ่งให้อำนาจแก่ประธานเจ้าหน้าที่บริหารในวงเงินไม่เกิน 500,000 บาท` : '',
-    int: data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณสำหรับค่ากิจกรรม Team Activity ดังกล่าว เป็นวงเงินจำนวนไม่เกิน ${amtStr} (แปดหมื่นสี่พันบาทถ้วน) ${authorityRef500k}` : '',
-    ent: data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณค่ารับรองลูกค้าจาก ${esc(data.project||'-')} ในช่วงเวลาดังกล่าว ${authorityRef}` : '',
-    dep: data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณค่าใช้จ่าย Deployment รวมเป็นจำนวนเงินไม่เกิน ${amtStr} ${authorityRef}` : '',
+    hw:  data.total ? `à¸ˆà¸¶à¸‡à¸‚à¸­à¸„à¸§à¸²à¸¡à¸à¸£à¸¸à¸“à¸²à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸„à¹ˆà¸²à¹ƒà¸Šà¹‰à¸ˆà¹ˆà¸²à¸¢à¸ªà¸³à¸«à¸£à¸±à¸šà¸£à¸²à¸¢à¸à¸²à¸£à¸ˆà¸±à¸”à¸‹à¸·à¹‰à¸­à¸ˆà¹‰à¸²à¸‡à¸­à¹‰à¸²à¸‡à¸•à¹‰à¸™ à¹ƒà¸™à¸§à¸‡à¹€à¸‡à¸´à¸™ ${amtStr} à¸–à¹‰à¸²à¸­à¹‰à¸²à¸‡à¸­à¸´à¸‡à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸ˆà¸²à¸à¸„à¸¹à¹ˆà¸¡à¸·à¸­à¸­à¸³à¸™à¸²à¸ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´ à¸ž.à¸¨. 2566 à¸‚à¹‰à¸­ 3.2 à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™ (à¸—à¸µà¹ˆà¸¡à¸µà¸à¸²à¸£à¸•à¸±à¹‰à¸‡à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¹„à¸§à¹‰) à¸«à¸¡à¸§à¸”à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¸„à¹ˆà¸²à¸šà¸£à¸´à¸à¸²à¸£ à¸‹à¸¶à¹ˆà¸‡à¹ƒà¸«à¹‰à¸­à¸³à¸™à¸²à¸ˆà¹à¸à¹ˆà¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸šà¸£à¸´à¸«à¸²à¸£à¹ƒà¸™à¸§à¸‡à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ 500,000 à¸šà¸²à¸—` : '',
+    int: data.total ? `à¹ƒà¸™à¸à¸²à¸£à¸™à¸µà¹‰à¸ˆà¸¶à¸‡à¸‚à¸­à¹ƒà¸«à¹‰à¸—à¹ˆà¸²à¸™à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸ªà¸³à¸«à¸£à¸±à¸šà¸„à¹ˆà¸²à¸à¸´à¸ˆà¸à¸£à¸£à¸¡ Team Activity à¸”à¸±à¸‡à¸à¸¥à¹ˆà¸²à¸§ à¹€à¸›à¹‡à¸™à¸§à¸‡à¹€à¸‡à¸´à¸™à¸ˆà¸³à¸™à¸§à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ ${amtStr} (à¹à¸›à¸”à¸«à¸¡à¸·à¹ˆà¸™à¸ªà¸µà¹ˆà¸žà¸±à¸™à¸šà¸²à¸—à¸–à¹‰à¸§à¸™) ${authorityRef500k}` : '',
+    ent: data.total ? `à¹ƒà¸™à¸à¸²à¸£à¸™à¸µà¹‰à¸ˆà¸¶à¸‡à¸‚à¸­à¹ƒà¸«à¹‰à¸—à¹ˆà¸²à¸™à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸„à¹ˆà¸²à¸£à¸±à¸šà¸£à¸­à¸‡à¸¥à¸¹à¸à¸„à¹‰à¸²à¸ˆà¸²à¸ ${esc(data.project||'-')} à¹ƒà¸™à¸Šà¹ˆà¸§à¸‡à¹€à¸§à¸¥à¸²à¸”à¸±à¸‡à¸à¸¥à¹ˆà¸²à¸§ ${authorityRef}` : '',
+    dep: data.total ? `à¹ƒà¸™à¸à¸²à¸£à¸™à¸µà¹‰à¸ˆà¸¶à¸‡à¸‚à¸­à¹ƒà¸«à¹‰à¸—à¹ˆà¸²à¸™à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸„à¹ˆà¸²à¹ƒà¸Šà¹‰à¸ˆà¹ˆà¸²à¸¢ Deployment à¸£à¸§à¸¡à¹€à¸›à¹‡à¸™à¸ˆà¸³à¸™à¸§à¸™à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ ${amtStr} ${authorityRef}` : '',
   };
-  const closingText = closingMap[data.type] || (data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณรวมเป็นจำนวนเงินไม่เกิน ${amtStr}` : '');
+  const closingText = closingMap[data.type] || (data.total ? `à¹ƒà¸™à¸à¸²à¸£à¸™à¸µà¹‰à¸ˆà¸¶à¸‡à¸‚à¸­à¹ƒà¸«à¹‰à¸—à¹ˆà¸²à¸™à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¸‡à¸šà¸›à¸£à¸°à¸¡à¸²à¸“à¸£à¸§à¸¡à¹€à¸›à¹‡à¸™à¸ˆà¸³à¸™à¸§à¸™à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¹€à¸à¸´à¸™ ${amtStr}` : '');
 
   // sectionsHtml rendered inline below with fxNote injection
 
   const fxNote = data.type === 'sl'
-    ? `<p class="mp-note">* <u>หมายเหตุ</u> : เรทราคาโปรแกรมดังกล่าวแปลงเรทเงินตราจากหน่วย USD เป็น THB ณ วันที่ ${esc(data.date||TODAY)}${data.fxRate ? ` (1 USD = ฿${data.fxRate})` : ''}</p>`
+    ? `<p class="mp-note">* <u>à¸«à¸¡à¸²à¸¢à¹€à¸«à¸•à¸¸</u> : à¹€à¸£à¸—à¸£à¸²à¸„à¸²à¹‚à¸›à¸£à¹à¸à¸£à¸¡à¸”à¸±à¸‡à¸à¸¥à¹ˆà¸²à¸§à¹à¸›à¸¥à¸‡à¹€à¸£à¸—à¹€à¸‡à¸´à¸™à¸•à¸£à¸²à¸ˆà¸²à¸à¸«à¸™à¹ˆà¸§à¸¢ USD à¹€à¸›à¹‡à¸™ THB à¸“ à¸§à¸±à¸™à¸—à¸µà¹ˆ ${esc(data.date||TODAY)}${data.fxRate ? ` (1 USD = à¸¿${data.fxRate})` : ''}</p>`
     : '';
 
-  // Dates stored as Thai strings from dateInput() — display directly
+  // Dates stored as Thai strings from dateInput() â€” display directly
   // fmtDate only as safety net for raw ISO strings
   const reviewerDate = data.reviewerDate && data.reviewerDate !== '-' ? data.reviewerDate : (data.date||'');
   const approverDate = data.approverDate && data.approverDate !== '-' ? data.approverDate : (data.date||'');
@@ -606,17 +1850,17 @@ function renderMemoPdf(data) {
     <!-- Header row: memo no + date (logo injected by server) -->
     <div class="mp-hdr">
       <div class="mp-hdr-right">
-        <div><strong>เลขที่</strong>&nbsp;&nbsp;${esc(data.memoNo)}</div>
-        <div><strong>ลงวันที่</strong>&nbsp;&nbsp;${esc(data.date||TODAY)}</div>
+        <div><strong>à¹€à¸¥à¸‚à¸—à¸µà¹ˆ</strong>&nbsp;&nbsp;${esc(data.memoNo)}</div>
+        <div><strong>à¸¥à¸‡à¸§à¸±à¸™à¸—à¸µà¹ˆ</strong>&nbsp;&nbsp;${esc(data.date||TODAY)}</div>
       </div>
     </div>
 
     <!-- Title -->
-    <div class="mp-title">บันทึกข้อความ</div>
+    <div class="mp-title">à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¹‰à¸­à¸„à¸§à¸²à¸¡</div>
 
-    <!-- เรื่อง / เรียน -->
-    <div class="mp-field"><span class="mp-field-label">เรื่อง</span><span class="mp-field-value">${esc(data.subject||'-')}</span></div>
-    <div class="mp-field"><span class="mp-field-label">เรียน</span><span class="mp-field-value">${esc(data.to||'-')}</span></div>
+    <!-- à¹€à¸£à¸·à¹ˆà¸­à¸‡ / à¹€à¸£à¸µà¸¢à¸™ -->
+    <div class="mp-field"><span class="mp-field-label">à¹€à¸£à¸·à¹ˆà¸­à¸‡</span><span class="mp-field-value">${esc(data.subject||'-')}</span></div>
+    <div class="mp-field"><span class="mp-field-label">à¹€à¸£à¸µà¸¢à¸™</span><span class="mp-field-value">${esc(data.to||'-')}</span></div>
 
     <!-- Body -->
     <div class="mp-body"><p>${bodyText}</p></div>
@@ -624,23 +1868,23 @@ function renderMemoPdf(data) {
     <!-- Sections with fxNote after SL table -->
     ${(data.sections||[]).map(function(s){
       let html = s.html;
-      if(s.title === 'รายการ Software') {
+      if(s.title === 'à¸£à¸²à¸¢à¸à¸²à¸£ Software') {
         const H = (from, to) => { html = html.split(from).join(to); };
         // Rename headers using regex (full inline styles, not just text-align)
         const renameHeader = (from, to) => {
           html = html.replace(new RegExp('<th([^>]*)>' + from + '<\\/th>', 'g'), '<th$1>' + to + '</th>');
         };
         renameHeader('#', 'No');
-        renameHeader('ชื่อ Software', 'Item');
-        renameHeader('฿\\/เดือน', 'Price/Month (THB)');
-        renameHeader('จำนวน', 'QTY (License)');
-        renameHeader('รวม', 'Amount (THB)');
-        renameHeader('เดือน', 'Month');
+        renameHeader('à¸Šà¸·à¹ˆà¸­ Software', 'Item');
+        renameHeader('à¸¿\\/à¹€à¸”à¸·à¸­à¸™', 'Price/Month (THB)');
+        renameHeader('à¸ˆà¸³à¸™à¸§à¸™', 'QTY (License)');
+        renameHeader('à¸£à¸§à¸¡', 'Amount (THB)');
+        renameHeader('à¹€à¸”à¸·à¸­à¸™', 'Month');
         // Center everything, then fix item name column (index 1) back to left
         H('<td class="tdl" style="text-align:left">', '<td style="text-align:left">');
         H('<td class="" style="text-align:left">', '<td style="text-align:center">');
         H('<td class="num" style="text-align:center">', '<td style="text-align:center;font-weight:700">');
-        // Fix: first td in each row (#) should be center — it uses tdl class
+        // Fix: first td in each row (#) should be center â€” it uses tdl class
         // Re-process: make all td center, only keep left for item name cells
         // Split by rows and fix per-column
         html = html.replace(/<tr>(.*?)<\/tr>/gs, function(match, cells) {
@@ -663,7 +1907,7 @@ function renderMemoPdf(data) {
           html = html.replace('</tbody></table>', totalRow+'</tbody></table>');
         }
       }
-      if(s.title === 'ตาราง Account') {
+      if(s.title === 'à¸•à¸²à¸£à¸²à¸‡ Account') {
         // Add No column header
         html = html.replace('<thead><tr>', '<thead><tr><th style="background:#e8e8e8;color:#111;font-weight:600;padding:8px 10px;text-align:center;border:1px solid #ccc;font-size:13pt;width:40px">No</th>');
         // Add row number + center all td except account/email col (index 0 = left)
@@ -682,7 +1926,7 @@ function renderMemoPdf(data) {
           return tds.length > 1 ? '<tr>'+tds.join('')+'</tr>' : match;
         });
       }
-      return '<div style="margin-top:12px"><p style="font-weight:700;margin-bottom:6px">'+esc(s.title)+'</p>'+html+(s.title==='รายการ Software'?fxNote:'')+'</div>';
+      return '<div style="margin-top:12px"><p style="font-weight:700;margin-bottom:6px">'+esc(s.title)+'</p>'+html+(s.title==='à¸£à¸²à¸¢à¸à¸²à¸£ Software'?fxNote:'')+'</div>';
     }).join('')}
 
 
@@ -693,9 +1937,9 @@ function renderMemoPdf(data) {
     <!-- Signature boxes -->
     <div class="mp-approval">
       <div class="mp-appr-cell">
-        <div class="mp-appr-head">เรียนประธานเจ้าหน้าที่บริหาร เพื่อโปรดพิจารณาอนุมัติ<br>ดำเนินการ</div>
-        <div class="mp-appr-opt">&#9675; เห็นชอบ, เพื่อโปรดพิจารณาอนุมัติ</div>
-        <div class="mp-appr-opt">&#9675; อื่นๆ ..............................………</div>
+        <div class="mp-appr-head">à¹€à¸£à¸µà¸¢à¸™à¸›à¸£à¸°à¸˜à¸²à¸™à¹€à¸ˆà¹‰à¸²à¸«à¸™à¹‰à¸²à¸—à¸µà¹ˆà¸šà¸£à¸´à¸«à¸²à¸£ à¹€à¸žà¸·à¹ˆà¸­à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´<br>à¸”à¸³à¹€à¸™à¸´à¸™à¸à¸²à¸£</div>
+        <div class="mp-appr-opt">&#9675; à¹€à¸«à¹‡à¸™à¸Šà¸­à¸š, à¹€à¸žà¸·à¹ˆà¸­à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´</div>
+        <div class="mp-appr-opt">&#9675; à¸­à¸·à¹ˆà¸™à¹† ..............................â€¦â€¦â€¦</div>
         <div style="flex:1"></div>
         <div class="mp-sig-space"></div>
         <div class="mp-sig-name">( ${esc(data.reviewerName||'-')} )</div>
@@ -703,8 +1947,8 @@ function renderMemoPdf(data) {
         <div class="mp-sig-date">${reviewerDate}</div>
       </div>
       <div class="mp-appr-cell">
-        <div class="mp-appr-opt">&#9675; อนุมัติ, เพื่อโปรดพิจารณาดำเนินการ</div>
-        <div class="mp-appr-opt">&#9675; อื่นๆ ..............................………</div>
+        <div class="mp-appr-opt">&#9675; à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´, à¹€à¸žà¸·à¹ˆà¸­à¹‚à¸›à¸£à¸”à¸žà¸´à¸ˆà¸²à¸£à¸“à¸²à¸”à¸³à¹€à¸™à¸´à¸™à¸à¸²à¸£</div>
+        <div class="mp-appr-opt">&#9675; à¸­à¸·à¹ˆà¸™à¹† ..............................â€¦â€¦â€¦</div>
         <div style="flex:1"></div>
         <div class="mp-sig-space"></div>
         <div class="mp-sig-name">( ${esc(data.approverName||'-')} )</div>
@@ -762,11 +2006,11 @@ async function downloadMemoPdf(data) {
 }
 function openMemoPdf(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
-  if(!memo) { alert('ไม่พบ Memo'); return; }
+  if(!memo) { alert('à¹„à¸¡à¹ˆà¸žà¸š Memo'); return; }
   downloadMemoPdf(memo);
 }
 
-// ── Micro interactions ──
+// â”€â”€ Micro interactions â”€â”€
 function pmoMotionHide(el, afterHide) {
   if(!el) return;
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -905,9 +2149,9 @@ function ensurePmoDatePicker() {
   picker.setAttribute('role', 'dialog');
   picker.innerHTML = `
     <div class="pmo-date-head">
-      <button type="button" class="pmo-date-nav" data-date-nav="-1" aria-label="Previous month">‹</button>
+      <button type="button" class="pmo-date-nav" data-date-nav="-1" aria-label="Previous month">â€¹</button>
       <div class="pmo-date-month"></div>
-      <button type="button" class="pmo-date-nav" data-date-nav="1" aria-label="Next month">›</button>
+      <button type="button" class="pmo-date-nav" data-date-nav="1" aria-label="Next month">â€º</button>
     </div>
     <div class="pmo-date-controls">
       <div class="pmo-date-current"></div>
@@ -1069,7 +2313,7 @@ function renderPmoSelect(select) {
       data-pmo-option-index="${index}"
       ${option.disabled ? 'disabled' : ''}>
       <span>${esc(option.textContent.trim())}</span>
-      ${option.selected ? '<b aria-hidden="true">✓</b>' : '<b aria-hidden="true"></b>'}
+      ${option.selected ? '<b aria-hidden="true">âœ“</b>' : '<b aria-hidden="true"></b>'}
     </button>
   `).join('') || '<div class="pmo-select-empty">No values</div>';
 }
@@ -1091,7 +2335,7 @@ function enhancePmoSelect(select) {
   select.tabIndex = -1;
   wrap.insertAdjacentHTML('beforeend', `
     <button type="button" class="pmo-select-trigger">
-      <span></span><b aria-hidden="true">▾</b>
+      <span></span><b aria-hidden="true">â–¾</b>
     </button>
     <div class="pmo-select-menu"></div>
   `);
@@ -1155,7 +2399,7 @@ function initCustomSelects() {
   observer.observe(document.body, { childList:true, subtree:true });
 }
 
-// ── Init ──
+// â”€â”€ Init â”€â”€
 function initApp() {
   initMicroInteractions();
   initDatePicker();
