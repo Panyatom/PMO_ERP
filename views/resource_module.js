@@ -1460,12 +1460,9 @@ function ensureResChrome() {
     st.id = 'res-timeline-style';
     st.textContent = `
       .res-timeline-cell{display:block;width:100%;max-width:100%;padding:0!important;border-bottom:none!important;overflow:hidden;--timeline-person-width:190px;--timeline-grid-min-width:864px}
-      .res-timeline-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) minmax(520px,auto);align-items:end;gap:12px;margin-bottom:10px}
-      .res-timeline-toolbar-title{font-size:13px;font-weight:800;color:var(--text)}
-      .res-timeline-toolbar-note{font-size:11px;color:var(--text-3);line-height:1.35;margin-top:2px}
-      .res-timeline-toolbar-controls{display:grid;grid-template-columns:minmax(190px,1fr) minmax(150px,1fr) minmax(118px,.65fr) minmax(118px,.65fr) auto;gap:8px;align-items:center;justify-self:end}
+      .res-timeline-toolbar{display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-bottom:10px}
+      .res-timeline-toolbar-controls{display:grid;grid-template-columns:minmax(190px,1fr) minmax(118px,.65fr) minmax(118px,.65fr) auto;gap:8px;align-items:center;justify-self:end;width:min(820px,100%)}
       .res-timeline-toolbar-select{width:100%;min-width:0;font-size:11px;padding:5px 8px}
-      .res-timeline-legend{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
       .res-timeline-table,.res-timeline-table tbody,.res-timeline-table tbody>tr{display:block!important;width:100%!important;max-width:100%!important}
       .res-timeline-wrap{width:100%;max-width:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);max-height:calc(100vh - 300px);overscroll-behavior-x:contain;touch-action:pan-x pan-y}
       .res-timeline-head,.res-timeline-row{display:flex;width:100%;min-width:calc(var(--timeline-person-width) + var(--timeline-grid-min-width))}
@@ -1536,8 +1533,8 @@ function ensureResChrome() {
       .res-form-grid-3 .ri{width:100%}
       @media (max-width:980px){.res-form-grid-3{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
       @media (max-width:640px){.res-form-grid-3{grid-template-columns:1fr!important}}
-      @media (max-width:1100px){.res-timeline-toolbar{grid-template-columns:1fr}.res-timeline-toolbar-controls{justify-self:stretch}}
-      @media (max-width:820px){.res-timeline-cell{--timeline-person-width:150px;--timeline-grid-min-width:864px}.res-timeline-toolbar{grid-template-columns:1fr;align-items:start}.res-timeline-toolbar-controls{justify-self:stretch;grid-template-columns:1fr 1fr}.res-timeline-tools{grid-column:1/-1;justify-content:flex-start}.res-timeline-legend{justify-content:flex-start}.res-timeline-wrap{max-height:none}.res-request-filters{align-items:flex-start}#res-filter-dropdowns{width:100%}.res-filter-menu{flex:1 1 180px}.res-filter-trigger{width:100%}#view-resource>.filter-row{flex-wrap:wrap!important}#view-resource>.filter-row #res-search{flex-basis:100%}}
+      @media (max-width:1100px){.res-timeline-toolbar{justify-content:stretch}.res-timeline-toolbar-controls{width:100%}}
+      @media (max-width:820px){.res-timeline-cell{--timeline-person-width:150px;--timeline-grid-min-width:864px}.res-timeline-toolbar{align-items:start}.res-timeline-toolbar-controls{grid-template-columns:1fr 1fr}.res-timeline-tools{grid-column:1/-1;justify-content:flex-start}.res-timeline-wrap{max-height:none}.res-request-filters{align-items:flex-start}#res-filter-dropdowns{width:100%}.res-filter-menu{flex:1 1 180px}.res-filter-trigger{width:100%}#view-resource>.filter-row{flex-wrap:wrap!important}#view-resource>.filter-row #res-search{flex-basis:100%}}
     `;
     document.head.appendChild(st);
   }
@@ -1761,7 +1758,7 @@ function renderTimelineView(base) {
   const tbody = document.getElementById('res-table-body');
   if(!tbody) return;
   const table = tbody.closest('table');
-  const mode = timelineMode();
+  const mode = 'all';
   const filters = timelineFilters();
   const allGroups = timelineItemGroups(base, mode);
   const projectOptions = [...new Set(allGroups.flatMap(g => g.items.map(item => item.project)).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b)));
@@ -1794,13 +1791,6 @@ function renderTimelineView(base) {
     return `<div class="res-timeline-month">${esc(label)}</div>`;
   }).join('');
 
-  const legend = Object.values(HIRING_TYPE_META).map(m =>
-    `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2)">
-      <i style="width:16px;height:7px;border-radius:999px;background:${m.bar};display:inline-block"></i>${esc(m.label)}
-    </span>`
-  ).join('') + `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2)">
-      <i style="width:16px;height:7px;border-radius:999px;background:var(--purple);display:inline-block"></i>Project Code
-    </span>`;
   const optionHtml = (items, selected, labelFn=x=>x) => items.map(value =>
     `<option value="${esc(value)}" ${selected===value?'selected':''}>${esc(labelFn(value))}</option>`
   ).join('');
@@ -1816,9 +1806,8 @@ function renderTimelineView(base) {
       const segEnd = period.end > end ? end : period.end;
       const left = daysBetween(start, segStart) / totalDays * 100;
       const width = Math.max(1.2, daysBetween(segStart, segEnd) / totalDays * 100);
-      const m = hiringMeta(item.hiringType);
-      const color = item.source === 'Project Code' ? projectAccentColor(item.project) : m.bar;
-      const textColor = item.source === 'Project Code' ? projectTextColor(color) : '#fff';
+      const color = projectAccentColor(item.project);
+      const textColor = projectTextColor(color);
       const title = `${g.person} | ${item.project} | ${isoDay(item.startDate)} - ${item.endDate ? isoDay(item.endDate) : 'ongoing'} | ${item.source}`;
       return `<button class="res-timeline-bar" onclick="event.stopPropagation();openResDetail('${item.requestId}')" title="${esc(title)}" style="left:${left}%;width:${width}%;background:${color};color:${textColor}">
         <span>${esc(item.project || '-')}</span>
@@ -1839,15 +1828,7 @@ function renderTimelineView(base) {
 
   tbody.innerHTML = `<tr><td class="res-timeline-cell" style="--timeline-month-count:${months.length}">
     <div class="res-timeline-toolbar">
-      <div>
-        <div class="res-timeline-toolbar-title">Resource Assignment Timeline</div>
-        <div class="res-timeline-toolbar-note">${mode==='project-code'?'Shows only people with Project Code, based on Project Code start/end dates.':'Shows Project Code plus primary filled assignment periods.'}</div>
-      </div>
       <div class="res-timeline-toolbar-controls">
-        <select class="ri res-timeline-toolbar-select" onchange="setTimelineMode(this.value)">
-          <option value="project-code" ${mode==='project-code'?'selected':''}>Project Code only</option>
-          <option value="all" ${mode==='all'?'selected':''}>Include primary assignment</option>
-        </select>
         <select class="ri res-timeline-toolbar-select" onchange="setTimelineFilter('project', this.value)" title="Filter by project">
           <option value="">Project All</option>
           ${optionHtml(projectOptions, filters.project)}
@@ -1867,7 +1848,6 @@ function renderTimelineView(base) {
           <button type="button" class="res-timeline-scroll-btn" onclick="resetResourceTimelineYear()" title="Current year">Today</button>
           ${hasTimelineFilters?`<button type="button" class="res-timeline-scroll-btn" onclick="clearTimelineFilters()" title="Clear filters">Clear</button>`:''}
         </div>
-        <div class="res-timeline-legend">${legend}</div>
       </div>
     </div>
     <div class="res-timeline-wrap">
