@@ -109,8 +109,7 @@ test('[PMO-RES-UAT-007] Timeline excludes sourcing records even when stale onboa
   ]);
 
   assert.deepEqual(groups.map(group => group.employeeCode), ['DHC-100']);
-  assert.equal(groups[0].items.length, 1);
-  assert.equal(groups[0].items[0].source, 'Project Code');
+  assert.deepEqual(groups[0].items.map(item => item.source), ['Primary', 'Project Code']);
 });
 
 test('[PMO-RES-UAT-008] Timeline project-code mode maps assignment project, code, percent, and dates', () => {
@@ -160,6 +159,24 @@ test('[PMO-RES-UAT-009] Timeline all mode includes primary assignment plus proje
     'Primary:Primary Project:50',
     'Project Code:Extra Project:50',
   ]);
+});
+
+test('[PMO-RES-UAT-009A] Timeline default mode includes primary assignment', () => {
+  const groups = flow.timelineItemGroups([
+    {
+      id:'filled-default',
+      status:'filled',
+      project:'Default Primary',
+      primaryProjectCode:'DEF-001',
+      allocationPercent:60,
+      resourceName:'Default Timeline Person',
+      employeeCode:'DHC-103',
+      onboardDate:'2026-07-01',
+      projectCodes:[{ project:'Default Extra', code:'DEF-040', allocation:40, startDate:'2026-08-01' }],
+    },
+  ]);
+
+  assert.deepEqual(groups[0].items.map(item => item.source), ['Primary', 'Project Code']);
 });
 
 test('[PMO-RES-UAT-010] Timeline project bars use project master colors with readable text', () => {

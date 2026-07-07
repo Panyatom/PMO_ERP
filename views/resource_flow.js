@@ -204,7 +204,7 @@
     return resourceEmployeeCode(record) || resourcePersonName(record).toLowerCase() || record?.id || '';
   }
 
-  function timelineItemGroups(list, mode='project-code') {
+  function timelineItemGroups(list, mode='all') {
     const groups = new Map();
     (list || []).forEach(record => {
       if(!canHaveOnboardDate(record?.status)) return;

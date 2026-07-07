@@ -484,9 +484,9 @@ function setUserProject(p) {
 }
 function timelineMode() {
   try {
-    const mode = localStorage.getItem(RES_TIMELINE_MODE_KEY) || 'project-code';
-    return mode === 'all' ? 'all' : 'project-code';
-  } catch(e) { return 'project-code'; }
+    const mode = localStorage.getItem(RES_TIMELINE_MODE_KEY) || 'all';
+    return mode === 'project-code' ? 'project-code' : 'all';
+  } catch(e) { return 'all'; }
 }
 function setTimelineMode(mode) {
   try { localStorage.setItem(RES_TIMELINE_MODE_KEY, mode === 'all' ? 'all' : 'project-code'); } catch(e) {}
@@ -873,7 +873,7 @@ function timelineGroups(list) {
   });
   return [...groups.values()].sort((a,b)=>String(a.person).localeCompare(String(b.person)));
 }
-function timelineItemGroups(list, mode='project-code') {
+function timelineItemGroups(list, mode='all') {
   const groups = new Map();
   (list||[]).forEach(r => {
     if(!['filled','resolved','mitigated'].includes(r.status)) return;
