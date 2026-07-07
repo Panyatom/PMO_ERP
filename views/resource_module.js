@@ -23,6 +23,7 @@
 const RES_KEY = 'orbit-pmo-resources-v1';
 const RESOURCE_MASTER_KEY = 'orbit-pmo-resource-master-v1';
 const RES_TIMELINE_MODE_KEY = 'orbit-pmo-resource-timeline-mode-v1';
+const RES_TIMELINE_FILTER_KEY = 'orbit-pmo-resource-timeline-filters-v1';
 const PROJECT_CODE_KEY = 'orbit-pmo-project-codes-v1';
 let _resCache = null;
 let _resourceMasterCache = null;
@@ -491,6 +492,28 @@ function setTimelineMode(mode) {
   try { localStorage.setItem(RES_TIMELINE_MODE_KEY, mode === 'all' ? 'all' : 'project-code'); } catch(e) {}
   renderResource();
 }
+function timelineFilters() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RES_TIMELINE_FILTER_KEY) || '{}');
+    return {
+      project: String(raw.project || ''),
+      role: String(raw.role || ''),
+      type: String(raw.type || ''),
+    };
+  } catch(e) {
+    return { project:'', role:'', type:'' };
+  }
+}
+function setTimelineFilter(kind, value) {
+  const filters = timelineFilters();
+  filters[kind] = String(value || '');
+  try { localStorage.setItem(RES_TIMELINE_FILTER_KEY, JSON.stringify(filters)); } catch(e) {}
+  renderTimelineView(visibleToRole(loadResources(), currentRole()));
+}
+function clearTimelineFilters() {
+  try { localStorage.removeItem(RES_TIMELINE_FILTER_KEY); } catch(e) {}
+  renderTimelineView(visibleToRole(loadResources(), currentRole()));
+}
 
 function resourceSettings() {
   const s = typeof loadSettings === 'function' ? loadSettings() : null;
@@ -884,9 +907,12 @@ function timelineItemGroups(list, mode='project-code') {
         key,
         person: resourcePersonName(r),
         employeeCode: resourceEmployeeCode(r),
+        position: r.position,
         team: r.resourceTeam,
         level: r.level,
         hiringType: r.hiringType,
+        roleKey: window.PMO_RESOURCE_FLOW?.timelineRoleKey ? window.PMO_RESOURCE_FLOW.timelineRoleKey(r) : timelineRoleKey(r),
+        employeeTypeKey: window.PMO_RESOURCE_FLOW?.employeeTypeKey ? window.PMO_RESOURCE_FLOW.employeeTypeKey(r.hiringType) : hiringKind(r.hiringType),
         items: [],
       });
     }
@@ -896,6 +922,21 @@ function timelineItemGroups(list, mode='project-code') {
     g.items.push(...items);
   });
   return [...groups.values()].sort((a,b)=>String(a.person).localeCompare(String(b.person)));
+}
+function timelineRoleKey(record) {
+  const raw = [record?.resourceTeam, record?.position, record?.level].filter(Boolean).join(' ').toLowerCase();
+  if(/\b(sa|system analyst|solution analyst)\b/.test(raw)) return 'sa';
+  if(/\b(ba|business analyst)\b/.test(raw)) return 'ba';
+  if(/\b(qa|qc|tester|test engineer)\b/.test(raw)) return 'qa';
+  if(/\b(pm|pmo|project manager|scrum master)\b/.test(raw)) return 'pm';
+  if(/\b(dev|developer|engineer|programmer|frontend|front-end|backend|back-end|fullstack|full stack|fe|be)\b/.test(raw)) return 'dev';
+  return 'other';
+}
+function timelineRoleLabel(key) {
+  return window.PMO_RESOURCE_FLOW?.timelineRoleLabel ? window.PMO_RESOURCE_FLOW.timelineRoleLabel(key) : ({ dev:'Dev', ba:'BA', sa:'SA', qa:'QA', pm:'PM/PMO', other:'Other' })[key] || key || 'Other';
+}
+function timelineTypeLabel(key) {
+  return window.PMO_RESOURCE_FLOW?.employeeTypeLabel ? window.PMO_RESOURCE_FLOW.employeeTypeLabel(key) : ({ direct:'DHC', secondment:'SEC', subcon:'Sub Con', dhc:'DHC', sec:'SEC', other:'Other' })[key] || key || 'Other';
 }
 function timelineItemWindow(groups) {
   const starts = groups.flatMap(g => g.items.map(i => parseDay(i.startDate))).filter(Boolean);
@@ -1419,11 +1460,11 @@ function ensureResChrome() {
     st.id = 'res-timeline-style';
     st.textContent = `
       .res-timeline-cell{display:block;width:100%;max-width:100%;padding:0!important;border-bottom:none!important;overflow:hidden;--timeline-person-width:190px;--timeline-grid-min-width:864px}
-      .res-timeline-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) minmax(320px,auto);align-items:end;gap:12px;margin-bottom:10px}
+      .res-timeline-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) minmax(520px,auto);align-items:end;gap:12px;margin-bottom:10px}
       .res-timeline-toolbar-title{font-size:13px;font-weight:800;color:var(--text)}
       .res-timeline-toolbar-note{font-size:11px;color:var(--text-3);line-height:1.35;margin-top:2px}
-      .res-timeline-toolbar-controls{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:10px;align-items:center;justify-self:end}
-      .res-timeline-toolbar-select{width:100%;min-width:220px;font-size:11px;padding:5px 8px}
+      .res-timeline-toolbar-controls{display:grid;grid-template-columns:minmax(190px,1fr) minmax(150px,1fr) minmax(118px,.65fr) minmax(118px,.65fr) auto;gap:8px;align-items:center;justify-self:end}
+      .res-timeline-toolbar-select{width:100%;min-width:0;font-size:11px;padding:5px 8px}
       .res-timeline-legend{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
       .res-timeline-table,.res-timeline-table tbody,.res-timeline-table tbody>tr{display:block!important;width:100%!important;max-width:100%!important}
       .res-timeline-wrap{width:100%;max-width:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);max-height:calc(100vh - 300px);overscroll-behavior-x:contain;touch-action:pan-x pan-y}
@@ -1495,7 +1536,8 @@ function ensureResChrome() {
       .res-form-grid-3 .ri{width:100%}
       @media (max-width:980px){.res-form-grid-3{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
       @media (max-width:640px){.res-form-grid-3{grid-template-columns:1fr!important}}
-      @media (max-width:820px){.res-timeline-cell{--timeline-person-width:150px;--timeline-grid-min-width:864px}.res-timeline-toolbar{grid-template-columns:1fr;align-items:start}.res-timeline-toolbar-controls{justify-self:stretch;grid-template-columns:1fr}.res-timeline-legend{justify-content:flex-start}.res-timeline-wrap{max-height:none}.res-request-filters{align-items:flex-start}#res-filter-dropdowns{width:100%}.res-filter-menu{flex:1 1 180px}.res-filter-trigger{width:100%}#view-resource>.filter-row{flex-wrap:wrap!important}#view-resource>.filter-row #res-search{flex-basis:100%}}
+      @media (max-width:1100px){.res-timeline-toolbar{grid-template-columns:1fr}.res-timeline-toolbar-controls{justify-self:stretch}}
+      @media (max-width:820px){.res-timeline-cell{--timeline-person-width:150px;--timeline-grid-min-width:864px}.res-timeline-toolbar{grid-template-columns:1fr;align-items:start}.res-timeline-toolbar-controls{justify-self:stretch;grid-template-columns:1fr 1fr}.res-timeline-tools{grid-column:1/-1;justify-content:flex-start}.res-timeline-legend{justify-content:flex-start}.res-timeline-wrap{max-height:none}.res-request-filters{align-items:flex-start}#res-filter-dropdowns{width:100%}.res-filter-menu{flex:1 1 180px}.res-filter-trigger{width:100%}#view-resource>.filter-row{flex-wrap:wrap!important}#view-resource>.filter-row #res-search{flex-basis:100%}}
     `;
     document.head.appendChild(st);
   }
@@ -1720,9 +1762,21 @@ function renderTimelineView(base) {
   if(!tbody) return;
   const table = tbody.closest('table');
   const mode = timelineMode();
+  const filters = timelineFilters();
   const allGroups = timelineItemGroups(base, mode);
+  const projectOptions = [...new Set(allGroups.flatMap(g => g.items.map(item => item.project)).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b)));
+  const roleOptions = [...new Set(allGroups.map(g => g.roleKey).filter(Boolean))].sort();
+  const typeOptions = [...new Set(allGroups.map(g => g.employeeTypeKey).filter(Boolean))].sort();
+  const filteredAllGroups = window.PMO_RESOURCE_FLOW?.applyTimelineFilters
+    ? window.PMO_RESOURCE_FLOW.applyTimelineFilters(allGroups, filters)
+    : allGroups.flatMap(g => {
+      if(filters.role && g.roleKey !== filters.role) return [];
+      if(filters.type && g.employeeTypeKey !== filters.type) return [];
+      const items = filters.project ? g.items.filter(item => item.project === filters.project) : g.items;
+      return items.length ? [{ ...g, items }] : [];
+    });
   const { start, end } = timelineYearWindow(_resTimelineYear);
-  const groups = allGroups
+  const groups = filteredAllGroups
     .map(g => ({ ...g, items: g.items.filter(item => timelineItemOverlapsWindow(item, start, end)) }))
     .filter(g => g.items.length);
   const months = timelineMonths(start, end);
@@ -1747,6 +1801,10 @@ function renderTimelineView(base) {
   ).join('') + `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2)">
       <i style="width:16px;height:7px;border-radius:999px;background:var(--purple);display:inline-block"></i>Project Code
     </span>`;
+  const optionHtml = (items, selected, labelFn=x=>x) => items.map(value =>
+    `<option value="${esc(value)}" ${selected===value?'selected':''}>${esc(labelFn(value))}</option>`
+  ).join('');
+  const hasTimelineFilters = !!(filters.project || filters.role || filters.type);
 
   const rows = groups.map(g => {
     const primaryType = g.hiringType;
@@ -1790,11 +1848,24 @@ function renderTimelineView(base) {
           <option value="project-code" ${mode==='project-code'?'selected':''}>Project Code only</option>
           <option value="all" ${mode==='all'?'selected':''}>Include primary assignment</option>
         </select>
+        <select class="ri res-timeline-toolbar-select" onchange="setTimelineFilter('project', this.value)" title="Filter by project">
+          <option value="">Project All</option>
+          ${optionHtml(projectOptions, filters.project)}
+        </select>
+        <select class="ri res-timeline-toolbar-select" onchange="setTimelineFilter('role', this.value)" title="Filter by role">
+          <option value="">Role All</option>
+          ${optionHtml(roleOptions, filters.role, timelineRoleLabel)}
+        </select>
+        <select class="ri res-timeline-toolbar-select" onchange="setTimelineFilter('type', this.value)" title="Filter by employee type">
+          <option value="">Type All</option>
+          ${optionHtml(typeOptions, filters.type, timelineTypeLabel)}
+        </select>
         <div class="res-timeline-tools" aria-label="Timeline horizontal scroll controls">
           <button type="button" class="res-timeline-scroll-btn" onclick="shiftResourceTimelineYear(-1)" title="Previous year">&larr;</button>
           <span style="font-size:12px;font-weight:800;color:var(--text);min-width:42px;text-align:center">${_resTimelineYear}</span>
           <button type="button" class="res-timeline-scroll-btn" onclick="shiftResourceTimelineYear(1)" title="Next year">&rarr;</button>
           <button type="button" class="res-timeline-scroll-btn" onclick="resetResourceTimelineYear()" title="Current year">Today</button>
+          ${hasTimelineFilters?`<button type="button" class="res-timeline-scroll-btn" onclick="clearTimelineFilters()" title="Clear filters">Clear</button>`:''}
         </div>
         <div class="res-timeline-legend">${legend}</div>
       </div>
@@ -1804,7 +1875,7 @@ function renderTimelineView(base) {
         <div class="res-timeline-person res-timeline-head-left">Resource</div>
         <div class="res-timeline-months">${monthHead}</div>
       </div>
-      ${rows || `<div style="padding:34px;text-align:center;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm)">No assignments in ${_resTimelineYear}. Use the year arrows to view another year.</div>`}
+      ${rows || `<div style="padding:34px;text-align:center;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm)">No assignments match the selected timeline filters in ${_resTimelineYear}.</div>`}
     </div>
   </td></tr>`;
 

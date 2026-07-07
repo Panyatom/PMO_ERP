@@ -171,6 +171,35 @@
     return String(record?.primaryProjectCode || record?.projectCode || '').trim();
   }
 
+  function timelineRoleKey(recordOrText) {
+    const text = typeof recordOrText === 'string'
+      ? recordOrText
+      : [recordOrText?.resourceTeam, recordOrText?.position, recordOrText?.level].filter(Boolean).join(' ');
+    const raw = String(text || '').toLowerCase();
+    if(/\b(sa|system analyst|solution analyst)\b/.test(raw)) return 'sa';
+    if(/\b(ba|business analyst)\b/.test(raw)) return 'ba';
+    if(/\b(qa|qc|tester|test engineer)\b/.test(raw)) return 'qa';
+    if(/\b(pm|pmo|project manager|scrum master)\b/.test(raw)) return 'pm';
+    if(/\b(dev|developer|engineer|programmer|frontend|front-end|backend|back-end|fullstack|full stack|fe|be)\b/.test(raw)) return 'dev';
+    return 'other';
+  }
+
+  function timelineRoleLabel(key) {
+    return ({ dev:'Dev', ba:'BA', sa:'SA', qa:'QA', pm:'PM/PMO', other:'Other' })[key] || key || 'Other';
+  }
+
+  function employeeTypeKey(hiringType) {
+    const kind = hiringKind(hiringType);
+    if(kind === 'direct') return 'dhc';
+    if(kind === 'secondment') return 'sec';
+    if(kind === 'subcon') return 'subcon';
+    return 'other';
+  }
+
+  function employeeTypeLabel(key) {
+    return ({ dhc:'DHC', sec:'SEC', subcon:'Sub Con', other:'Other' })[key] || key || 'Other';
+  }
+
   function personKey(record) {
     return resourceEmployeeCode(record) || resourcePersonName(record).toLowerCase() || record?.id || '';
   }
@@ -208,12 +237,16 @@
         groups.set(key, {
           key,
           person: resourcePersonName(record),
-          employeeCode: resourceEmployeeCode(record),
-          level: record.level,
-          hiringType: record.hiringType,
-          items: [],
-        });
-      }
+        employeeCode: resourceEmployeeCode(record),
+        position: record.position,
+        team: record.resourceTeam,
+        level: record.level,
+        hiringType: record.hiringType,
+        roleKey: timelineRoleKey(record),
+        employeeTypeKey: employeeTypeKey(record.hiringType),
+        items: [],
+      });
+    }
       groups.get(key).items.push(...items);
     });
     return [...groups.values()].sort((a,b)=>String(a.person).localeCompare(String(b.person)));
@@ -238,6 +271,20 @@
     return ((r * 299 + g * 587 + b * 114) / 1000) > 150 ? '#0f172a' : '#fff';
   }
 
+  function applyTimelineFilters(groups, filters={}) {
+    const project = String(filters.project || '').trim().toLowerCase();
+    const role = String(filters.role || '').trim();
+    const type = String(filters.type || '').trim();
+    return (groups || []).flatMap(group => {
+      if(role && group.roleKey !== role) return [];
+      if(type && group.employeeTypeKey !== type) return [];
+      const items = project
+        ? (group.items || []).filter(item => String(item.project || '').trim().toLowerCase() === project)
+        : (group.items || []);
+      return items.length ? [{ ...group, items }] : [];
+    });
+  }
+
   return {
     BBIK_VISIBLE,
     DEFAULT_CANCEL_REASONS,
@@ -257,7 +304,12 @@
     canHaveOnboardDate,
     effectiveOnboardDate,
     rebalancePrimaryAllocationForCodes,
+    timelineRoleKey,
+    timelineRoleLabel,
+    employeeTypeKey,
+    employeeTypeLabel,
     timelineItemGroups,
+    applyTimelineFilters,
     resolveProjectAccentColor,
     projectTextColor,
   };

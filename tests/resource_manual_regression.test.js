@@ -174,3 +174,46 @@ test('[PMO-RES-UAT-010] Timeline project bars use project master colors with rea
   assert.equal(flow.projectTextColor('#f7d774'), '#0f172a');
   assert.equal(flow.resolveProjectAccentColor('Unknown', projectMaster), '#8dd7cf');
 });
+
+test('[PMO-RES-UAT-011] Timeline filters by project, role, and employee type', () => {
+  const groups = flow.timelineItemGroups([
+    {
+      id:'dev-dhc',
+      status:'filled',
+      project:'Core',
+      position:'Backend Developer',
+      hiringType:'Direct Head Count (Permanent)',
+      resourceName:'Dev Person',
+      employeeCode:'DHC-200',
+      onboardDate:'2026-07-01',
+      projectCodes:[{ project:'AOA-MP', code:'AOA-DEV', allocation:50, startDate:'2026-08-01' }],
+    },
+    {
+      id:'ba-sec',
+      status:'filled',
+      project:'Core',
+      position:'Business Analyst',
+      hiringType:'Secondment',
+      resourceName:'BA Person',
+      employeeCode:'SEC-200',
+      onboardDate:'2026-07-01',
+      projectCodes:[{ project:'NLMS', code:'NLMS-BA', allocation:100, startDate:'2026-08-01' }],
+    },
+    {
+      id:'sa-sub',
+      status:'filled',
+      project:'Core',
+      position:'System Analyst',
+      hiringType:'Sub-contract',
+      resourceName:'SA Person',
+      employeeCode:'SUB-200',
+      onboardDate:'2026-07-01',
+      projectCodes:[{ project:'AOA-MP', code:'AOA-SA', allocation:100, startDate:'2026-08-01' }],
+    },
+  ]);
+
+  assert.deepEqual(flow.applyTimelineFilters(groups, { project:'AOA-MP' }).map(group => group.employeeCode), ['DHC-200', 'SUB-200']);
+  assert.deepEqual(flow.applyTimelineFilters(groups, { role:'ba' }).map(group => group.employeeCode), ['SEC-200']);
+  assert.deepEqual(flow.applyTimelineFilters(groups, { type:'sec' }).map(group => group.employeeCode), ['SEC-200']);
+  assert.deepEqual(flow.applyTimelineFilters(groups, { project:'AOA-MP', role:'sa', type:'subcon' }).map(group => group.employeeCode), ['SUB-200']);
+});
