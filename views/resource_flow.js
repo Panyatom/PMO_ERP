@@ -3,7 +3,7 @@
   if(typeof module === 'object' && module.exports) module.exports = factory();
   else root.PMO_RESOURCE_FLOW = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function() {
-  const BBIK_VISIBLE = ['approved','sourcing','interviewing','offer'];
+  const BBIK_VISIBLE = ['approved','sourcing','interviewing','offer','filled'];
   const RECRUITING = ['sourcing','interviewing','offer'];
   const DEFAULT_CANCEL_REASONS = [
     'Requirement changed',
@@ -21,7 +21,7 @@
     approved:     { bbik:['sourcing'], pmo:['cancelled'] },
     sourcing:     { bbik:['interviewing'], pmo:['cancelled'] },
     interviewing: { bbik:['offer'], pmo:['cancelled'] },
-    offer:        { bbik:['filled'], pmo:['cancelled'] },
+    offer:        { bbik:['filled','interviewing','sourcing'], pmo:['cancelled'] },
     document:     { pmo:['filled'] },
     filled:       { pmo:['resolved'], user:['resolved'] },
     mitigated:    {},
@@ -64,8 +64,8 @@
 
   function canUseStatusTransition(roles, role, fromStatus, toStatus) {
     if(toStatus === 'approved') return hasPermission(roles, role, 'approve');
-    if(RECRUITING.includes(toStatus)) return hasPermission(roles, role, 'recruit');
-    if(toStatus === 'filled') return hasPermission(roles, role, 'approve') || hasPermission(roles, role, 'resolveFilled') || (fromStatus === 'offer' && hasPermission(roles, role, 'recruit'));
+    if(RECRUITING.includes(toStatus)) return hasPermission(roles, role, 'recruit') || hasPermission(roles, role, 'approve');
+    if(toStatus === 'filled') return hasPermission(roles, role, 'approve') || hasPermission(roles, role, 'resolveFilled') || hasPermission(roles, role, 'recruit');
     if(toStatus === 'resolved') return hasPermission(roles, role, 'resolveFilled');
     if(toStatus === 'cancelled') return hasPermission(roles, role, 'cancelPending') || hasPermission(roles, role, 'approve');
     return true;

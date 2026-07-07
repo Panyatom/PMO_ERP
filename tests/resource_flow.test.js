@@ -25,14 +25,14 @@ test('PMO can approve subcontract without pre-approval docs', () => {
   assert(!next.includes('pendingDocs'));
 });
 
-test('BBIK only sees approved and recruiting pipeline records', () => {
+test('BBIK sees approved, recruiting, and filled records', () => {
   const rows = [
     { id: '1', status: 'pending', project: 'AOA' },
     { id: '2', status: 'approved', project: 'AOA' },
     { id: '3', status: 'sourcing', project: 'TTB' },
     { id: '4', status: 'filled', project: 'TTB' },
   ];
-  assert.deepEqual(flow.visibleToRole(rows, 'bbik', roles).map(r => r.id), ['2', '3']);
+  assert.deepEqual(flow.visibleToRole(rows, 'bbik', roles).map(r => r.id), ['2', '3', '4']);
 });
 
 test('Requester is scoped to selected project and cannot approve', () => {
@@ -54,7 +54,7 @@ test('BBIK advances recruiting steps and fills from offer', () => {
   assert.deepEqual(flow.allowedNext('approved', 'bbik', roles), ['sourcing']);
   assert.deepEqual(flow.allowedNext('sourcing', 'bbik', roles), ['interviewing']);
   assert.deepEqual(flow.allowedNext('interviewing', 'bbik', roles), ['offer']);
-  assert.deepEqual(flow.allowedNext('offer', 'bbik', roles), ['filled']);
+  assert.deepEqual(flow.allowedNext('offer', 'bbik', roles).sort(), ['filled', 'interviewing', 'sourcing'].sort());
   assert(!flow.allowedNext('document', 'bbik', roles).includes('filled'));
 });
 

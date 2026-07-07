@@ -38,7 +38,7 @@ test('[PMO-RES-008] non-PMO roles cannot approve pending request', () => {
 test('[PMO-RES-009] BBIK recruiting transition path fills from offer', () => {
   assert.deepEqual(flow.allowedNext('sourcing', 'bbik', roles), ['interviewing']);
   assert.deepEqual(flow.allowedNext('interviewing', 'bbik', roles), ['offer']);
-  assert.deepEqual(flow.allowedNext('offer', 'bbik', roles), ['filled']);
+  assert.deepEqual(flow.allowedNext('offer', 'bbik', roles).sort(), ['filled', 'interviewing', 'sourcing'].sort());
   assert(!flow.allowedNext('document', 'bbik', roles).includes('filled'));
 });
 
@@ -82,7 +82,7 @@ test('[PMO-RES-024] role-scoped visibility filters records correctly', () => {
     { id:'sourcing-geo', status:'sourcing', project:'Geo9' },
     { id:'filled-aoa', status:'filled', project:'AOA-MP' },
   ];
-  assert.deepEqual(flow.visibleToRole(rows, 'bbik', roles).map(r => r.id), ['approved-ttb', 'sourcing-geo']);
+  assert.deepEqual(flow.visibleToRole(rows, 'bbik', roles).map(r => r.id), ['approved-ttb', 'sourcing-geo', 'filled-aoa']);
   assert.deepEqual(flow.visibleToRole(rows, 'user', roles, 'AOA-MP').map(r => r.id), ['pending-aoa', 'filled-aoa']);
   assert.deepEqual(flow.visibleToRole(rows, 'pmo', roles).map(r => r.id), rows.map(r => r.id));
 });

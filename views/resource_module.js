@@ -78,17 +78,17 @@ const DEFAULT_PROJECT_CODES = [
 const RES_STATUS = {
   pending:     { label:'Pending',              cls:'badge-gray',   th:'Waiting for PMO/Dir approval' },
   pendingDocs: { label:'Pending Docs',         cls:'badge-yellow', th:'Pre-approval documents required before BBIK' },
-  approved:    { label:'Approved -> BBIK',     cls:'badge-blue',   th:'Approved by PMO/Dir, waiting for BBIK' },
+  approved:    { label:'Approved',             cls:'badge-blue',   th:'Approved by PMO/Dir, waiting for BBIK' },
   sourcing:    { label:'Sourcing (BBIK)',      cls:'badge-blue',   th:'BBIK is sourcing' },
   interviewing:{ label:'Interviewing (BBIK)',  cls:'badge-purple', th:'BBIK is interviewing' },
   offer:       { label:'Offer (BBIK)',         cls:'badge-amber',  th:'BBIK is preparing offer' },
-  document:    { label:'Document (BBIK)',      cls:'badge-yellow', th:'BBIK is preparing documents' },
-  filled:      { label:'Filled / Onboarded',   cls:'badge-green',  th:'Employee onboarded' },
+  document:    { label:'Docs',                 cls:'badge-yellow', th:'Legacy document stage' },
+  filled:      { label:'Filled',               cls:'badge-green',  th:'Employee filled' },
   mitigated:   { label:'Mitigated',            cls:'badge-teal',   th:'Resolved by internal mitigation' },
   resolved:    { label:'Resolved',             cls:'badge-green',  th:'Closed' },
   cancelled:   { label:'Cancelled',            cls:'badge-red',    th:'Cancelled' },
 };
-const OPEN = ['pending','pendingDocs','approved','sourcing','interviewing','offer','document'];
+const OPEN = ['pending','pendingDocs','approved','sourcing','interviewing','offer'];
 const RECRUITING = ['sourcing','interviewing','offer'];
 
 
@@ -137,7 +137,7 @@ const RES_VIEWS = [
   { key:'pendingDocs',label:'Pending Docs', match:r=>r.status==='pendingDocs' },
   { key:'approved',   label:'Approved',     match:r=>r.status==='approved' },
   { key:'recruiting', label:'Recruiting',   match:r=>RECRUITING.includes(r.status) },
-  { key:'filled',     label:'Onboarded',    match:r=>r.status==='filled' },
+  { key:'filled',     label:'Filled',       match:r=>r.status==='filled' },
   { key:'closed',     label:'Filled',       match:r=>['resolved','mitigated'].includes(r.status) },
   { key:'cancelled',  label:'Cancelled',    match:r=>r.status==='cancelled' },
 ];
@@ -162,7 +162,7 @@ const STATUS_FLOW = {
   approved:     { bbik:['sourcing'], pmo:['cancelled'] },
   sourcing:     { bbik:['interviewing'], pmo:['cancelled'] },
   interviewing: { bbik:['offer'], pmo:['cancelled'] },
-  offer:        { bbik:['filled'], pmo:['cancelled'] },
+  offer:        { bbik:['filled','interviewing','sourcing'], pmo:['cancelled'] },
   document:     { pmo:['filled'] },           // Orbit à¸¢à¸·à¸™à¸¢à¸±à¸™ onboard
   filled:       { pmo:['resolved'], user:['resolved'] },
   mitigated:    {},
@@ -172,7 +172,7 @@ const STATUS_FLOW = {
 
 
 // BBIK à¹€à¸«à¹‡à¸™à¹„à¸”à¹‰à¹€à¸‰à¸žà¸²à¸°à¸£à¸²à¸¢à¸à¸²à¸£à¸—à¸µà¹ˆà¸­à¸™à¸¸à¸¡à¸±à¸•à¸´à¹à¸¥à¹‰à¸§à¸‚à¸¶à¹‰à¸™à¹„à¸› (cross-company isolation)
-const BBIK_VISIBLE = ['approved','sourcing','interviewing','offer'];
+const BBIK_VISIBLE = ['approved','sourcing','interviewing','offer','filled'];
 
 
 let _role = null;
@@ -286,7 +286,7 @@ function normalizeResourceMaster(row={}, index=0) {
     sourceCompany: String(row.sourceCompany || row.source_company || row.transferFrom || row.transfer_from || '').trim(),
     currentProject: String(row.currentProject || row.current_project || row.project || '').trim(),
     status: String(row.status || row.resourceStatus || row.resource_status || 'active').trim().toLowerCase() || 'active',
-    onboardDate: String(row.onboardDate || row.onboard_date || row.startDate || row.start_date || '').slice(0, 10),
+    onboardDate: String(row.onboardDate || row.onboard_date || '').slice(0, 10),
     offboardDate: String(row.offboardDate || row.offboard_date || row.endDate || row.end_date || '').slice(0, 10),
     note: String(row.note || row.remark || '').trim(),
     requestId: String(row.requestId || row.request_id || '').trim(),
@@ -308,7 +308,7 @@ function resourceMasterFromRequest(r) {
     employmentType: r.hiringType,
     currentProject: r.project,
     status,
-    onboardDate: r.onboardDate || r.startDate,
+    onboardDate: canHaveOnboardDate(r.status) ? r.onboardDate : '',
     offboardDate: r.offboardDate || r.endDate,
     note: r.remark,
     requestId: r.id,
@@ -430,7 +430,7 @@ function projectCodeOptionsForProject(project, selectedCode='') {
   const fallback = selected && !codes.some(c => c.code === selected)
     ? `<option value="${esc(selected)}" selected>${esc(selected)} / Current value</option>`
     : '';
-  return fallback + codes.map(c => `<option value="${esc(c.code)}" ${selected===c.code?'selected':''}>${esc(c.code)}${c.pmOwner?` / ${esc(c.pmOwner)}`:''}</option>`).join('');
+  return fallback + codes.map(c => `<option value="${esc(c.code)}" ${selected===c.code?'selected':''}>${esc(c.code)}</option>`).join('');
 }
 function projectCodeByValue(code, project='') {
   const codeLower = String(code||'').trim().toLowerCase();
@@ -497,7 +497,15 @@ function resourceRoles() {
   if(configured) {
     const next = typeof structuredClone === 'function' ? structuredClone(configured) : JSON.parse(JSON.stringify(configured));
     if(next.bbik) {
-      next.bbik.transitions = { ...(next.bbik.transitions || {}), offer:['filled'], document:[] };
+      next.bbik.transitions = {
+        ...(next.bbik.transitions || {}),
+        approved:['sourcing','filled'],
+        sourcing:['interviewing','offer','filled','approved'],
+        interviewing:['offer','sourcing','filled'],
+        offer:['filled','interviewing','sourcing'],
+        filled:['offer','sourcing'],
+        document:[],
+      };
       next.bbik.tabs = (next.bbik.tabs || ['request']).filter(tab => tab !== 'dashboard');
     }
     if(next.user) next.user.tabs = (next.user.tabs || ['request']).filter(tab => tab !== 'dashboard');
@@ -554,6 +562,20 @@ function allowedNext(status, role) {
   if(!resourceSettings()) return legacyMap[role] ? [...legacyMap[role]].filter(next => canUseStatusTransition(role, status, next)) : [];
   return [];
 }
+function allowedStatusChoicesForRecord(record, role) {
+  const current = record?.status || '';
+  let choices = allowedNextForRecord(record, role);
+  if(role === 'pmo' || canApprove(role)) {
+    choices = Object.keys(RES_STATUS).filter(s => s !== current && s !== 'document' && canUseStatusTransition(role, current, s));
+  } else if(canRecruit(role)) {
+    choices = ['approved','sourcing','interviewing','offer','filled']
+      .filter(s => s !== current && canUseStatusTransition(role, current, s));
+  }
+  if(record?.status === 'pending') {
+    choices = choices.filter(next => requiresPreApprovalDocs(record.hiringType) ? next !== 'approved' : next !== 'pendingDocs');
+  }
+  return [...new Set(choices)].filter(s => RES_STATUS[s]);
+}
 function canManageRequest(role) { return hasRolePermission(role, 'createRequest') || hasRolePermission(role, 'editPending'); }
 function canEditPending(role)    { return hasRolePermission(role, 'editPending'); }
 function canApprove(role)        { return hasRolePermission(role, 'approve'); }
@@ -570,8 +592,8 @@ function canUseStatusTransition(role, fromStatus, toStatus) {
     return window.PMO_RESOURCE_FLOW.canUseStatusTransition(resourceRoles(), role, fromStatus, toStatus);
   }
   if(toStatus === 'approved') return canApprove(role);
-  if(['sourcing','interviewing','offer'].includes(toStatus)) return canRecruit(role);
-  if(toStatus === 'filled') return canApprove(role) || hasRolePermission(role, 'resolveFilled') || (fromStatus === 'offer' && canRecruit(role));
+  if(['sourcing','interviewing','offer'].includes(toStatus)) return canRecruit(role) || canApprove(role);
+  if(toStatus === 'filled') return canApprove(role) || hasRolePermission(role, 'resolveFilled') || canRecruit(role);
   if(toStatus === 'resolved') return hasRolePermission(role, 'resolveFilled');
   if(toStatus === 'cancelled') return hasRolePermission(role, 'cancelPending') || canApprove(role);
   return true;
@@ -645,6 +667,12 @@ function primaryAllocation(r) {
 }
 function primaryProjectCode(r) {
   return (r.primaryProjectCode || r.projectCode || '').trim();
+}
+function canHaveOnboardDate(status) {
+  return ['filled','resolved','mitigated'].includes(String(status || ''));
+}
+function effectiveOnboardDate(r) {
+  return canHaveOnboardDate(r?.status) ? (r?.onboardDate || '') : '';
 }
 function isActiveResource(r) {
   return r.status === 'filled';
@@ -944,8 +972,10 @@ async function loadResourcesAsync() {
 async function saveResourceAsync(data) {
   const list = await loadResourcesAsync();
   const now = new Date().toISOString();
-  const isNew = !list.find(r => r.id === data.id);
-  const saved = { ...data, updatedAt: now, createdAt: isNew ? now : (list.find(r=>r.id===data.id)?.createdAt||now) };
+  const existing = list.find(r => r.id === data.id);
+  const isNew = !existing;
+  const cleanData = canHaveOnboardDate(data.status) ? data : { ...data, onboardDate: null };
+  const saved = { ...cleanData, updatedAt: now, createdAt: isNew ? now : (existing?.createdAt||now) };
   if((employeeDirectoryName(saved) || resourceEmployeeCode(saved)) && ['filled','resolved','mitigated'].includes(saved.status)) {
     const master = await saveResourceMasterAsync(resourceMasterFromRequest(saved));
     saved.resourceMasterId = master.id;
@@ -1087,6 +1117,70 @@ function generateEmployeeCode(targetId='rf-employee-code', hiringId='rf-hiring')
   input.value = code;
 }
 
+function resourceToast(message, type='info') {
+  let toast = document.getElementById('resource-toast');
+  if(!toast) {
+    toast = document.createElement('div');
+    toast.id = 'resource-toast';
+    toast.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2400;max-width:min(420px,calc(100vw - 36px));padding:12px 14px;border-radius:10px;border:1px solid var(--border-md);background:var(--surface);color:var(--text);box-shadow:0 18px 48px rgba(15,23,42,.22);font-size:13px;font-weight:700;opacity:0;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease';
+    document.body.appendChild(toast);
+  }
+  const colors = { error:'var(--red)', ok:'var(--green)', info:'var(--blue)', warn:'var(--amber)' };
+  toast.style.borderColor = `color-mix(in srgb,${colors[type] || colors.info} 38%,var(--border-md))`;
+  toast.textContent = message;
+  toast.style.opacity = '1';
+  toast.style.transform = 'translateY(0)';
+  window.clearTimeout(window.__resourceToastTimer);
+  window.__resourceToastTimer = window.setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(8px)';
+  }, 3200);
+}
+
+function ensureResourceConfirmModal() {
+  if(document.getElementById('resource-confirm-modal')) return;
+  const modal = document.createElement('div');
+  modal.id = 'resource-confirm-modal';
+  modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:2300;align-items:center;justify-content:center;padding:18px';
+  modal.innerHTML = `
+    <div class="card" style="width:420px;max-width:100%;padding:20px;border-radius:10px">
+      <div id="resource-confirm-title" style="font-size:16px;font-weight:800;margin-bottom:8px">Confirm</div>
+      <div id="resource-confirm-body" style="font-size:13px;color:var(--text-2);line-height:1.5;white-space:pre-wrap"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+        <button class="btn-ghost" id="resource-confirm-cancel" type="button">Cancel</button>
+        <button class="btn-primary" id="resource-confirm-ok" type="button">OK</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function resourceConfirm(title, message, okText='OK', danger=false) {
+  ensureResourceConfirmModal();
+  const modal = document.getElementById('resource-confirm-modal');
+  document.getElementById('resource-confirm-title').textContent = title;
+  document.getElementById('resource-confirm-body').textContent = message;
+  const ok = document.getElementById('resource-confirm-ok');
+  const cancel = document.getElementById('resource-confirm-cancel');
+  ok.textContent = okText;
+  ok.style.background = danger ? 'var(--red)' : '';
+  ok.style.borderColor = danger ? 'var(--red)' : '';
+  modal.style.display = 'flex';
+  return new Promise(resolve => {
+    const done = value => {
+      modal.style.display = 'none';
+      ok.onclick = null;
+      cancel.onclick = null;
+      modal.onclick = null;
+      resolve(value);
+    };
+    ok.onclick = () => done(true);
+    cancel.onclick = () => done(false);
+    modal.onclick = event => { if(event.target === modal) done(false); };
+  });
+}
+
+function resourceError(message) { resourceToast(message, 'error'); }
+
 
 // â”€â”€ Main render â”€â”€
 let _resPage = 1;
@@ -1113,7 +1207,8 @@ function resColumns() {
     { key:'start',    label:'Start', cell:r=>`<span style="font-size:11px">${r.startDate?shortDate(r.startDate):'-'}</span>` },
     { key:'end',      label:'End', cell:r=>`<span style="font-size:11px">${resourceEndDate(r)?shortDate(resourceEndDate(r)):'-'}</span>` },
     { key:'reqdate',  label:'Request Date', cell:r=>`<span style="font-size:11px">${r.requestDate?shortDate(r.requestDate):'-'}</span>` },
-    { key:'resolved', label:'Resolved', cell:r=>`<span style="font-size:11px">${r.resolvedDate?shortDate(r.resolvedDate):'-'}</span>` },
+    { key:'requester', label:'Requester', cell:r=>`<span style="font-size:11px">${esc(r.requesterName||'-')}</span>` },
+    { key:'onboard', label:'Onboard Date', cell:r=>`<span style="font-size:11px">${effectiveOnboardDate(r)?shortDate(effectiveOnboardDate(r)):'-'}</span>` },
     { key:'updated',  label:'Updated', cell:r=>`<span style="font-size:11px;color:var(--text-3)">${r.updatedAt?shortDate(String(r.updatedAt).slice(0,10)):'-'}</span>` },
     { key:'status',   label:'Status', cell:r=>{ const s=RES_STATUS[r.status]||{label:r.status,cls:'badge-gray'}; return `<span class="badge ${s.cls}" style="font-size:10px;white-space:nowrap">${esc(s.label)}</span>`; } },
     { key:'action',   label:'', th:'text-align:center', td:'text-align:center', cell:r=>`<button class="btn-sm" style="font-size:11px;padding:3px 10px;white-space:nowrap" onclick="event.stopPropagation();openResDetail('${r.id}')" title="Manage">Manage</button>` },
@@ -1376,6 +1471,7 @@ function ensureResChrome() {
       :root[data-theme="dark"] .res-tab.is-active{background:#e5e7eb!important;color:#0b0f16!important;border-color:#e5e7eb!important;box-shadow:0 -1px 0 #e5e7eb inset,0 -2px 0 var(--blue),0 8px 20px rgba(0,0,0,.38)!important}
       :root[data-theme="dark"] .res-tab.is-active::after{background:#e5e7eb}
       #res-kpi{padding-top:0;margin-bottom:12px!important}
+      #res-kpi .res-kpi-card{min-height:86px;border-radius:7px;box-shadow:none;border-color:var(--border);background:var(--surface)}
       #res-status-panel{margin:0 -12px 0;padding:8px 12px;background:color-mix(in srgb,var(--surface) 96%,transparent);border:0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);border-radius:0}
       #view-resource>.filter-row{margin:0 -12px 10px!important;padding:9px 12px;background:color-mix(in srgb,var(--surface) 96%,transparent);border-bottom:1px solid var(--border);display:flex!important;align-items:center!important;gap:8px!important;flex-wrap:nowrap!important}
       #view-resource>.filter-row #res-search{flex:1 1 360px;min-width:220px!important;height:34px}
@@ -1573,7 +1669,14 @@ function renderPeopleView(base) {
     : base.filter(r => isActiveResource(r) && (employeeDirectoryName(r) || resourceEmployeeCode(r))).map(r => ({ master:resourceMasterFromRequest(r), related:[r], requestId:r.id }));
 
   const rows = masterRows.map(({ master, related, requestId }) => {
-    const allocs = allocationRows(related);
+    const allAllocs = allocationRows(related);
+    const codeAllocs = allAllocs.filter(a => a.source === 'Project Code');
+    const allocs = codeAllocs.length ? codeAllocs : allAllocs;
+    const allocationByProject = [...allocs.reduce((map, a) => {
+      const key = a.project || '-';
+      map.set(key, (map.get(key) || 0) + clampAlloc(a.allocation));
+      return map;
+    }, new Map()).entries()].map(([project, allocation]) => ({ project, allocation: Math.min(100, allocation) }));
     return {
       requestId,
       personTh: master.resourceNameTh || master.resourceName,
@@ -1581,8 +1684,8 @@ function renderPeopleView(base) {
       employeeCode: master.employeeCode,
       role: [master.position, master.level].filter(Boolean).join(' / '),
       team: master.resourceTeam || '',
-      projects: allocs,
-      totalAllocation: allocs.reduce((sum,a)=>sum+a.allocation,0),
+      projects: allocationByProject,
+      totalAllocation: allocationByProject.reduce((sum,a)=>sum+a.allocation,0),
       startDate: master.onboardDate,
       status: master.status,
     };
@@ -1590,9 +1693,14 @@ function renderPeopleView(base) {
   renderResourceTable([
     { label:'ชื่อ-นามสกุล / Name - Surname', th:'width:21%', cell:r=>`<strong>${esc(r.personTh||'(missing Thai name)')}</strong>${r.personEn?`<div style="font-size:11px;color:var(--text-3)">${esc(r.personEn)}</div>`:''}${r.employeeCode?`<div style="font-size:11px;color:var(--text-3)">${esc(r.employeeCode)}</div>`:''}` },
     { label:'Position / Level', th:'width:24%', cell:r=>esc(r.role||'-') },
-    { label:'Current Allocation', th:'width:28%', cell:r=>r.projects.length ? r.projects.map(a=>`${projectPill(a.project, `${a.project}: ${a.allocation}%`)}${a.code?` <span style="font-size:10px;color:var(--text-3)">${esc(a.code)}</span>`:''}`).join(' ') : '-' },
+    { label:'Current Allocation', th:'width:28%', cell:r=>r.projects.length ? r.projects.map(a=>projectPill(a.project, `${a.project}: ${a.allocation}%`)).join(' ') : '-' },
     { label:'Start', th:'width:110px', cell:r=>`<span style="font-size:11px;white-space:nowrap">${r.startDate?shortDate(String(r.startDate).slice(0,10)):'-'}</span>` },
-    { label:'Action', th:'width:150px;text-align:center', td:'text-align:center;white-space:nowrap', cell:r=>r.requestId ? `<span style="display:inline-flex;justify-content:center;gap:4px;white-space:nowrap"><button class="btn-sm" onclick="event.stopPropagation();openResDetail('${r.requestId}')">Manage</button>${canOffboard(currentRole())?`<button class="btn-sm" style="color:var(--amber)" onclick="event.stopPropagation();offboardResource('${r.requestId}')">Offboard</button>`:''}</span>` : '<span style="font-size:11px;color:var(--text-3)">Master only</span>' },
+    { label:'Action', th:'width:230px;text-align:center', td:'text-align:center;white-space:nowrap', cell:r=>r.requestId ? `<span style="display:inline-flex;justify-content:center;gap:4px;white-space:nowrap">
+      <button class="btn-sm" onclick="event.stopPropagation();openEmployeeEdit('${r.requestId}')">Edit</button>
+      ${canTransfer(currentRole())?`<button class="btn-sm" style="color:var(--blue)" onclick="event.stopPropagation();openResTransfer('${r.requestId}')">Transfer</button>`:''}
+      ${canProjectCode(currentRole())?`<button class="btn-sm" style="color:var(--green)" onclick="event.stopPropagation();openAddCode('${r.requestId}')">Add Code</button>`:''}
+      ${canOffboard(currentRole())?`<button class="btn-sm" style="color:var(--amber)" onclick="event.stopPropagation();offboardResource('${r.requestId}')">Offboard</button>`:''}
+    </span>` : '<span style="font-size:11px;color:var(--text-3)">Master only</span>' },
   ], rows, 'No employee records yet. Import employees with Name - Surname / Employee Code first.');
 }
 
@@ -1767,7 +1875,6 @@ function renderProjectCodeView(base) {
   })).sort((a,b)=>`${a.status} ${a.project} ${a.code}`.localeCompare(`${b.status} ${b.project} ${b.code}`));
 
   renderResourceTable([
-    { label:'No', cell:r=>esc(r.no||'-') },
     { label:'Project', cell:r=>`<strong>${esc(r.project||'-')}</strong>${r.type?`<div style="font-size:11px;color:var(--text-3)">${esc(r.type)}</div>`:''}` },
     { label:'Project Code', cell:r=>esc(r.code||'-') },
     { label:'Start', cell:r=>`<span style="font-size:11px">${r.startDate?shortDate(String(r.startDate).slice(0,10)):'-'}</span>` },
@@ -1791,14 +1898,13 @@ function ensureProjectCodeMasterModal() {
       </div>
       <input type="hidden" id="pcm-id">
       <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px">
-        <div class="fg"><label>No</label><input id="pcm-no" class="ri" placeholder="No"></div>
         <div class="fg"><label>Project *</label><select id="pcm-project" class="ri"></select></div>
-        <div class="fg"><label>Type</label><input id="pcm-type" class="ri" placeholder="Type"></div>
-        <div class="fg"><label>Project Code *</label><input id="pcm-code" class="ri" placeholder="Project Code"></div>
+        <div class="fg"><label>Type</label><input id="pcm-type" class="ri" autocomplete="off" placeholder="Type"></div>
+        <div class="fg"><label>Project Code *</label><input id="pcm-code" class="ri" autocomplete="off" placeholder="Project Code"></div>
         <div class="fg"><label>Start</label><input id="pcm-start" class="ri" type="date"></div>
         <div class="fg"><label>End</label><input id="pcm-end" class="ri" type="date"></div>
         <div class="fg"><label>Status</label><select id="pcm-status" class="ri"><option>Active</option><option>Pending</option><option>Inactive</option></select></div>
-        <div class="fg"><label>PM Owner</label><input id="pcm-owner" class="ri" placeholder="PM Owner"></div>
+        <div class="fg"><label>PM Owner</label><input id="pcm-owner" class="ri" autocomplete="off" placeholder="PM Owner"></div>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
         <button class="btn-ghost" onclick="closeProjectCodeMasterEntry()">Cancel</button>
@@ -1809,13 +1915,12 @@ function ensureProjectCodeMasterModal() {
   m.addEventListener('click', e => { if(e.target===m) closeProjectCodeMasterEntry(); });
 }
 function openProjectCodeMasterEntry(id='') {
-  if(!canProjectCode(currentRole())) { alert(`${roleLabel(currentRole())} cannot manage Project Code master data.`); return; }
+  if(!canProjectCode(currentRole())) { resourceError(`${roleLabel(currentRole())} cannot manage Project Code master data.`); return; }
   ensureProjectCodeMasterModal();
   const list = loadProjectCodeMaster();
   const existing = id ? list.find(c => c.id === id) : null;
   document.getElementById('pcm-title').textContent = existing ? 'Edit Project Code' : 'New Project Code';
   document.getElementById('pcm-id').value = existing?.id || '';
-  document.getElementById('pcm-no').value = existing?.no || '';
   const projectSelect = document.getElementById('pcm-project');
   const projectOptions = knownResourceProjects(existing?.project ? [{ project: existing.project }] : []).map(p => `<option value="${esc(p)}" ${existing?.project===p?'selected':''}>${esc(p)}</option>`).join('');
   projectSelect.innerHTML = `<option value="">- Select project -</option>${projectOptions}`;
@@ -1840,12 +1945,12 @@ function saveProjectCodeMasterEntry() {
   const code = document.getElementById('pcm-code')?.value?.trim() || '';
   const startDate = document.getElementById('pcm-start')?.value || '';
   const endDate = document.getElementById('pcm-end')?.value || '';
-  if(!project || !code) { alert('Project and Project Code are required.'); return; }
-  if(endDate && startDate && endDate < startDate) { alert('End Date must be after Start Date.'); return; }
+  if(!project || !code) { resourceError('Project and Project Code are required.'); return; }
+  if(endDate && startDate && endDate < startDate) { resourceError('End Date must be after Start Date.'); return; }
   const saved = normalizeProjectCode({
     ...(existing||{}),
     id: existing?.id || code.replace(/\s+/g, '-'),
-    no: document.getElementById('pcm-no')?.value?.trim() || existing?.no || '',
+    no: existing?.no || String((list.length || 0) + 1).padStart(2, '0'),
     project,
     type: document.getElementById('pcm-type')?.value?.trim() || '',
     code,
@@ -1861,12 +1966,13 @@ function saveProjectCodeMasterEntry() {
   renderResource();
 }
 
-function deleteProjectCodeMaster(id) {
-  if(!canProjectCode(currentRole())) { alert(`${roleLabel(currentRole())} cannot manage Project Code master data.`); return; }
+async function deleteProjectCodeMaster(id) {
+  if(!canProjectCode(currentRole())) { resourceError(`${roleLabel(currentRole())} cannot manage Project Code master data.`); return; }
   const list = loadProjectCodeMaster();
   const item = list.find(c => c.id === id);
   if(!item) return;
-  if(!confirm(`Delete Project Code master ${item.code} (${item.project})?`)) return;
+  const ok = await resourceConfirm('Delete project code?', `${item.code} (${item.project})`, 'Delete', true);
+  if(!ok) return;
   storeProjectCodeMaster(list.filter(c => c.id !== id));
   renderResource();
 }
@@ -1948,14 +2054,26 @@ function _renderResourceUI(allRaw, options = {}) {
   const subcon = activeBase.filter(r => hiringKind(r.hiringType)==='subcon').length;
   const kpiEl = document.getElementById('res-kpi');
   if(kpiEl) kpiEl.style.display = _resTab === 'request' ? 'grid' : 'none';
-  if(kpiEl) kpiEl.innerHTML = `
-    <div class="metric-card"><div class="metric-label">Total Open</div><div class="metric-val" style="color:var(--blue)">${open}</div></div>
-    <div class="metric-card"><div class="metric-label">Pending Approval</div><div class="metric-val" style="color:var(--text-2)">${pending}</div></div>
-    <div class="metric-card"><div class="metric-label">Recruiting (BBIK)</div><div class="metric-val" style="color:var(--amber)">${recr}</div></div>
-    <div class="metric-card"><div class="metric-label">Onboarded This Month</div><div class="metric-val" style="color:var(--green)">${thisMonth}</div></div>
-    <div class="metric-card"><div class="metric-label">Direct HC</div><div class="metric-val" style="color:var(--green)">${direct}</div><div class="metric-sub">Permanent</div></div>
-    <div class="metric-card"><div class="metric-label">Secondment</div><div class="metric-val" style="color:var(--blue)">${secondment}</div><div class="metric-sub">Fixed term</div></div>
-    <div class="metric-card"><div class="metric-label">Sub Con</div><div class="metric-val" style="color:var(--amber)">${subcon}</div><div class="metric-sub">Fixed term</div></div>`;
+  if(kpiEl) {
+    const cards = role === 'bbik'
+      ? [
+          ['BBIK Queue', requestBase.filter(r => ['approved','sourcing','interviewing','offer'].includes(r.status)).length, 'var(--blue)', 'Approved + recruiting'],
+          ['Filled', requestBase.filter(r => r.status === 'filled').length, 'var(--green)', 'Completed by BBIK'],
+          ['Recruiting', recr, 'var(--amber)', 'Active pipeline'],
+        ]
+      : [
+          ['Total Open', open, 'var(--blue)', ''],
+          ['Pending Approval', pending, 'var(--text-2)', ''],
+          ['Recruiting (BBIK)', recr, 'var(--amber)', ''],
+          ['Filled This Month', thisMonth, 'var(--green)', ''],
+          ['Direct HC', direct, 'var(--green)', 'Permanent'],
+          ['Secondment', secondment, 'var(--blue)', 'Fixed term'],
+          ['Sub Con', subcon, 'var(--amber)', 'Fixed term'],
+        ];
+    kpiEl.innerHTML = cards.map(([label,value,color,note]) => `
+      <div class="metric-card res-kpi-card"><div class="metric-label">${esc(label)}</div><div class="metric-val" style="color:${color}">${value}</div>${note?`<div class="metric-sub">${esc(note)}</div>`:''}</div>
+    `).join('');
+  }
 
 
   // New Request â€” à¹€à¸‰à¸žà¸²à¸° role à¸—à¸µà¹ˆà¸ªà¸£à¹‰à¸²à¸‡à¹„à¸”à¹‰ à¹à¸¥à¸°à¹€à¸‰à¸žà¸²à¸°à¹à¸—à¹‡à¸š Request
@@ -2086,8 +2204,8 @@ function openResModal(id) {
   const role = currentRole();
   const isEdit = !!id;
   const r = isEdit ? loadResources().find(x => x.id===id) : null;
-  if(isEdit && !canEditPending(role)) { alert(`${roleLabel(role)} cannot edit pending requests.`); return; }
-  if(!isEdit && !hasRolePermission(role, 'createRequest')) { alert(`${roleLabel(role)} cannot create requests.`); return; }
+  if(isEdit && !canEditPending(role)) { resourceError(`${roleLabel(role)} cannot edit pending requests.`); return; }
+  if(!isEdit && !hasRolePermission(role, 'createRequest')) { resourceError(`${roleLabel(role)} cannot create requests.`); return; }
   // User à¸ªà¸£à¹‰à¸²à¸‡/à¹à¸à¹‰à¹„à¸”à¹‰à¹€à¸‰à¸žà¸²à¸°à¹‚à¸„à¸£à¸‡à¸à¸²à¸£à¸•à¸±à¸§à¹€à¸­à¸‡
   const projects = role==='user' ? [currentUserProject()] : resProjects();
   const defProject = r?.project || (role==='user' ? currentUserProject() : '');
@@ -2100,22 +2218,24 @@ function openResModal(id) {
   const g = (fld,def='') => r ? (r[fld]||def) : def;
   const requesterDefault = g('requesterName', currentRequesterName());
   const levelOptions = resourceLevels();
+  const codeDefault = g('employeeCode', nextEmployeeCode(g('hiringType', HIRING_OPTS[0])));
 
 
   document.getElementById('res-form-body').innerHTML = `
     <div class="form-grid res-form-grid-3" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
       <div class="fg"><label>Project *</label><select id="rf-project" class="ri" onchange="syncRequestProjectCodeChoices()" ${role==='user'?'disabled title="Requester can create requests only for the selected project"':''}>${role==='user'?'':'<option value="">- Select project -</option>'}${projectOpts}</select></div>
       <div class="fg"><label>Project Code</label><select id="rf-primary-code" class="ri" onchange="applyRequestProjectCode()"><option value="">${defProject ? '- Select project code -' : 'Select Project first'}</option>${primaryCodeOptions}</select></div>
-      <div class="fg"><label>Position *</label><input id="rf-position" class="ri" placeholder="e.g. Senior Backend Developer" value="${esc(g('position'))}"></div>
+      <div class="fg"><label>Position *</label><input id="rf-position" class="ri" autocomplete="off" placeholder="e.g. Senior Backend Developer" value="${esc(g('position'))}"></div>
       <div class="fg"><label>Level *</label><select id="rf-level" class="ri">${levelOptions.map(l=>`<option ${g('level')===l?'selected':''}>${esc(l)}</option>`).join('')}</select></div>
       <div class="fg"><label>Employment Type *</label><select id="rf-hiring" class="ri" onchange="toggleEndDateRequired()">
         ${HIRING_OPTS.map(h=>`<option ${hiringKind(g('hiringType'))===hiringKind(h)?'selected':''}>${h}</option>`).join('')}
       </select><div id="rf-hiring-help" style="font-size:10px;color:var(--text-3);line-height:1.35"></div></div>
       <div class="fg"><label>Start Date *</label><input id="rf-start" class="ri" type="date" value="${g('startDate')}"></div>
       <div class="fg" id="rf-end-wrap"><label id="rf-end-label">End Date</label><input id="rf-end" class="ri" type="date" value="${g('endDate')}"></div>
-      <div class="fg"><label>Requester Name</label><input id="rf-requester" class="ri" placeholder="Requester name" value="${esc(requesterDefault)}"></div>
-      <div class="fg"><label>Request Date</label><input id="rf-reqdate" class="ri" type="date" value="${g('requestDate', todayISO)}" readonly title="Locked to the date this request was created" style="background:var(--bg);cursor:not-allowed"></div>
+      <div class="fg"><label>Requester Name *</label><input id="rf-requester" class="ri" required autocomplete="off" placeholder="Requester name" value="${esc(requesterDefault)}"></div>
+      <div class="fg"><label>Request Date</label><input id="rf-reqdate" class="ri" type="date" value="${g('requestDate', todayISO)}" readonly title="Locked to the date this request was created" style="background:var(--bg);cursor:default"></div>
       <div class="fg"><label>Primary Allocation %</label><input id="rf-allocation" class="ri" type="number" min="1" max="100" value="${esc(String(g('allocationPercent', 100)))}"></div>
+      <div class="fg" id="rf-employee-code-wrap"><label>Reserved Employee Code</label><input id="rf-employee-code" class="ri" value="${esc(codeDefault)}" readonly style="background:var(--bg);cursor:default" placeholder="Auto for DHC / SEC"></div>
     </div>
     <div class="fg" style="margin-top:10px"><label>Remark</label><textarea id="rf-remark" class="ri" rows="3" placeholder="Remark / reason">${esc(g('remark'))}</textarea></div>`;
 
@@ -2141,7 +2261,7 @@ function applyRequestProjectCode() {
   const code = document.getElementById('rf-primary-code')?.value || '';
   const meta = projectCodeByValue(code, project);
   if(!code || meta) return;
-  alert('Project Code นี้ไม่ได้อยู่ใต้ Project ที่เลือกไว้');
+  resourceError('Project Code นี้ไม่ได้อยู่ใต้ Project ที่เลือกไว้');
   const input = document.getElementById('rf-primary-code');
   if(input) input.value = '';
 }
@@ -2161,6 +2281,11 @@ function toggleEndDateRequired() {
   }
   const help = document.getElementById('rf-hiring-help');
   if(help) help.textContent = hiringMeta(ht).fullLabel;
+  const codeWrap = document.getElementById('rf-employee-code-wrap');
+  const codeInput = document.getElementById('rf-employee-code');
+  const autoCode = nextEmployeeCode(ht);
+  if(codeWrap) codeWrap.style.display = autoCode ? '' : 'none';
+  if(codeInput && autoCode && !document.getElementById('res-edit-id')?.value) codeInput.value = autoCode;
 }
 function closeResModal() { pmoMotionHide(document.getElementById('resource-modal')); }
 
@@ -2173,16 +2298,17 @@ async function saveResource() {
   const position = g('rf-position');
   const hc = 1; // 1 request = 1 transaction
   const hiring = g('rf-hiring'), startDate = g('rf-start'), endDate = g('rf-end');
+  const requesterName = g('rf-requester');
   const allocation = clampAlloc(g('rf-allocation') || 100);
-  if(allocation < 1 || allocation > 100) { alert('Primary Allocation must be between 1 and 100%'); return; }
+  if(allocation < 1 || allocation > 100) { resourceError('Primary Allocation must be between 1 and 100%'); return; }
 
 
-  if(!project||!position||!hiring||!startDate) { alert('Please fill all required fields.'); return; }
-  if(isFixedTermHiring(hiring) && !endDate) { alert('End Date is required for Secondment / Sub Con'); return; }
-  if(endDate && startDate && endDate < startDate) { alert('End Date must be after Start Date.'); return; }
+  if(!project||!position||!hiring||!startDate||!requesterName) { resourceError('Please fill all required fields, including Requester Name.'); return; }
+  if(isFixedTermHiring(hiring) && !endDate) { resourceError('End Date is required for Secondment / Sub Con'); return; }
+  if(endDate && startDate && endDate < startDate) { resourceError('End Date must be after Start Date.'); return; }
   const primaryCode = g('rf-primary-code');
   if(primaryCode && !projectCodeByValue(primaryCode, project)) {
-    alert('Project Code must belong to the selected Project.');
+    resourceError('Project Code must belong to the selected Project.');
     return;
   }
 
@@ -2190,7 +2316,7 @@ async function saveResource() {
   const editId = g('res-edit-id');
   const existing = editId ? loadResources().find(r=>r.id===editId) : null;
   const actor = roleLabel(role);
-  const employeeCode = existing?.employeeCode || nextEmployeeCode(hiring) || '';
+  const employeeCode = existing?.employeeCode || g('rf-employee-code') || nextEmployeeCode(hiring) || '';
 
 
   const data = {
@@ -2202,7 +2328,7 @@ async function saveResource() {
     resolvedDate: existing?.resolvedDate||null,
     remark: g('rf-remark'),
     status: existing?.status || 'pending',
-    requesterName: g('rf-requester'),
+    requesterName,
     transferFrom: existing?.transferFrom||null,
     projectCodes: existing?.projectCodes||[],
     resourceName: existing?.resourceName || '',
@@ -2211,7 +2337,7 @@ async function saveResource() {
     allocationPercent: allocation,
     onboardDate: existing?.onboardDate||null,
     offboardDate: existing?.offboardDate||null,
-    activityLog: existing?.activityLog || [{ action:'Created', status:'pending', by: g('rf-requester')||actor, at: new Date().toISOString() }],
+    activityLog: existing?.activityLog || [{ action:'Created', status:'pending', by: requesterName||actor, at: new Date().toISOString() }],
   };
 
 
@@ -2225,15 +2351,16 @@ async function saveResource() {
 // â”€â”€ Quick: Approve (PMO/Dir) & Accept (BBIK) â”€â”€
 async function approveRequest(id) {
   const role = currentRole();
-  if(!canApprove(role)) { alert('Only PMO/Dir can approve requests.'); return; }
+  if(!canApprove(role)) { resourceError('Only PMO/Dir can approve requests.'); return; }
   const list = loadResources(); const idx = list.findIndex(r=>r.id===id); if(idx<0) return;
   const r = list[idx];
-  if(r.status!=='pending') { alert('Only pending requests can be approved.'); return; }
+  if(r.status!=='pending') { resourceError('Only pending requests can be approved.'); return; }
   const nextStatus = requiresPreApprovalDocs(r.hiringType) ? 'pendingDocs' : 'approved';
   const confirmMsg = nextStatus === 'pendingDocs'
     ? `Move this request to Pending Docs?\n\n${r.position} / ${r.project}\n\nDirect HC / Secondment must complete pre-approval documents before BBIK.`
     : `Approve this request?\n\n${r.position} / ${r.project}\n\nAfter approval it will go to BBIK.`;
-  if(!confirm(confirmMsg)) return;
+  const ok = await resourceConfirm(nextStatus === 'pendingDocs' ? 'Move to Pending Docs?' : 'Approve request?', confirmMsg, nextStatus === 'pendingDocs' ? 'Move' : 'Approve');
+  if(!ok) return;
   const now = new Date().toISOString();
   const action = nextStatus === 'pendingDocs' ? 'Sent to Pending Docs' : 'Approved by PMO/Dir';
   const updated = { ...r, status:nextStatus, updatedAt:now,
@@ -2244,10 +2371,10 @@ async function approveRequest(id) {
 }
 async function bbikAccept(id) {
   const role = currentRole();
-  if(!canRecruit(role)) { alert('Only BBIK can accept recruiting work.'); return; }
+  if(!canRecruit(role)) { resourceError('Only BBIK can accept recruiting work.'); return; }
   const list = loadResources(); const idx = list.findIndex(r=>r.id===id); if(idx<0) return;
   const r = list[idx];
-  if(r.status!=='approved') { alert('Only approved requests can be accepted by BBIK.'); return; }
+  if(r.status!=='approved') { resourceError('Only approved requests can be accepted by BBIK.'); return; }
   const now = new Date().toISOString();
   const updated = { ...r, status:'sourcing', updatedAt:now,
     activityLog:[...(r.activityLog||[]), { action:'BBIK accepted (start sourcing)', from:'approved', to:'sourcing', by:roleLabel(role), at:now }] };
@@ -2262,9 +2389,9 @@ function openResStatus(id) {
   const r = loadResources().find(x=>x.id===id);
   if(!r) return;
   const role = currentRole();
-  const nexts = allowedNextForRecord(r, role);
+  const nexts = allowedStatusChoicesForRecord(r, role);
   if(!nexts.length) {
-    alert(`${roleLabel(role)} cannot change this request status (${RES_STATUS[r.status]?.label||r.status}).`);
+    resourceError(`${roleLabel(role)} cannot change this request status (${RES_STATUS[r.status]?.label||r.status}).`);
     return;
   }
   const s = RES_STATUS[r.status]||{label:r.status};
@@ -2295,9 +2422,9 @@ function ensureStatusOnboardFields(r) {
   box.innerHTML = `
     <div class="fg" style="margin-bottom:8px"><label>Name - Surname *</label><input id="rs-resource-name" class="ri" value="${esc(r.resourceName||'')}" placeholder="Actual onboarded person"></div>
     <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:8px">
-      <div class="fg"><label>Employee Code</label><div style="display:flex;gap:6px"><input id="rs-employee-code" class="ri" value="${esc(r.employeeCode||'')}" placeholder="Optional"><button class="btn-sm" type="button" onclick="generateEmployeeCode('rs-employee-code','rs-hiring-kind')" style="white-space:nowrap;${employeeCodeFormatConfig(r.hiringType)?'':'display:none'}">Generate</button><input id="rs-hiring-kind" type="hidden" value="${esc(r.hiringType||'')}"></div></div>
+      <div class="fg"><label>Employee Code</label><input id="rs-employee-code" class="ri" value="${esc(r.employeeCode||nextEmployeeCode(r.hiringType)||'')}" readonly style="background:var(--bg);cursor:default" placeholder="Reserved by request"><input id="rs-hiring-kind" type="hidden" value="${esc(r.hiringType||'')}"></div>
       <div class="fg"><label>Position *</label><input id="rs-position" class="ri" value="${esc(r.position||'')}" placeholder="Business Analyst, QA..."></div>
-      <div class="fg"><label>Onboard Date</label><input id="rs-onboard-date" class="ri" type="date" value="${r.onboardDate||todayISO}"></div>
+        <div class="fg"><label>Onboard Date</label><input id="rs-onboard-date" class="ri" type="date" value="${effectiveOnboardDate(r)||todayISO}"></div>
       <div class="fg"><label>Project Code</label><select id="rs-primary-code" class="ri"><option value="">- Select project code -</option>${projectCodeOptionsForProject(r.project, r.primaryProjectCode||'')}</select></div>
       <div class="fg"><label>Primary Allocation %</label><input id="rs-allocation" class="ri" type="number" min="1" max="100" value="${esc(String(r.allocationPercent||100))}"></div>
     </div>`;
@@ -2383,11 +2510,11 @@ async function saveResStatus() {
   const prevStatus = list[idx].status;
 
 
-  if(!allowedNextForRecord(list[idx], role).includes(newStatus)) {
-    alert(`${roleLabel(role)} cannot change "${RES_STATUS[prevStatus]?.label||prevStatus}" to "${RES_STATUS[newStatus]?.label||newStatus}".`);
+  if(!allowedStatusChoicesForRecord(list[idx], role).includes(newStatus)) {
+    resourceError(`${roleLabel(role)} cannot change "${RES_STATUS[prevStatus]?.label||prevStatus}" to "${RES_STATUS[newStatus]?.label||newStatus}".`);
     return;
   }
-  if(requiresCancelReason(newStatus) && !cancelReason) { alert('Please select or enter a cancel reason.'); return; }
+  if(requiresCancelReason(newStatus) && !cancelReason) { resourceError('Please select or enter a cancel reason.'); return; }
 
 
   const onboardMeta = {};
@@ -2396,14 +2523,14 @@ async function saveResStatus() {
     const position = document.getElementById('rs-position')?.value?.trim() || '';
     const onboardDate = document.getElementById('rs-onboard-date')?.value || todayISO;
     const alloc = clampAlloc(document.getElementById('rs-allocation')?.value || 100);
-    if(!rn || !position || !onboardDate) { alert('Name, Position, and Onboard Date are required when status becomes Filled.'); return; }
-    if(alloc < 1 || alloc > 100) { alert('Primary Allocation must be between 1 and 100%'); return; }
+    if(!rn || !position || !onboardDate) { resourceError('Name, Position, and Onboard Date are required when status becomes Filled.'); return; }
+    if(alloc < 1 || alloc > 100) { resourceError('Primary Allocation must be between 1 and 100%'); return; }
     onboardMeta.resourceName = rn;
     onboardMeta.position = position;
     onboardMeta.employeeCode = document.getElementById('rs-employee-code')?.value?.trim() || '';
     onboardMeta.primaryProjectCode = document.getElementById('rs-primary-code')?.value?.trim() || '';
     if(onboardMeta.primaryProjectCode && !projectCodeByValue(onboardMeta.primaryProjectCode, list[idx].project)) {
-      alert('Project Code must belong to the request Project.');
+      resourceError('Project Code must belong to the request Project.');
       return;
     }
     onboardMeta.allocationPercent = alloc;
@@ -2413,13 +2540,15 @@ async function saveResStatus() {
   }
 
   const now = new Date().toISOString();
+  const keepsOnboardDate = canHaveOnboardDate(newStatus);
   const transitionRemark = newStatus === 'cancelled'
     ? [cancelReason, remark].filter(Boolean).join(' / ')
     : remark;
   const updated = { ...list[idx], ...onboardMeta,
     status: newStatus,
     cancelReason: newStatus === 'cancelled' ? cancelReason : list[idx].cancelReason,
-    resolvedDate: ['filled','resolved','mitigated'].includes(newStatus) ? todayISO : list[idx].resolvedDate,
+    onboardDate: keepsOnboardDate ? (onboardMeta.onboardDate || list[idx].onboardDate || null) : null,
+    resolvedDate: keepsOnboardDate ? todayISO : null,
     updatedAt: now,
     activityLog: [...(list[idx].activityLog||[]), {
       action: _transitionAction(prevStatus, newStatus), from: prevStatus, to: newStatus,
@@ -2442,7 +2571,7 @@ async function saveResStatus() {
 // â”€â”€ Transfer modal (within Orbit) â”€â”€
 function openResTransfer(id) {
   const role = currentRole();
-  if(!canTransfer(role)) { alert(`${roleLabel(role)} cannot create transfer records.`); return; }
+  if(!canTransfer(role)) { resourceError(`${roleLabel(role)} cannot create transfer records.`); return; }
   openTransferEntry('', id);
   return;
   const r = loadResources().find(x=>x.id===id);
@@ -2485,8 +2614,8 @@ function openTransferEntry(editId='', sourceId='', mode='transfer', codeIndex=''
   const editingCodeIndex = codeIndex === '' ? -1 : Number(codeIndex);
   const editingCode = source && editingCodeIndex >= 0 ? (source.projectCodes||[])[editingCodeIndex] : null;
   const actionMode = mode === 'code' || editingCode ? 'code' : 'transfer';
-  if(actionMode === 'transfer' && !canTransfer(role)) { alert(`${roleLabel(role)} cannot create transfer records`); return; }
-  if(actionMode === 'code' && !canProjectCode(role)) { alert(`${roleLabel(role)} cannot add Project Code.`); return; }
+  if(actionMode === 'transfer' && !canTransfer(role)) { resourceError(`${roleLabel(role)} cannot create transfer records`); return; }
+  if(actionMode === 'code' && !canProjectCode(role)) { resourceError(`${roleLabel(role)} cannot add Project Code.`); return; }
   const searchOptions = buildResourceSearchMap(list);
   const selectedResource = source || sourceFromTransfer || null;
   const selectedSearch = selectedResource ? resourceSearchLabel(selectedResource) : '';
@@ -2582,7 +2711,7 @@ function applyTransferProjectCode() {
     }
     return;
   }
-  alert('Project Code นี้ไม่ได้อยู่ใต้ Project ที่เลือกไว้');
+  resourceError('Project Code นี้ไม่ได้อยู่ใต้ Project ที่เลือกไว้');
   const input = document.getElementById('rtf-code');
   if(input) input.value = '';
 }
@@ -2609,7 +2738,7 @@ async function saveResTransfer() {
   const endDate = document.getElementById('rtf-end')?.value||'';
   const remark = document.getElementById('rtf-remark')?.value?.trim()||'';
   const actor = roleLabel(currentRole());
-  if(!destProject||!startDate||!remark) { alert('Please fill all required fields.'); return; }
+  if(!destProject||!startDate||!remark) { resourceError('Please fill all required fields.'); return; }
 
 
   const source = loadResources().find(r=>r.id===sourceId);
@@ -2647,7 +2776,7 @@ async function saveResTransfer() {
   await saveResourceAsync(newRecord);
   closeResTransfer();
   renderResource();
-  alert(`Transfer completed.\nCreated ${newRecord.id} for ${destProject}.`);
+  resourceToast(`Transfer completed. Created ${newRecord.id} for ${destProject}.`, 'ok');
 }
 
 
@@ -2674,21 +2803,21 @@ async function saveResTransfer() {
   const source = sourceId ? list.find(r => r.id === sourceId) : null;
 
   if(actionMode === 'code') {
-    if(!canProjectCode(role)) { alert(`${roleLabel(role)} cannot add Project Code.`); return; }
+    if(!canProjectCode(role)) { resourceError(`${roleLabel(role)} cannot add Project Code.`); return; }
     if(!sourceId || !destProject || !code || allocation < 1 || !startDate || !endDate) {
-      alert('Please select Employee, Project, Project Code, Allocation, Start Date, and End Date.');
+      resourceError('Please select Employee, Project, Project Code, Allocation, Start Date, and End Date.');
       return;
     }
-    if(endDate && endDate < startDate) { alert('End Date must be after Start Date.'); return; }
+    if(endDate && endDate < startDate) { resourceError('End Date must be after Start Date.'); return; }
     if(!source) return;
     const codeMeta = projectCodeByValue(code, destProject);
-    if(!codeMeta) { alert('Project Code must belong to the selected Project.'); return; }
-    if(codeMeta && String(codeMeta.status||'').toLowerCase() !== 'active') { alert('Selected Project Code is not Active yet.'); return; }
+    if(!codeMeta) { resourceError('Project Code must belong to the selected Project.'); return; }
+    if(codeMeta && String(codeMeta.status||'').toLowerCase() !== 'active') { resourceError('Selected Project Code is not Active yet.'); return; }
     const editIdx = codeIndexRaw === '' ? -1 : Number(codeIndexRaw);
     const existingCodes = [...(source.projectCodes||[])];
     const previousAlloc = editIdx >= 0 ? clampAlloc(existingCodes[editIdx]?.allocation) : 0;
-    const used = _allocTotalUsed(source) - previousAlloc;
-    if(used + allocation > 100) { alert(`Total allocation exceeds 100% (available ${100-used}%).`); return; }
+    const used = _allocUsed(source) - previousAlloc;
+    if(used + allocation > 100) { resourceError(`Extra Project Code allocation exceeds 100% (available ${100-used}%).`); return; }
     const now = new Date().toISOString();
     const codeEntry = {
       project: destProject,
@@ -2703,26 +2832,28 @@ async function saveResTransfer() {
     };
     if(editIdx >= 0) existingCodes[editIdx] = codeEntry;
     else existingCodes.push(codeEntry);
+    const nextPrimaryAllocation = rebalancePrimaryAllocationForCodes(source, existingCodes);
     await saveResourceAsync({ ...source,
       projectCodes: existingCodes,
+      allocationPercent: nextPrimaryAllocation,
       updatedAt: now,
       activityLog: [...(source.activityLog||[]), { action: editIdx >= 0 ? 'Project code updated' : 'Project code added', to: destProject, by: actor, remark: `${code} / ${allocation}%${remark?` / ${remark}`:''}`, at: now }],
       remark: (source.remark ? source.remark+'\n' : '') + `[Project Code] ${code} (${destProject}) ${allocation}%`,
     });
     closeResTransfer();
     renderResource();
-    alert(`Project Code ${code} saved for ${resourcePersonName(source)||source.position}.`);
+    resourceToast(`Project Code ${code} saved. Primary allocation is now ${nextPrimaryAllocation}%.`, 'ok');
     return;
   }
 
-  if(!canTransfer(role)) { alert(`${roleLabel(role)} cannot create transfer records.`); return; }
+  if(!canTransfer(role)) { resourceError(`${roleLabel(role)} cannot create transfer records.`); return; }
   if(!requestDate || !requestBy || !fromProject || !destProject || !personName || !startDate || !endDate) {
-    alert('Please fill Request Date, Request By, From Project, To Project, Employee, First Day, and Last Day.');
+    resourceError('Please fill Request Date, Request By, From Project, To Project, Employee, First Day, and Last Day.');
     return;
   }
-  if(endDate && endDate < startDate) { alert('Last day must be after first day.'); return; }
+  if(endDate && endDate < startDate) { resourceError('Last day must be after first day.'); return; }
   if(code && !projectCodeByValue(code, destProject)) {
-    alert('Project Code must belong to the selected To Project.');
+    resourceError('Project Code must belong to the selected To Project.');
     return;
   }
 
@@ -2773,7 +2904,7 @@ async function saveResTransfer() {
   await saveResourceAsync(saved);
   closeResTransfer();
   renderResource();
-  alert(`Transfer saved: ${personName} -> ${destProject}`);
+  resourceToast(`Transfer saved: ${personName} -> ${destProject}`, 'ok');
 }
 
 function ensureAddCodeModal() {
@@ -2815,7 +2946,7 @@ function syncAddCodeChoices() {
   const codes = activeProjectCodeMaster().filter(c => !project || c.project === project);
   const list = document.getElementById('addcode-code-list');
   if(list) list.innerHTML = codes.map(c =>
-    `<option value="${esc(c.code)}">${esc(c.project)}${c.pmOwner?` / ${esc(c.pmOwner)}`:''}</option>`
+    `<option value="${esc(c.code)}">${esc(c.project)}</option>`
   ).join('');
 }
 function applySelectedProjectCode() {
@@ -2831,13 +2962,17 @@ function applySelectedProjectCode() {
 }
 function _allocUsed(r) { return (r.projectCodes||[]).reduce((sum,c)=> sum + (Number(c.allocation)||0), 0); }
 function _allocTotalUsed(r) { return primaryAllocation(r) + _allocUsed(r); }
+function rebalancePrimaryAllocationForCodes(resource, codes) {
+  const extraUsed = (codes || []).reduce((sum,c)=>sum + clampAlloc(c.allocation), 0);
+  return Math.max(0, 100 - extraUsed);
+}
 
 
 function openAddCode(id='', codeIndex='') {
   openTransferEntry('', id, 'code', codeIndex);
   return;
   const role = currentRole();
-  if(!canProjectCode(role)) { alert(`${roleLabel(role)} cannot add Project Code.`); return; }
+  if(!canProjectCode(role)) { resourceError(`${roleLabel(role)} cannot add Project Code.`); return; }
   ensureAddCodeModal();
   if(!document.getElementById('addcode-person')) {
     const projectWrap = document.getElementById('addcode-project')?.closest('.fg');
@@ -2846,8 +2981,8 @@ function openAddCode(id='', codeIndex='') {
   const list = loadResources();
   if(!id) id = list.find(isActiveResource)?.id || '';
   const r = list.find(x=>x.id===id);
-  if(!r) { alert('No filled resource yet. Please onboard/fill a resource before adding Project Code.'); return; }
-  if(r.status!=='filled') { alert('Project Code can be added only to Filled resources.'); return; }
+  if(!r) { resourceError('No filled resource yet. Please fill a resource before adding Project Code.'); return; }
+  if(r.status!=='filled') { resourceError('Project Code can be added only to Filled resources.'); return; }
 
 
   const existing = r.projectCodes||[];
@@ -2891,6 +3026,69 @@ function openAddCode(id='', codeIndex='') {
 }
 function closeAddCode() { pmoMotionHide(document.getElementById('res-addcode-modal')); }
 
+function ensureEmployeeEditModal() {
+  if(document.getElementById('resource-employee-edit-modal')) return;
+  const m = document.createElement('div');
+  m.id = 'resource-employee-edit-modal';
+  m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:1000;align-items:center;justify-content:center;padding:18px';
+  m.innerHTML = `
+    <div class="card" style="width:520px;max-width:95vw;padding:22px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <span style="font-size:15px;font-weight:800">Edit Employee</span>
+        <button class="btn-sm" onclick="closeEmployeeEdit()" style="padding:4px 10px">x</button>
+      </div>
+      <input type="hidden" id="emp-edit-id">
+      <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px">
+        <div class="fg"><label>Name - Surname *</label><input id="emp-edit-name" class="ri" autocomplete="off"></div>
+        <div class="fg"><label>Nickname</label><input id="emp-edit-nickname" class="ri" autocomplete="off" placeholder="Optional"></div>
+        <div class="fg"><label>Employee Code</label><input id="emp-edit-code" class="ri" readonly style="background:var(--bg);cursor:default"></div>
+        <div class="fg"><label>Position</label><input id="emp-edit-position" class="ri" autocomplete="off"></div>
+        <div class="fg"><label>Level</label><select id="emp-edit-level" class="ri"></select></div>
+        <div class="fg"><label>Photo URL</label><input id="emp-edit-photo" class="ri" autocomplete="off" placeholder="Optional"></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+        <button class="btn-ghost" onclick="closeEmployeeEdit()">Cancel</button>
+        <button class="btn-primary" onclick="saveEmployeeEdit()">Save Employee</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', e => { if(e.target === m) closeEmployeeEdit(); });
+}
+
+function openEmployeeEdit(id) {
+  const r = loadResources().find(x => x.id === id);
+  if(!r) return;
+  ensureEmployeeEditModal();
+  document.getElementById('emp-edit-id').value = id;
+  document.getElementById('emp-edit-name').value = resourcePersonName(r) || '';
+  document.getElementById('emp-edit-nickname').value = r.nickname || '';
+  document.getElementById('emp-edit-code').value = resourceEmployeeCode(r) || '';
+  document.getElementById('emp-edit-position').value = r.position || '';
+  document.getElementById('emp-edit-level').innerHTML = resourceLevels().map(l=>`<option ${r.level===l?'selected':''}>${esc(l)}</option>`).join('');
+  document.getElementById('emp-edit-photo').value = r.photoUrl || '';
+  pmoMotionShow(document.getElementById('resource-employee-edit-modal'));
+}
+function closeEmployeeEdit() { pmoMotionHide(document.getElementById('resource-employee-edit-modal')); }
+async function saveEmployeeEdit() {
+  const id = document.getElementById('emp-edit-id')?.value || '';
+  const r = loadResources().find(x => x.id === id);
+  if(!r) return;
+  const name = document.getElementById('emp-edit-name')?.value?.trim() || '';
+  if(!name) { resourceError('Name - Surname is required.'); return; }
+  await saveResourceAsync({
+    ...r,
+    resourceName: name,
+    resourceNameTh: name,
+    nickname: document.getElementById('emp-edit-nickname')?.value?.trim() || '',
+    position: document.getElementById('emp-edit-position')?.value?.trim() || r.position,
+    level: document.getElementById('emp-edit-level')?.value || r.level,
+    photoUrl: document.getElementById('emp-edit-photo')?.value?.trim() || '',
+  });
+  closeEmployeeEdit();
+  renderResource();
+  resourceToast('Employee updated.', 'ok');
+}
+
 
 async function saveAddCode() {
   const id = document.getElementById('addcode-id').value;
@@ -2904,9 +3102,9 @@ async function saveAddCode() {
   const note = document.getElementById('addcode-note').value.trim();
   const actor = roleLabel(currentRole());
   const codeMeta = projectCodeByValue(code, project) || projectCodeByValue(code);
-  if(endDate && startDate && endDate < startDate) { alert('End Date must be after Start Date.'); return; }
-  if(!project||!code||alloc<1) { alert('Please fill Project, Code, and Allocation.'); return; }
-  if(codeMeta && String(codeMeta.status||'').toLowerCase() !== 'active') { alert('Selected Project Code is not Active yet.'); return; }
+  if(endDate && startDate && endDate < startDate) { resourceError('End Date must be after Start Date.'); return; }
+  if(!project||!code||alloc<1) { resourceError('Please fill Project, Code, and Allocation.'); return; }
+  if(codeMeta && String(codeMeta.status||'').toLowerCase() !== 'active') { resourceError('Selected Project Code is not Active yet.'); return; }
 
 
   const list = loadResources();
@@ -2915,8 +3113,8 @@ async function saveAddCode() {
   const r = list[idx];
   const existingCodes = [...(r.projectCodes||[])];
   const previousAlloc = editIdx >= 0 ? clampAlloc(existingCodes[editIdx]?.allocation) : 0;
-  const used = _allocTotalUsed(r) - previousAlloc;
-  if(used + alloc > 100) { alert(`Total allocation exceeds 100% (available ${100-used}%).`); return; }
+  const used = _allocUsed(r) - previousAlloc;
+  if(used + alloc > 100) { resourceError(`Extra Project Code allocation exceeds 100% (available ${100-used}%).`); return; }
 
 
   const now = new Date().toISOString();
@@ -2935,6 +3133,7 @@ async function saveAddCode() {
   else existingCodes.push(codeEntry);
   const updated = { ...r,
     projectCodes: existingCodes,
+    allocationPercent: rebalancePrimaryAllocationForCodes(r, existingCodes),
     updatedAt: now,
     activityLog: [...(r.activityLog||[]), { action:'Project code added', to: project, by: actor,
       remark: `${code} / ${alloc}%${note?` / ${note}`:''}`, at: now }],
@@ -2943,21 +3142,22 @@ async function saveAddCode() {
   await saveResourceAsync(updated);
   closeAddCode();
   renderResource();
-  alert(`Project Code ${code} (${project}) ${alloc}% added to ${r.position}.`);
+  resourceToast(`Project Code ${code} (${project}) ${alloc}% saved. Primary allocation is now ${updated.allocationPercent}%.`, 'ok');
 }
 
 
 // â”€â”€ Delete (hard remove) â€” PMO only â”€â”€
 async function deleteProjectCode(id, codeIndex) {
   const role = currentRole();
-  if(!canProjectCode(role)) { alert(`${roleLabel(role)} cannot delete project codes`); return; }
+  if(!canProjectCode(role)) { resourceError(`${roleLabel(role)} cannot delete project codes`); return; }
   const list = loadResources();
   const r = list.find(x => x.id === id);
   if(!r) return;
   const codes = [...(r.projectCodes||[])];
   const c = codes[codeIndex];
   if(!c) return;
-  if(!confirm(`Delete project code ${c.code || '-'} (${c.project || '-'}) from ${resourcePersonName(r)||r.position}?`)) return;
+  const ok = await resourceConfirm('Delete project code?', `${c.code || '-'} (${c.project || '-'})\n${resourcePersonName(r)||r.position}`, 'Delete', true);
+  if(!ok) return;
   codes.splice(codeIndex, 1);
   const now = new Date().toISOString();
   await saveResourceAsync({ ...r,
@@ -2969,19 +3169,20 @@ async function deleteProjectCode(id, codeIndex) {
   renderResource();
 }
 
-function deleteResource(id) {
+async function deleteResource(id) {
   const role = currentRole();
-  if(!canDelete(role)) { alert(`${roleLabel(role)} cannot delete requests.`); return; }
+  if(!canDelete(role)) { resourceError(`${roleLabel(role)} cannot delete requests.`); return; }
   const r = loadResources().find(x => x.id === id);
   if(!r) return;
-  if(!confirm(`Delete this request permanently?\n\n${r.position} / ${r.project}\n${r.id}\n\nThis action cannot be undone.`)) return;
+  const ok = await resourceConfirm('Delete request?', `${r.position} / ${r.project}\n${r.id}\n\nThis action cannot be undone.`, 'Delete', true);
+  if(!ok) return;
   _doDeleteResource(id);
 }
 async function _doDeleteResource(id) {
   await deleteResourceAsync(id);
   closeResDetail();
   renderResource();
-  alert('Request deleted.');
+  resourceToast('Request deleted.', 'ok');
 }
 
 
@@ -2989,20 +3190,21 @@ async function _doDeleteResource(id) {
 // à¸ªà¸£à¹‰à¸²à¸‡ drawer à¹€à¸­à¸‡à¸–à¹‰à¸² index.html à¹„à¸¡à¹ˆà¸¡à¸µ (à¸à¸±à¸™à¸›à¸¸à¹ˆà¸¡ "à¸ˆà¸±à¸”à¸à¸²à¸£" à¸à¸”à¹à¸¥à¹‰à¸§à¹€à¸‡à¸µà¸¢à¸š)
 async function offboardResource(id) {
   const role = currentRole();
-  if(!canOffboard(role)) { alert(`${roleLabel(role)} cannot offboard resources`); return; }
+  if(!canOffboard(role)) { resourceError(`${roleLabel(role)} cannot offboard resources`); return; }
   const r = loadResources().find(x => x.id === id);
   if(!r) return;
-  if(r.status !== 'filled') { alert('Offboard is available only for filled / onboarded resources'); return; }
-  const reason = prompt(`Offboard ${resourcePersonName(r)||r.position} from ${r.project}?\n\nReason / note:`, '');
-  if(reason === null) return;
+  if(r.status !== 'filled') { resourceError('Offboard is available only for filled resources'); return; }
+  const ok = await resourceConfirm('Offboard resource?', `${resourcePersonName(r)||r.position} from ${r.project}`, 'Offboard');
+  if(!ok) return;
+  const reason = 'Offboarded from Employee Directory';
   const now = new Date().toISOString();
   const updated = { ...r,
     status: 'resolved',
     resolvedDate: todayISO,
     offboardDate: todayISO,
     updatedAt: now,
-    activityLog: [...(r.activityLog||[]), { action:'Offboarded', from:'filled', to:'resolved', by:roleLabel(role), remark:reason.trim(), at:now }],
-    remark: (r.remark ? r.remark+'\n' : '') + `[Offboard] ${reason.trim()}`,
+    activityLog: [...(r.activityLog||[]), { action:'Offboarded', from:'filled', to:'resolved', by:roleLabel(role), remark:reason, at:now }],
+    remark: (r.remark ? r.remark+'\n' : '') + `[Offboard] ${reason}`,
   };
   await saveResourceAsync(updated);
   closeResDetail();
@@ -3088,7 +3290,7 @@ function openResDetail(id) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;font-size:12px">
       ${[['Level',r.level],['Employment Type',hiringMeta(r.hiringType).fullLabel],
          ['Start Date',r.startDate?shortDate(r.startDate):'-'],['End Date',resourceEndDate(r)?shortDate(resourceEndDate(r)):'-'],
-         ['Request Date',r.requestDate?shortDate(r.requestDate):'-'],['Resolved Date',r.resolvedDate?shortDate(r.resolvedDate):'-'],
+         ['Request Date',r.requestDate?shortDate(r.requestDate):'-'],['Onboard Date',effectiveOnboardDate(r)?shortDate(effectiveOnboardDate(r)):'-'],
          ['Requester',r.requesterName||'-'],['Transfer From',r.transferFrom||'-']
         ].map(([k,v])=>`<div><span style="color:var(--text-3)">${k}</span><br><strong>${esc(String(v))}</strong></div>`).join('')}
     </div>
@@ -3099,9 +3301,8 @@ function openResDetail(id) {
     ${log || '<div style="color:var(--text-3);font-size:12px">No activity log</div>'}
     <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
       ${(canEditPending(role)&&r.status==='pending')?`<button class="btn-sm" onclick="openResModal('${r.id}');closeResDetail()">Edit</button>`:''}
-      ${(canApprove(role)&&r.status==='pending')?`<button class="btn-sm" style="color:var(--green)" onclick="approveRequest('${r.id}');closeResDetail()">Approve</button>`:''}
       ${(canRecruit(role)&&r.status==='approved')?`<button class="btn-sm" style="color:var(--blue)" onclick="bbikAccept('${r.id}');closeResDetail()">Accept</button>`:''}
-      ${allowedNext(r.status,role).length?`<button class="btn-sm" onclick="openResStatus('${r.id}');closeResDetail()">Change Status</button>`:''}
+      ${allowedStatusChoicesForRecord(r,role).length?`<button class="btn-sm" onclick="openResStatus('${r.id}');closeResDetail()">Change Status</button>`:''}
       ${(r.status==='filled'&&canTransfer(role))?`<button class="btn-sm" style="color:var(--blue)" onclick="openResTransfer('${r.id}');closeResDetail()">Transfer</button>`:''}
       ${(r.status==='filled'&&canProjectCode(role))?`<button class="btn-sm" style="color:var(--green)" onclick="openAddCode('${r.id}');closeResDetail()">Add Project Code</button>`:''}
       ${canDelete(role)?`<button class="btn-sm" style="color:var(--red)" onclick="deleteResource('${r.id}')">Delete</button>`:''}
@@ -3132,9 +3333,9 @@ function closeResDetail() {
 // â”€â”€ Export (CSV, role-scoped) â”€â”€
 function exportResourceCsv() {
   const list = visibleToRole(loadResources(), currentRole());
-  if(!list.length) { alert('No data to export.'); return; }
+  if(!list.length) { resourceError('No data to export.'); return; }
   const headers = ['ID','Resource Name','Employee Code','Project','Project Code','Primary Allocation %','Position','Level','Hiring Type','Start Date','End Date','Onboard Date','Offboard Date','Request Date','Resolved Date','Updated','Status','Requester','Cancel Reason','Transfer From','Project Codes','Remark'];
-  const rows = list.map(r=>[r.id,resourcePersonName(r),resourceEmployeeCode(r),r.project,primaryProjectCode(r),primaryAllocation(r),r.position,r.level,r.hiringType,r.startDate||'',resourceEndDate(r)||'',r.onboardDate||'',r.offboardDate||'',r.requestDate||'',r.resolvedDate||'',r.updatedAt?String(r.updatedAt).slice(0,10):'',RES_STATUS[r.status]?.label||r.status,r.requesterName||'',r.cancelReason||'',r.transferFrom||'',(r.projectCodes||[]).map(c=>`${c.code}(${c.project}:${c.allocation}%)`).join(' | '),r.remark||'']);
+  const rows = list.map(r=>[r.id,resourcePersonName(r),resourceEmployeeCode(r),r.project,primaryProjectCode(r),primaryAllocation(r),r.position,r.level,r.hiringType,r.startDate||'',resourceEndDate(r)||'',effectiveOnboardDate(r)||'',r.offboardDate||'',r.requestDate||'',r.resolvedDate||'',r.updatedAt?String(r.updatedAt).slice(0,10):'',RES_STATUS[r.status]?.label||r.status,r.requesterName||'',r.cancelReason||'',r.transferFrom||'',(r.projectCodes||[]).map(c=>`${c.code}(${c.project}:${c.allocation}%)`).join(' | '),r.remark||'']);
   const csv = [headers,...rows].map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
   const a = document.createElement('a'); a.href=URL.createObjectURL(blob);
