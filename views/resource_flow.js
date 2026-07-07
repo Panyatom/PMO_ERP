@@ -63,7 +63,7 @@
   }
 
   function canUseStatusTransition(roles, role, fromStatus, toStatus) {
-    if(toStatus === 'approved') return hasPermission(roles, role, 'approve');
+    if(toStatus === 'approved') return hasPermission(roles, role, 'approve') || (RECRUITING.includes(fromStatus) && hasPermission(roles, role, 'recruit'));
     if(RECRUITING.includes(toStatus)) return hasPermission(roles, role, 'recruit') || hasPermission(roles, role, 'approve');
     if(toStatus === 'filled') return hasPermission(roles, role, 'approve') || hasPermission(roles, role, 'resolveFilled') || hasPermission(roles, role, 'recruit');
     if(toStatus === 'resolved') return hasPermission(roles, role, 'resolveFilled');
@@ -98,6 +98,26 @@
     return nexts.filter(next => requiresPreApprovalDocs(record.hiringType) ? next !== 'approved' : next !== 'pendingDocs');
   }
 
+  function allowedStatusChoicesForRecord(record, role, roles, options={}) {
+    const current = record?.status || '';
+    let choices = allowedNextForRecord(record, role, roles, options);
+    if(role === 'pmo' || hasPermission(roles, role, 'approve')) {
+      const allStatuses = options.allStatuses?.length ? options.allStatuses : Object.keys(DEFAULT_STATUS_FLOW);
+      choices = allStatuses.filter(status => (
+        status !== current &&
+        status !== 'document' &&
+        canUseStatusTransition(roles, role, current, status)
+      ));
+    } else if(hasPermission(roles, role, 'recruit')) {
+      choices = ['approved','sourcing','interviewing','offer','filled']
+        .filter(status => status !== current && canUseStatusTransition(roles, role, current, status));
+    }
+    if(record?.status === 'pending') {
+      choices = choices.filter(next => requiresPreApprovalDocs(record.hiringType) ? next !== 'approved' : next !== 'pendingDocs');
+    }
+    return [...new Set(choices)].filter(Boolean);
+  }
+
   function visibleToRole(list, role, roles, selectedProject='') {
     const scope = roleConfig(roles, role).scope;
     if(scope === 'bbik-pipeline') return list.filter(r => BBIK_VISIBLE.includes(r.status));
@@ -113,6 +133,26 @@
     return toStatus === 'cancelled';
   }
 
+  function canHaveOnboardDate(status) {
+    return ['filled','resolved','mitigated'].includes(String(status || ''));
+  }
+
+  function effectiveOnboardDate(record) {
+    return canHaveOnboardDate(record?.status) ? (record?.onboardDate || '') : '';
+  }
+
+  function rebalancePrimaryAllocationForCodes(codes) {
+    const used = (codes || []).reduce((sum, code) => {
+      const allocation = Number(code?.allocation || 0);
+      return sum + (Number.isFinite(allocation) && allocation > 0 ? allocation : 0);
+    }, 0);
+    return {
+      extraAllocation: Math.min(100, Math.max(0, used)),
+      primaryAllocation: Math.max(0, 100 - used),
+      isValid: used <= 100,
+    };
+  }
+
   return {
     BBIK_VISIBLE,
     DEFAULT_CANCEL_REASONS,
@@ -125,8 +165,12 @@
     hiringKind,
     requiresPreApprovalDocs,
     allowedNextForRecord,
+    allowedStatusChoicesForRecord,
     visibleToRole,
     canViewTab,
     requiresCancelReason,
+    canHaveOnboardDate,
+    effectiveOnboardDate,
+    rebalancePrimaryAllocationForCodes,
   };
 });

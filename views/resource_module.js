@@ -563,6 +563,13 @@ function allowedNext(status, role) {
   return [];
 }
 function allowedStatusChoicesForRecord(record, role) {
+  if(window.PMO_RESOURCE_FLOW?.allowedStatusChoicesForRecord) {
+    return window.PMO_RESOURCE_FLOW.allowedStatusChoicesForRecord(record, role, resourceRoles(), {
+      statusFlow: STATUS_FLOW,
+      hasSettings: !!resourceSettings(),
+      allStatuses: Object.keys(RES_STATUS),
+    }).filter(s => RES_STATUS[s]);
+  }
   const current = record?.status || '';
   let choices = allowedNextForRecord(record, role);
   if(role === 'pmo' || canApprove(role)) {
@@ -591,7 +598,7 @@ function canUseStatusTransition(role, fromStatus, toStatus) {
   if(window.PMO_RESOURCE_FLOW?.canUseStatusTransition) {
     return window.PMO_RESOURCE_FLOW.canUseStatusTransition(resourceRoles(), role, fromStatus, toStatus);
   }
-  if(toStatus === 'approved') return canApprove(role);
+  if(toStatus === 'approved') return canApprove(role) || (['sourcing','interviewing','offer'].includes(fromStatus) && canRecruit(role));
   if(['sourcing','interviewing','offer'].includes(toStatus)) return canRecruit(role) || canApprove(role);
   if(toStatus === 'filled') return canApprove(role) || hasRolePermission(role, 'resolveFilled') || canRecruit(role);
   if(toStatus === 'resolved') return hasRolePermission(role, 'resolveFilled');
