@@ -198,10 +198,14 @@ function projectMasterItem(projectName) {
   ) || null;
 }
 function projectAccentColor(projectName) {
+  if(window.PMO_RESOURCE_FLOW?.resolveProjectAccentColor) {
+    return window.PMO_RESOURCE_FLOW.resolveProjectAccentColor(projectName, loadSettings().projectMaster || []);
+  }
   const color = String(projectMasterItem(projectName)?.color || '').trim();
   return /^#[0-9a-f]{6}$/i.test(color) ? color : '#8dd7cf';
 }
 function projectTextColor(hex) {
+  if(window.PMO_RESOURCE_FLOW?.projectTextColor) return window.PMO_RESOURCE_FLOW.projectTextColor(hex);
   const raw = String(hex || '').replace('#', '');
   if(!/^[0-9a-f]{6}$/i.test(raw)) return '#0f172a';
   const r = parseInt(raw.slice(0, 2), 16);

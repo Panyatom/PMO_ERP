@@ -153,6 +153,91 @@
     };
   }
 
+  function resourcePersonName(record) {
+    return String(record?.resourceNameTh || record?.resourceNameEn || record?.resourceName || record?.requesterName || record?.position || '').trim();
+  }
+
+  function resourceEmployeeCode(record) {
+    return String(record?.employeeCode || record?.employee_code || '').trim();
+  }
+
+  function primaryAllocation(record) {
+    const explicit = Number(record?.allocationPercent || 0);
+    if(Number.isFinite(explicit) && explicit > 0) return Math.min(100, Math.max(0, explicit));
+    return rebalancePrimaryAllocationForCodes(record?.projectCodes || []).primaryAllocation;
+  }
+
+  function primaryProjectCode(record) {
+    return String(record?.primaryProjectCode || record?.projectCode || '').trim();
+  }
+
+  function personKey(record) {
+    return resourceEmployeeCode(record) || resourcePersonName(record).toLowerCase() || record?.id || '';
+  }
+
+  function timelineItemGroups(list, mode='project-code') {
+    const groups = new Map();
+    (list || []).forEach(record => {
+      if(!canHaveOnboardDate(record?.status)) return;
+      const items = [];
+      if(mode === 'all') {
+        items.push({
+          requestId: record.id,
+          project: record.project,
+          code: primaryProjectCode(record),
+          allocation: primaryAllocation(record),
+          startDate: effectiveOnboardDate(record) || record.startDate || record.requestDate || '',
+          endDate: record.offboardDate || record.resolvedDate || record.endDate || '',
+          hiringType: record.hiringType,
+          source: record.transferFrom ? 'Transfer' : 'Primary',
+        });
+      }
+      (record.projectCodes || []).forEach(code => items.push({
+        requestId: record.id,
+        project: code.project,
+        code: code.code,
+        allocation: Number(code.allocation || 0),
+        startDate: code.startDate || code.at || effectiveOnboardDate(record) || record.startDate || '',
+        endDate: code.endDate || record.offboardDate || record.resolvedDate || record.endDate || '',
+        hiringType: record.hiringType,
+        source: 'Project Code',
+      }));
+      if(!items.length) return;
+      const key = personKey(record);
+      if(!groups.has(key)) {
+        groups.set(key, {
+          key,
+          person: resourcePersonName(record),
+          employeeCode: resourceEmployeeCode(record),
+          level: record.level,
+          hiringType: record.hiringType,
+          items: [],
+        });
+      }
+      groups.get(key).items.push(...items);
+    });
+    return [...groups.values()].sort((a,b)=>String(a.person).localeCompare(String(b.person)));
+  }
+
+  function resolveProjectAccentColor(projectName, projectMaster=[]) {
+    const name = String(projectName || '').trim().toLowerCase();
+    const item = (projectMaster || []).find(project => (
+      String(project?.name || '').trim().toLowerCase() === name ||
+      String(project?.code || '').trim().toLowerCase() === name
+    ));
+    const color = String(item?.color || '').trim();
+    return /^#[0-9a-f]{6}$/i.test(color) ? color : '#8dd7cf';
+  }
+
+  function projectTextColor(hex) {
+    const raw = String(hex || '').replace('#', '');
+    if(!/^[0-9a-f]{6}$/i.test(raw)) return '#0f172a';
+    const r = parseInt(raw.slice(0, 2), 16);
+    const g = parseInt(raw.slice(2, 4), 16);
+    const b = parseInt(raw.slice(4, 6), 16);
+    return ((r * 299 + g * 587 + b * 114) / 1000) > 150 ? '#0f172a' : '#fff';
+  }
+
   return {
     BBIK_VISIBLE,
     DEFAULT_CANCEL_REASONS,
@@ -172,5 +257,8 @@
     canHaveOnboardDate,
     effectiveOnboardDate,
     rebalancePrimaryAllocationForCodes,
+    timelineItemGroups,
+    resolveProjectAccentColor,
+    projectTextColor,
   };
 });
