@@ -15,6 +15,12 @@
     { id:'uat-ttb-ba', no:'UAT-02', project:'TTB', type:'BILL', code:'TTB-UAT-BA-2026', startDate:'2026-04-01', endDate:'2026-12-31', status:'Active', pmOwner:'UAT PMO', updatedAt:now },
     { id:'uat-geo-qa', no:'UAT-03', project:'Geo9', type:'BILL', code:'GEO9-UAT-QA-2026', startDate:'2026-03-01', endDate:'2026-09-30', status:'Active', pmOwner:'UAT PMO', updatedAt:now },
     { id:'uat-inactive', no:'UAT-04', project:'AOA-MP', type:'BILL', code:'AOA-UAT-INACTIVE', startDate:'2025-01-01', endDate:'2025-12-31', status:'Inactive', pmOwner:'UAT PMO', updatedAt:now },
+    { id:'uat-aoa-support', no:'UAT-05', project:'AOA-MP', type:'BILL', code:'AOA-UAT-SUPPORT-2026', startDate:'2026-01-01', endDate:'2026-12-31', status:'Active', pmOwner:'UAT PMO', updatedAt:now },
+    { id:'uat-aoa-overflow', no:'UAT-06', project:'AOA-MP', type:'INTNC', code:'AOA-UAT-OVERFLOW-20', startDate:'2026-07-01', endDate:'2026-12-31', status:'Active', pmOwner:'UAT PMO', updatedAt:now },
+    { id:'uat-ttb-ops', no:'UAT-07', project:'TTB', type:'INTNC', code:'TTB-UAT-OPS-2026', startDate:'2026-01-01', endDate:'2026-12-31', status:'Active', pmOwner:'UAT PMO', updatedAt:now },
+    { id:'uat-ttb-pending', no:'UAT-08', project:'TTB', type:'BILL', code:'TTB-UAT-PENDING-APPROVAL', startDate:'2026-08-01', endDate:'2026-12-31', status:'Pending', pmOwner:'UAT PMO', updatedAt:now },
+    { id:'uat-geo-data', no:'UAT-09', project:'Geo9', type:'BILL', code:'GEO9-UAT-DATA-2026', startDate:'2026-01-01', endDate:'2026-12-31', status:'Active', pmOwner:'UAT PMO', updatedAt:now },
+    { id:'uat-geo-expired', no:'UAT-10', project:'Geo9', type:'BILL', code:'GEO9-UAT-EXPIRED-H1', startDate:'2026-01-01', endDate:'2026-06-30', status:'Inactive', pmOwner:'UAT PMO', updatedAt:now },
   ];
 
   function log(action, status, by, at) {
@@ -183,7 +189,10 @@
       status:'filled',
       requesterName:'AOA Requester',
       transferFrom:null,
-      projectCodes:[{ project:'AOA-MP', code:'AOA-UAT-DEV-2026', allocation:80, startDate:'2026-04-01', endDate:'2026-12-31', projectCodeType:'BILL' }],
+      projectCodes:[
+        { project:'AOA-MP', code:'AOA-UAT-DEV-2026', allocation:80, startDate:'2026-04-01', endDate:'2026-12-31', projectCodeType:'BILL' },
+        { project:'AOA-MP', code:'AOA-UAT-OVERFLOW-20', allocation:20, startDate:'2026-07-01', endDate:'2026-12-31', projectCodeType:'INTNC' },
+      ],
       resourceName:'Narin UAT',
       resourceNameTh:'Narin UAT',
       resourceNameEn:'Narin UAT',
