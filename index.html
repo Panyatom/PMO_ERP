@@ -672,10 +672,10 @@ svg.icon { display: inline-block; vertical-align: middle; }
 /* ── Cost Dashboard Sub-tabs ── */
 .cost-tab-bar { display:flex; align-items:flex-end; justify-content:space-between; border-bottom:1px solid rgba(0,0,0,0.12); margin-bottom:0; }
 #cost-subtab-bar { display:flex; gap:4px; }
-.cost-stab { padding:7px 18px; font-size:12px; font-weight:500; font-family:inherit; border:1px solid rgba(0,0,0,0.12); border-bottom:none; border-radius:6px 6px 0 0; background:#ECEAE4; color:#5F5E5A; cursor:pointer; }
-.cost-stab:hover { background:#E2E0DA; color:#1C1C1A; }
-.cost-stab.active { background:#FFFFFF; color:#185FA5; font-weight:600; position:relative; top:1px; }
-.cost-stab.active::after { content:""; position:absolute; left:-1px; right:-1px; bottom:-2px; height:2px; background:#FFFFFF; }
+.cost-stab, .tab-btn, .pend-tab-btn { height:40px;padding:0 15px;font-size:12px;font-weight:800;font-family:inherit;border:1px solid transparent;border-bottom:none;border-radius:7px 7px 0 0;background:rgba(148,163,184,.10);color:#5F5E5A;cursor:pointer;position:relative;opacity:.68;white-space:nowrap; }
+.cost-stab:hover, .tab-btn:hover, .pend-tab-btn:hover { background:rgba(148,163,184,.18);color:#1C1C1A;opacity:1; }
+.cost-stab.active, .tab-btn.active, .pend-tab-btn.active { background:#FFFFFF;color:#0f172a;border-color:rgba(255,255,255,.92);font-weight:800;box-shadow:0 -1px 0 #fff inset,0 -2px 0 #185FA5,0 8px 20px rgba(0,0,0,.18);opacity:1; }
+.cost-stab.active::after, .tab-btn.active::after, .pend-tab-btn.active::after { content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;background:#FFFFFF; }
 .cost-tab-panel { border:1px solid rgba(0,0,0,0.12); border-top:none; border-radius:0 6px 6px 6px; padding:14px; background:#FFFFFF; margin-bottom:14px; }
 </style>
 <link rel="stylesheet" href="theme.css?v=0.1.4">
@@ -1115,15 +1115,15 @@ svg.icon { display: inline-block; vertical-align: middle; }
         </div>
 
         <!-- Tabs -->
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-          <div style="display:flex;gap:4px;background:var(--bg);border-radius:var(--r);padding:4px">
-            <button class="pend-tab-btn active" data-tab="submitted" onclick="switchPendingTab('submitted')" style="font-family:inherit;font-size:12px;font-weight:500;padding:6px 14px;border:none;border-radius:var(--r-sm);cursor:pointer;transition:all .15s;background:var(--surface);color:var(--text)">
+        <div class="cost-tab-bar pmo-tabs" style="margin-bottom:12px">
+          <div style="display:flex;gap:4px;min-width:0;overflow-x:auto">
+            <button class="pend-tab-btn active" data-tab="submitted" onclick="switchPendingTab('submitted')">
               My Submitted <span class="tab-count" style="margin-left:4px;font-size:11px;color:var(--text-3)"></span>
             </button>
-            <button class="pend-tab-btn" data-tab="awaiting" onclick="switchPendingTab('awaiting')" style="font-family:inherit;font-size:12px;font-weight:500;padding:6px 14px;border:none;border-radius:var(--r-sm);cursor:pointer;transition:all .15s;background:transparent;color:var(--text-2)">
+            <button class="pend-tab-btn" data-tab="awaiting" onclick="switchPendingTab('awaiting')">
               Awaiting My Approval <span class="tab-count badge badge-amber" style="margin-left:4px"></span>
             </button>
-            <button class="pend-tab-btn" data-tab="drafts" onclick="switchPendingTab('drafts')" style="font-family:inherit;font-size:12px;font-weight:500;padding:6px 14px;border:none;border-radius:var(--r-sm);cursor:pointer;transition:all .15s;background:transparent;color:var(--text-2)">
+            <button class="pend-tab-btn" data-tab="drafts" onclick="switchPendingTab('drafts')">
               Drafts <span class="tab-count" style="margin-left:4px;font-size:11px;color:var(--text-3)"></span>
             </button>
           </div>
@@ -2027,7 +2027,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 <script src="views/resource_flow.js"></script>
 <script src="views/resource_module.js?v=0.5.2"></script>
 <script src="views/log.js"></script>
-<script src="views/cost.js"></script>
+<script src="views/cost.js?v=0.1.1"></script>
 <style>
   #resource-detail-drawer { transform:translateX(100%);visibility:hidden;z-index:1100; }
   #resource-detail-drawer.open { transform:translateX(0);visibility:visible; }
@@ -2207,7 +2207,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 </div>
 
 <style>
-.pend-tab-btn.active { background:var(--surface)!important;color:var(--blue)!important;font-weight:600!important;box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+.pend-tab-btn.active { font-weight:800!important; }
 </style>
 <input type="file" id="bulk-import-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleBulkImport(event)">
 <!-- Bulk Account Upload Modal -->

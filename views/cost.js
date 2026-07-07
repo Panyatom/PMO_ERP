@@ -3,16 +3,17 @@
 // License (auto) + Infra OPEX (manual) + Budget + Forecast
 // ─────────────────────────────────────────
 
-const INFRA_KEY   = 'orbit-pmo-infra-v1';
+const COST_INFRA_KEY = 'orbit-pmo-infra-v1';
 const BUDGET_COST_KEY = 'orbit-pmo-cost-budgets-v1';
+let _costCurrentTab = 'overview';
 
 // ── Storage ──
 function loadInfraCosts() {
-  try { const d = JSON.parse(localStorage.getItem(INFRA_KEY)||'{}'); return d||{}; }
+  try { const d = JSON.parse(localStorage.getItem(COST_INFRA_KEY)||'{}'); return d||{}; }
   catch(e) { return {}; }
 }
 function storeInfraCosts(d) {
-  try { localStorage.setItem(INFRA_KEY, JSON.stringify(d)); } catch(e) {}
+  try { localStorage.setItem(COST_INFRA_KEY, JSON.stringify(d)); } catch(e) {}
 }
 function loadCostBudgets() {
   try { const d = JSON.parse(localStorage.getItem(BUDGET_COST_KEY)||'{}'); return d||{}; }
@@ -199,7 +200,7 @@ function renderCost() {
   // Init action buttons for default tab (overview) — only on first load
   const actions = document.getElementById('cost-tab-actions');
   if(actions && !actions.hasChildNodes()) {
-    switchCostTab('overview', document.querySelector('.cost-stab[data-tab="overview"]'));
+    switchCostTab(_costCurrentTab, document.querySelector(`#view-cost .cost-stab[data-tab="${_costCurrentTab}"]`));
   }
 }
 
@@ -386,11 +387,15 @@ document.addEventListener('click', e => {
 
 // ── Sub-tab switching ──
 function switchCostTab(tab, btn) {
-  document.querySelectorAll('.cost-tab-panel').forEach(p => p.style.display = 'none');
-  document.querySelectorAll('.cost-stab').forEach(b => b.classList.remove('active'));
+  _costCurrentTab = tab;
+  const root = document.getElementById('view-cost');
+  if(!root) return;
+  root.querySelectorAll('.cost-tab-panel').forEach(p => p.style.display = 'none');
+  root.querySelectorAll('.cost-stab').forEach(b => b.classList.remove('active'));
   const panel = document.getElementById('cost-tab-' + tab);
   if(panel) panel.style.display = '';
-  if(btn) btn.classList.add('active');
+  const activeBtn = btn || root.querySelector(`.cost-stab[data-tab="${tab}"]`);
+  if(activeBtn) activeBtn.classList.add('active');
 
   // Per-tab action buttons
   const actions = document.getElementById('cost-tab-actions');

@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node --test tests/*.test.js",
     "test:resource-flow": "node --test tests/resource_flow.test.js",
+    "seed:resource-uat": "node scripts/seed-resource-uat.mjs",
     "uat:resource": "node scripts/serve-uat.mjs"
   }
 }
