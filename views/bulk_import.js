@@ -271,18 +271,31 @@ function importProjectCodes(rows) {
   alert(`Project Code import completed\nAdded: ${added}\nUpdated: ${updated}\nSkipped: ${skipped}`);
 }
 
-function importLicenses(rows) {
+async function importLicenses(rows) {
   const existing = loadManualLicenses();
   const now = new Date().toISOString();
-  let added = 0, skipped = 0;
+  let added = 0, skipped = 0, updated = 0;
+  const changed = [];
+
+  const licenseDateKey = value => {
+    const raw = String(value || '').trim();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const date = new Date(raw);
+    if(Number.isNaN(date.getTime())) return raw;
+    return [date.getFullYear(), String(date.getMonth()+1).padStart(2,'0'), String(date.getDate()).padStart(2,'0')].join('-');
+  };
+  const licenseKey = l => [
+    l.memoNo, l.name, l.plan, l.project, licenseDateKey(l.purchaseDate), licenseDateKey(l.expiry),
+  ].map(v => String(v || '').trim().toLowerCase()).join('||');
 
   rows.forEach(row => {
     const name = strVal(row['Name'] || row['name'] || row['Software Name'] || row['software_name'] || row['à¸Šà¸·à¹ˆà¸­ Software']);
     if(!name) { skipped++; return; }
 
     const license = {
-      id: Date.now() + added, // unique enough
+      id: crypto.randomUUID(),
       name,
+      plan:          strVal(row['Plan'] || row['plan'] || row['Tier'] || row['tier']),
       vendor:        strVal(row['Vendor'] || row['vendor'] || row['à¸œà¸¹à¹‰à¸‚à¸²à¸¢']),
       seats:         numVal(row['Seats'] || row['seats'] || row['à¸ˆà¸³à¸™à¸§à¸™']) || 1,
       pricePerMonth: numVal(row['Price/Month'] || row['price_per_month'] || row['à¸£à¸²à¸„à¸²/à¹€à¸”à¸·à¸­à¸™']),
@@ -306,13 +319,28 @@ function importLicenses(rows) {
       createdAt:     now,
       updatedAt:     now,
     };
-    existing.push(license);
-    added++;
+    const matchIdx = existing.findIndex(item => licenseKey(item) === licenseKey(license));
+    if(matchIdx >= 0) {
+      const refreshed = {
+        ...existing[matchIdx],
+        ...license,
+        id: existing[matchIdx].id,
+        createdAt: existing[matchIdx].createdAt || now,
+      };
+      existing[matchIdx] = refreshed;
+      changed.push(refreshed);
+      updated++;
+    } else {
+      existing.push(license);
+      changed.push(license);
+      added++;
+    }
   });
 
   storeManualLicenses(existing);
+  await Promise.all(changed.map(license => saveLicenseAsync(license)));
   renderLicense();
-  alert(`License import completed\nAdded: ${added}${skipped ? `\nSkipped blank rows: ${skipped}` : ''}`);
+  alert(`License import completed\nAdded: ${added}\nUpdated: ${updated}${skipped ? `\nSkipped blank rows: ${skipped}` : ''}`);
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -439,9 +467,9 @@ function downloadTemplate(type) {
   const templates = {
     license: {
       filename: 'license_import_template.xlsx',
-      headers: ['Name','Vendor','Seats','Price/Month','Owner','Department','Project','License Type','Purchase Date','Expiry Date','Billing Freq','Status','Memo Ref','Note'],
-      sample: [['GitHub Copilot','GitHub',15,600,'Chuen K.','PMO','AOA-MP','subscription','2025-01-01','2026-01-01','annual','','ORB-2501-001',''],
-               ['Figma','Figma Inc',5,900,'Design Lead','Design','Release 3','subscription','2025-03-01','2026-03-01','annual','','','']]
+      headers: ['Name','Plan','Vendor','Seats','Price/Month','Owner','Department','Project','License Type','Purchase Date','Expiry Date','Billing Freq','Status','Memo Ref','Note'],
+      sample: [['GitHub Copilot','Business','GitHub',15,600,'Chuen K.','PMO','AOA-MP','subscription','2025-01-01','2026-01-01','annual','','ORB-2501-001',''],
+               ['Figma','Professional','Figma Inc',5,900,'Design Lead','Design','Release 3','subscription','2025-03-01','2026-03-01','annual','','','']]
     },
     device: {
       filename: 'device_import_template.xlsx',

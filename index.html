@@ -561,6 +561,11 @@ body {
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table-scroll table { min-width: 820px; }
 
+.lic-tab-btn { padding:5px 14px; font-size:12px; font-weight:400; font-family:inherit; border:none; border-radius:var(--r-sm); background:transparent; color:var(--text-2); cursor:pointer; transition:background .12s,color .12s,box-shadow .12s; white-space:nowrap; }
+.lic-tab-btn:hover { background:var(--surface); color:var(--text); }
+.lic-tab-btn.lic-tab-active { background:var(--surface)!important; color:var(--blue-800)!important; font-weight:600; box-shadow:0 1px 4px rgba(0,0,0,.10); border-bottom-color:transparent!important; }
+.lic-expand{display:inline-block;transition:transform .15s;margin-right:4px;font-size:10px;color:var(--text-3)}
+
 .filter-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 14px; }
 .filter-search,
 .filter-toolbar input[type="search"],
@@ -1595,90 +1600,16 @@ svg.icon { display: inline-block; vertical-align: middle; }
       <!-- ════ LICENSE ════ -->
       <div id="view-license" class="view">
 
-        <!-- Metric cards -->
-        <div class="metric-row" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">
-          <div class="metric-card"><div class="metric-label">Active Licenses</div><div class="metric-val" id="lic-active" style="color:var(--blue)">0</div><div class="metric-sub" id="lic-active-cost"></div></div>
-          <div class="metric-card"><div class="metric-label">Expiring Soon (≤30d)</div><div class="metric-val" id="lic-expiring" style="color:var(--amber)">0</div><div class="metric-sub">ต้องต่ออายุเร็วๆ นี้</div></div>
-          <div class="metric-card"><div class="metric-label">Expired</div><div class="metric-val" id="lic-expired" style="color:var(--red)">0</div><div class="metric-sub">หมดอายุแล้ว</div></div>
-          <div class="metric-card"><div class="metric-label">ค่าใช้จ่าย/เดือน</div><div class="metric-val" id="lic-monthly" style="font-size:18px;margin-top:4px">฿0</div><div class="metric-sub">รวมทุก active</div></div>
-          <div class="metric-card"><div class="metric-label">ค่าใช้จ่าย/ปี</div><div class="metric-val" id="lic-annual" style="font-size:18px;margin-top:4px">฿0</div><div class="metric-sub" id="lic-renewal-3m"></div></div>
+        <!-- Tab bar -->
+        <div class="tab-bar" style="margin-bottom:16px">
+          <button class="tab-btn active" data-tab="memo-index" onclick="switchLicTab('memo-index')">Memo Index</button>
+          <button class="tab-btn" data-tab="by-project" onclick="switchLicTab('by-project')">License Summary</button>
+          <button class="tab-btn" data-tab="users" onclick="switchLicTab('users')">Users</button>
+          <button class="tab-btn" data-tab="other" onclick="switchLicTab('other')">Other</button>
         </div>
 
-        <!-- Cost Trend Chart -->
-        <div class="card" style="margin-bottom:12px">
-          <div class="card-title" style="margin-bottom:12px">Monthly License Cost Trend (12 เดือน)</div>
-          <div style="height:220px"><canvas id="lic-trend-chart"></canvas></div>
-        </div>
-
-        <!-- Search & Filters + Add button -->
-        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
-          <input type="text" id="lic-search" placeholder="🔍 ค้นหา Software, Project, Owner..."
-            style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface);min-width:200px;outline:none"
-            oninput="renderLicense()">
-          <select id="lic-filter-status" onchange="renderLicense()" style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
-            <option value="all">ทุกสถานะ</option>
-            <option value="active">Active</option>
-            <option value="expiring">Expiring (≤30d)</option>
-            <option value="expiring-7">≤ 7 วัน</option>
-            <option value="expiring-15">≤ 15 วัน</option>
-            <option value="expiring-30">≤ 30 วัน</option>
-            <option value="expired">Expired</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-          <select id="lic-filter-project" onchange="renderLicense()" style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
-            <option value="all">ทุกโครงการ</option>
-            <option>AOA-MP</option><option>TTB</option><option>Geo9</option>
-            <option>Release 2.1</option><option>Release 3</option>
-          </select>
-          <select id="lic-sort" onchange="renderLicense()" style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
-            <option value="expiry-asc">หมดอายุใกล้สุด</option>
-            <option value="cost-desc">ราคา มาก→น้อย</option>
-            <option value="seats-desc">Seats มาก→น้อย</option>
-            <option value="purchase-desc">ซื้อล่าสุด</option>
-          </select>
-          <button class="btn-sm" style="font-size:12px;padding:6px 12px" onclick="downloadTemplate('license')" title="Download Template">⬇ Template</button>
-          <button class="btn-sm" style="font-size:12px;padding:6px 12px" onclick="importBulk('license')" title="Import from Excel">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Import Excel
-          </button>
-          <button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="openLicenseModal()">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Add License
-          </button>
-        </div>
-
-        <!-- Registry table -->
-        <div class="card" style="padding:0;overflow:hidden">
-          <table class="hist-table">
-            <thead><tr>
-              <th style="width:16%;padding-left:16px">Software</th>
-              <th style="width:8%">Seats</th>
-              <th style="width:10%">฿/เดือน</th>
-              <th style="width:10%">Owner</th>
-              <th style="width:9%">Department</th>
-              <th style="width:9%">โครงการ</th>
-              <th style="width:9%">วันที่ซื้อ</th>
-              <th style="width:9%">หมดอายุ</th>
-              <th style="width:11%;text-align:center">สถานะ</th>
-              <th style="width:9%;text-align:center">Actions</th>
-            </tr></thead>
-            <tbody id="lic-table-body"></tbody>
-          </table>
-        </div>
-
-        <!-- Cost Breakdown by Project × Software -->
-        <div class="card" style="padding:0;overflow:hidden;margin-top:14px">
-          <div style="padding:12px 16px 10px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-            <div id="lic-breakdown-title" style="font-size:12px;font-weight:600">Cost Breakdown by Project × Software (Monthly THB)</div>
-            <div style="font-size:11px;color:var(--text-3)">Dynamic — columns auto-added when new programs are licensed</div>
-          </div>
-          <div style="overflow-x:auto">
-            <table class="hist-table" id="lic-seat-table">
-              <thead id="lic-seat-thead"></thead>
-              <tbody id="lic-seat-body"></tbody>
-            </table>
-          </div>
-        </div>
+        <!-- Tab content (rendered by JS) -->
+        <div id="lic-content"></div>
       </div>
 
       <!-- License Add/Edit Modal -->
@@ -1689,8 +1620,12 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <button onclick="closeLicenseModal()" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:20px">&#x2715;</button>
           </div>
           <input type="hidden" id="lic-edit-id">
+          <div id="lic-memo-hint" style="display:none;background:#FEF9E7;border:0.5px solid #F0C27F;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#854F0B">
+            🔒 License นี้มาจาก SL Memo — ราคา, Seats, วันที่, และ Memo Ref แก้ไขไม่ได้ แก้ได้เฉพาะ Owner, Department, Status, และ Note
+          </div>
           <div class="form-grid" style="margin-bottom:10px">
             <div class="fg"><label>Software Name *</label><input type="text" id="lic-name" placeholder="เช่น Figma, GitHub Copilot"></div>
+            <div class="fg"><label>Plan / Tier</label><input type="text" id="lic-plan" placeholder="เช่น Pro, Business, Premium"></div>
             <div class="fg"><label>Vendor</label><input type="text" id="lic-vendor" placeholder="เช่น Adobe, Microsoft"></div>
             <div class="fg"><label>Seats</label><input type="number" id="lic-seats" placeholder="1" min="1"></div>
             <div class="fg"><label>ราคา/เดือน (บาท)</label><input type="number" id="lic-price" placeholder="0"></div>
@@ -1699,7 +1634,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <div class="fg"><label>Owner</label><input type="text" id="lic-owner" placeholder="ชื่อผู้รับผิดชอบ"></div>
             <div class="fg"><label>Department / Team</label><input type="text" id="lic-dept" placeholder="เช่น PMO, Design Team"></div>
             <div class="fg"><label>โครงการ</label>
-              <select id="lic-project"><option value="">— ไม่ระบุ —</option><option>AOA-MP</option><option>TTB</option><option>Geo9</option><option>Release 2.1</option><option>Release 3</option></select>
+              <select id="lic-project"><option value="">— ไม่ระบุ —</option></select>
             </div>
             <div class="fg"><label>License Type</label>
               <select id="lic-type-field"><option value="subscription">Subscription</option><option value="perpetual">Perpetual</option><option value="trial">Trial</option></select>
