@@ -3725,6 +3725,8 @@ function initApp() {
     loadMemosAsync(),
     loadUserProfilesAsync(),
     loadAuthorityAsync(),
+    typeof loadDevicesAsync === 'function' ? loadDevicesAsync() : Promise.resolve(),
+    typeof loadPurchaseOrdersAsync === 'function' ? loadPurchaseOrdersAsync() : Promise.resolve(),
     typeof initSettings === 'function' ? initSettings() : Promise.resolve(),
   ]).then(() => {
     renderPendingMemos();

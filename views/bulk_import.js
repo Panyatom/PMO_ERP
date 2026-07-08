@@ -346,52 +346,68 @@ async function importLicenses(rows) {
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // DEVICE IMPORT
 // Template columns:
-// Name | Type | Serial No | Asset Tag | Owner | Assigned Date | Project |
-// Return Date | Warranty Expiry | Condition | Status | Memo Ref | Note
+// PBX Number | OS | Type | Brand / Model | Asset ACC | Serial | Assignee |
+// Position | Project | Received date | QA Owner | Remark | OS version
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-function importDevices(rows) {
+async function importDevices(rows) {
   const existing = loadDevices();
   const now = new Date().toISOString();
-  let added = 0, skipped = 0;
+  let added = 0, skipped = 0, updated = 0;
+  const changed = [];
 
   rows.forEach(row => {
-    const name = strVal(row['Name'] || row['name'] || row['Device Name'] || row['à¸Šà¸·à¹ˆà¸­à¸­à¸¸à¸›à¸à¸£à¸“à¹Œ']);
+    const name = strVal(row['Brand / Model'] || row['Name'] || row['name'] || row['Device Name']);
     if(!name) { skipped++; return; }
 
-    const typeRaw = strVal(row['Type'] || row['type'] || row['à¸›à¸£à¸°à¹€à¸ à¸—']).toLowerCase();
-    const typeMap = { 'mobile phone':'mobile', 'mobile':'mobile', 'laptop':'laptop', 'tablet':'tablet', 'other':'other' };
+    const typeRaw = strVal(row['Type'] || row['type']).toLowerCase();
+    const typeMap = { 'mobile':'mobile', 'mobile phone':'mobile', 'laptop':'laptop', 'tablet':'tablet', 'other':'other' };
     const type = typeMap[typeRaw] || 'other';
 
-    const condRaw = strVal(row['Condition'] || row['condition'] || row['à¸ªà¸ à¸²à¸ž']).toLowerCase();
-    const condMap = { 'new':'new', 'good':'good', 'fair':'fair', 'poor':'poor' };
-    const condition = condMap[condRaw] || 'good';
-
-    const statusRaw = strVal(row['Status'] || row['status'] || row['à¸ªà¸–à¸²à¸™à¸°']).toLowerCase().replace(' ','-');
-    const statusMap = { 'in-use':'in-use', 'in use':'in-use', 'available':'available', 'maintenance':'maintenance', 'retired':'retired' };
-    const status = statusMap[statusRaw] || 'in-use';
+    const osRaw = strVal(row['OS'] || row['os'] || '').toLowerCase();
+    const platMap = { 'ios':'ios', 'android':'android', 'huawei':'huawei', 'windows':'windows' };
+    const platform = platMap[osRaw] || 'other';
 
     const device = {
-      id: nextDeviceId() + added,
-      name, type, condition, status,
-      serial:       strVal(row['Serial No'] || row['serial_no'] || row['Serial Number'] || row['Serial'] || row['à¹€à¸¥à¸‚ Serial']),
-      assetTag:     strVal(row['Asset Tag'] || row['asset_tag'] || row['à¸£à¸«à¸±à¸ªà¸—à¸£à¸±à¸žà¸¢à¹Œà¸ªà¸´à¸™']),
-      owner:        strVal(row['Owner'] || row['owner'] || row['à¸œà¸¹à¹‰à¸–à¸·à¸­à¸„à¸£à¸­à¸‡']),
-      assignedDate: parseExcelDate(row['Assigned Date'] || row['assigned_date'] || row['à¸§à¸±à¸™à¸—à¸µà¹ˆà¸£à¸±à¸š']),
-      project:      strVal(row['Project'] || row['project'] || row['à¹‚à¸„à¸£à¸‡à¸à¸²à¸£']),
-      returnDate:   parseExcelDate(row['Return Date'] || row['return_date'] || row['à¸§à¸±à¸™à¸„à¸·à¸™']),
-      warranty:     parseExcelDate(row['Warranty Expiry'] || row['warranty'] || row['Warranty'] || row['à¸›à¸£à¸°à¸à¸±à¸™']),
-      memoRef:      strVal(row['Memo Ref'] || row['memo_ref'] || row['à¹€à¸¥à¸‚ Memo']),
-      note:         strVal(row['Note'] || row['note'] || row['à¸«à¸¡à¸²à¸¢à¹€à¸«à¸•à¸¸']),
-      createdAt:    now,
+      id: crypto.randomUUID(),
+      name, type, platform,
+      brand:        strVal(row['Brand / Model'] || ''),
+      pbxNumber:    strVal(row['PBX Number'] || row['pbx_number'] || ''),
+      assetTag:     strVal(row['Asset ACC'] || row['Asset IT'] || row['Asset Tag'] || ''),
+      serial:       strVal(row['Serial'] || row['Serial No'] || ''),
+      owner:        strVal(row['Assignee'] || row['Owner'] || ''),
+      position:     strVal(row['Position'] || ''),
+      project:      strVal(row['Project'] || ''),
+      assignedDate: parseExcelDate(row['Received date'] || row['Assigned Date'] || ''),
+      qaOwner:      strVal(row['QA Owner'] || ''),
       updatedAt:    now,
+      note:         strVal(row['Remark'] || row['Note'] || ''),
+      osVersion:    strVal(row['OS version'] || row['OS Version'] || ''),
+      status:       'not_identified',
+      createdAt:    now,
     };
-    existing.push(device);
-    added++;
+    const dupIdx = typeof findExistingDevice === 'function'
+      ? findExistingDevice(existing, device)
+      : existing.findIndex(d => {
+          if(device.assetTag && d.assetTag && device.assetTag === d.assetTag) return true;
+          if(device.serial && d.serial && device.serial === d.serial) return true;
+          return false;
+        });
+
+    if(dupIdx >= 0) {
+      existing[dupIdx] = { ...existing[dupIdx], ...device, id: existing[dupIdx].id, createdAt: existing[dupIdx].createdAt };
+      changed.push(existing[dupIdx]);
+      updated++;
+    } else {
+      existing.push(device);
+      changed.push(device);
+      added++;
+    }
   });
 
   storeDevices(existing);
+  await Promise.all(changed.map(device => saveDeviceAsync(device)));
   renderDevice();
-  alert(`Device import completed\nAdded: ${added}${skipped ? `\nSkipped blank rows: ${skipped}` : ''}`);
+  alert(`✓ Import สำเร็จ\nเพิ่มใหม่ ${added}${updated ? ` · อัปเดตเดิม ${updated}` : ''}${skipped ? `\nข้ามแถวว่าง ${skipped}` : ''} รายการ`);
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -473,9 +489,9 @@ function downloadTemplate(type) {
     },
     device: {
       filename: 'device_import_template.xlsx',
-      headers: ['Name','Type','Serial No','Asset Tag','Owner','Assigned Date','Project','Return Date','Warranty Expiry','Condition','Status','Memo Ref','Note'],
-      sample: [['MacBook Pro 14','laptop','SN12345','OD-001','Chuen K.','2025-01-15','AOA-MP','','2027-01-15','good','in-use','ORB-2501-002',''],
-               ['iPhone 15 Pro','mobile','IMEI67890','OD-002','Tom P.','2025-02-01','TTB','','2027-02-01','new','in-use','','']]
+      headers: ['PBX Number','OS','Type','Brand / Model','Asset ACC','Serial','Assignee','Position','Project','Received date','QA Owner','Remark','OS version'],
+      sample: [['PBX-001','iOS','Mobile','Apple iPhone 15','ACC-001','SN12345','Chuen K.','PMO','AOA-MP','2025-01-15','Best IT','','iOS 17.4.1'],
+               ['PBX-002','Windows','Laptop','Dell Latitude 5540','ACC-002','SN67890','Tom P.','Developer','TTB','2025-02-01','Best IT','','Windows 11']]
     },
     budget: {
       filename: 'budget_import_template.xlsx',

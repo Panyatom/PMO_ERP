@@ -1670,6 +1670,60 @@ svg.icon { display: inline-block; vertical-align: middle; }
       <!-- ════ DEVICE REGISTRY ════ -->
       <div id="view-device" class="view">
 
+        <!-- Tab switcher -->
+        <div class="tab-bar" style="margin-bottom:14px">
+          <button class="tab-btn active" data-tab="registry" id="dev-tbtn-registry" onclick="switchDevTab('registry',this)">Device registry</button>
+          <button class="tab-btn" data-tab="orders" id="dev-tbtn-orders" onclick="switchDevTab('orders',this)">Purchase orders <span id="dev-po-badge" class="tb-badge" style="display:none"></span></button>
+        </div>
+
+        <!-- ── PURCHASE ORDERS PANEL ── -->
+        <div id="dev-panel-orders" style="display:none">
+          <div id="po-context-banner" style="display:none;margin-bottom:10px"></div>
+          <div class="metric-row" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+            <div class="metric-card"><div class="metric-label">Active orders</div><div class="metric-val" id="po-kpi-active" style="color:#185FA5">0</div></div>
+            <div class="metric-card"><div class="metric-label">Units awaiting</div><div class="metric-val" id="po-kpi-awaiting" style="color:#854F0B">0</div></div>
+            <div class="metric-card"><div class="metric-label">Partially arrived</div><div class="metric-val" id="po-kpi-partial" style="color:#854F0B">0</div></div>
+            <div class="metric-card"><div class="metric-label">Fulfilled</div><div class="metric-val" id="po-kpi-fulfilled" style="color:#3B6D11">0</div></div>
+          </div>
+          <div class="filter-toolbar">
+            <input type="text" id="po-search" class="filter-search" placeholder="Search..." oninput="renderPurchaseOrders()">
+            <span class="filter-control"><span class="filter-label">Status</span><select id="po-filter-status" onchange="renderPurchaseOrders()">
+              <option value="pending_order">Pending Order</option>
+              <option value="ordered">Ordered</option>
+              <option value="awaiting">Awaiting</option>
+              <option value="partial_arrived">Partial arrived</option>
+              <option value="fulfilled">Fulfilled</option>
+              <option value="voided_source">Voided</option>
+            </select></span>
+            <span class="filter-control"><span class="filter-label">Project</span><select id="po-filter-project" onchange="renderPurchaseOrders()">
+              <option>AOA-MP</option><option>TTB</option><option>Geo9</option>
+              <option>Release 2.1</option><option>Release 3</option>
+            </select></span>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);white-space:nowrap">
+              <input type="checkbox" id="po-filter-remaining" onchange="renderPurchaseOrders()"> Remaining &gt; 0
+            </label>
+            <div id="po-visible-count" style="font-size:11px;color:var(--text-3)"></div>
+            <div class="filter-actions">
+              <button class="btn-export" onclick="exportPurchaseOrdersCSV()">⬇ Export PO</button>
+            </div>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
+            <table class="hist-table">
+              <thead><tr>
+                <th>Memo</th><th>Item</th><th>Project</th>
+                <th style="text-align:center">Ordered</th><th style="text-align:center">Arrived</th>
+                <th style="text-align:center">Remaining</th>
+                <th style="width:120px">Progress</th><th>Status</th>
+                <th style="text-align:center">Devices</th>
+                <th>Actions</th>
+              </tr></thead>
+              <tbody id="po-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ── DEVICE REGISTRY PANEL ── -->
+        <div id="dev-panel-registry">
         <!-- Metric cards -->
         <div class="metric-row" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
           <div class="metric-card"><div class="metric-label">Total Devices</div><div class="metric-val" id="dev-total" style="color:var(--blue)">0</div><div class="metric-sub" id="dev-total-sub"></div></div>
@@ -1678,11 +1732,78 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <div class="metric-card"><div class="metric-label">Available</div><div class="metric-val" id="dev-available" style="color:var(--gray)">0</div><div class="metric-sub">ยังไม่มีผู้ถือ</div></div>
         </div>
 
-        <!-- Summary tables side by side -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+        <!-- Filter row -->
+        <div id="dev-registry-context-banner" style="display:none;margin-bottom:10px"></div>
+        <div class="filter-toolbar">
+          <input type="text" id="dev-search" class="filter-search" placeholder="Search..." oninput="renderDevice()">
+          <span class="filter-control"><span class="filter-label">Platform</span><select id="dev-filter-platform" onchange="renderDevice()">
+            <option value="ios">iOS</option>
+            <option value="android">Android</option>
+            <option value="huawei">Huawei</option>
+            <option value="windows">Windows</option>
+            <option value="other">Other</option>
+          </select></span>
+          <span class="filter-control"><span class="filter-label">Type</span><select id="dev-filter-type" onchange="renderDevice()">
+            <option value="mobile">Mobile Phone</option>
+            <option value="tablet">Tablet</option>
+            <option value="laptop">Laptop</option>
+            <option value="other">Other</option>
+          </select></span>
+          <span class="filter-control"><span class="filter-label">Status</span><select id="dev-filter-status" onchange="renderDevice()">
+            <option value="not_identified">Not Identified</option>
+            <option value="in-use">In Use</option>
+            <option value="available">Available</option>
+            <option value="maintenance">Maintenance</option>
+            <option value="retired">Retired</option>
+          </select></span>
+          <span class="filter-control"><span class="filter-label">Project</span><select id="dev-filter-project" onchange="renderDevice()">
+            <option>AOA-MP</option><option>TTB</option><option>Geo9</option>
+            <option>Release 2.1</option><option>Release 3</option>
+          </select></span>
+          <span class="filter-control"><span class="filter-label">Company</span><select id="dev-filter-company" onchange="renderDevice()">
+            <option value="BBIK">BBIK</option>
+            <option value="Orbit Digital">Orbit Digital</option>
+          </select></span>
+          <div class="filter-actions">
+            <button class="btn-export" onclick="exportDeviceCsv()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export CSV
+            </button>
+            <button class="btn-sm" onclick="downloadTemplate('device')">⬇ Template</button>
+            <button class="btn-sm" onclick="importBulk('device')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Import Excel
+            </button>
+            <button class="btn-primary" onclick="openDeviceModal()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Device
+            </button>
+          </div>
+        </div>
 
-          <!-- Table 1: Platform × Type -->
-          <div class="card" style="padding:0;overflow:hidden">
+        <!-- Main registry table -->
+        <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
+          <table class="hist-table">
+            <thead><tr>
+              <th style="width:16%;padding-left:16px">Brand / Model</th>
+              <th style="width:8%">OS</th>
+              <th style="width:7%">Type</th>
+              <th style="width:10%">Asset ACC</th>
+              <th style="width:11%">Serial No.</th>
+              <th style="width:11%">Assignee</th>
+              <th style="width:9%">Project</th>
+              <th style="width:9%;text-align:center">Status</th>
+              <th style="width:9%">Updated</th>
+              <th style="width:10%;text-align:center">Action</th>
+            </tr></thead>
+            <tbody id="dev-table-body"></tbody>
+          </table>
+          <div id="dev-load-more-footer" style="display:none"></div>
+        </div> <!-- end registry table card -->
+
+        <!-- Secondary summaries follow the primary operational table. -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
+          <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
             <div style="padding:12px 16px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600">Summary by Platform × Type</div>
             <table class="hist-table" id="dev-summary-platform">
               <thead><tr>
@@ -1695,9 +1816,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
               <tbody id="dev-summary-platform-body"></tbody>
             </table>
           </div>
-
-          <!-- Table 2: By Project -->
-          <div class="card" style="padding:0;overflow:hidden">
+          <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
             <div style="padding:12px 16px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600">Summary by Project</div>
             <table class="hist-table" id="dev-summary-project">
               <thead><tr>
@@ -1711,80 +1830,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
             </table>
           </div>
         </div>
-
-        <!-- Filter row -->
-        <div class="filter-row" style="margin-bottom:10px">
-          <input type="text" id="dev-search" placeholder="🔍 ค้นหา Device, Serial, Owner..."
-            style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface);min-width:200px;outline:none"
-            oninput="renderDevice()">
-          <select id="dev-filter-platform" onchange="renderDevice()" style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
-            <option value="all">ทุก Platform</option>
-            <option value="ios">iOS</option>
-            <option value="android">Android</option>
-            <option value="huawei">Huawei</option>
-            <option value="windows">Windows</option>
-            <option value="other">Other</option>
-          </select>
-          <select id="dev-filter-type" onchange="renderDevice()" style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
-            <option value="all">ทุกประเภท</option>
-            <option value="mobile">Mobile Phone</option>
-            <option value="tablet">Tablet</option>
-            <option value="laptop">Laptop</option>
-            <option value="other">Other</option>
-          </select>
-          <select id="dev-filter-status" onchange="renderDevice()" style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
-            <option value="all">ทุกสถานะ</option>
-            <option value="in-use">In Use</option>
-            <option value="available">Available</option>
-            <option value="maintenance">Maintenance</option>
-            <option value="retired">Retired</option>
-          </select>
-          <select id="dev-filter-project" onchange="renderDevice()" style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
-            <option value="all">ทุกโครงการ</option>
-            <option>AOA-MP</option><option>TTB</option><option>Geo9</option>
-            <option>Release 2.1</option><option>Release 3</option>
-          </select>
-          <select id="dev-filter-company" onchange="renderDevice()" style="font-family:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface)">
-            <option value="all">ทุก Company</option>
-            <option value="BBIK">BBIK</option>
-            <option value="Orbit Digital">Orbit Digital</option>
-          </select>
-          <button class="btn-export" onclick="exportDeviceCsv()">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Export CSV
-          </button>
-          <button class="btn-sm" style="font-size:12px;padding:6px 12px" onclick="downloadTemplate('device')">⬇ Template</button>
-          <button class="btn-sm" style="font-size:12px;padding:6px 12px" onclick="importBulk('device')">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Import Excel
-          </button>
-          <button class="btn-primary" style="margin-left:auto" onclick="openDeviceModal()">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Add Device
-          </button>
-        </div>
-
-        <!-- Main registry table -->
-        <div class="card" style="padding:0;overflow:hidden">
-          <table class="hist-table">
-            <thead><tr>
-              <th style="width:13%;padding-left:16px">Device / Brand</th>
-              <th style="width:7%">Platform</th>
-              <th style="width:7%">Type</th>
-              <th style="width:10%">IT Asset ID</th>
-              <th style="width:10%">Serial No.</th>
-              <th style="width:10%">โครงการ</th>
-              <th style="width:10%">ผู้ถือ</th>
-              <th style="width:8%">Company</th>
-              <th style="width:8%">Condition</th>
-              <th style="width:9%">Warranty</th>
-              <th style="width:8%;text-align:center">สถานะ</th>
-              <th style="width:8%;text-align:center">Action</th>
-            </tr></thead>
-            <tbody id="dev-table-body"></tbody>
-          </table>
-        </div>
-      </div>
+        </div> <!-- end dev-panel-registry -->
+      </div> <!-- end view-device -->
 
       <!-- ════ COST DASHBOARD ════ -->
       <div id="view-cost" class="view">
@@ -2225,8 +2272,10 @@ svg.icon { display: inline-block; vertical-align: middle; }
       </div>
     </div>
     <div class="form-grid" style="margin-bottom:10px">
-      <div class="fg"><label>IT Asset ID</label><input type="text" id="dev-asset" placeholder="เช่น OD-001"></div>
+      <div class="fg"><label>Asset ACC</label><input type="text" id="dev-asset" placeholder="เช่น ACC-001"></div>
       <div class="fg"><label>Serial Number</label><input type="text" id="dev-serial" placeholder="S/N หรือ IMEI"></div>
+      <div class="fg"><label>PBX Number</label><input type="text" id="dev-pbx-number" placeholder="เช่น PBX-001"></div>
+      <div class="fg"><label>OS Version</label><input type="text" id="dev-os-version" placeholder="เช่น iOS 17.4.1"></div>
       <div class="fg"><label>Company</label>
         <select id="dev-company">
           <option value="">— ไม่ระบุ —</option>
@@ -2243,15 +2292,21 @@ svg.icon { display: inline-block; vertical-align: middle; }
       </div>
     </div>
     <div class="form-grid" style="margin-bottom:10px">
-      <div class="fg"><label>ผู้ถือครอง</label><input type="text" id="dev-owner" placeholder="ชื่อ-นามสกุล"></div>
+      <div class="fg"><label>Assignee</label><input type="text" id="dev-owner" placeholder="ชื่อ-นามสกุล"></div>
+      <div class="fg"><label>Position</label><input type="text" id="dev-position" placeholder="เช่น PMO, Developer"></div>
+      <div class="fg"><label>QA Owner</label><input type="text" id="dev-qa-owner" placeholder="เช่น Best IT"></div>
       <div class="fg"><label>วันที่รับอุปกรณ์</label><input type="date" id="dev-assigned-date"></div>
       <div class="fg"><label>Return Date</label><input type="date" id="dev-return-date"></div>
-      <div class="fg"><label>Link HW Memo</label><input type="text" id="dev-memo-ref" placeholder="เช่น ORB-2605-004"></div>
+      <div class="fg"><label>Link HW Memo</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="text" id="dev-memo-ref" placeholder="เช่น ORB-2605-004" style="flex:1">
+          <button type="button" id="dev-view-source-memo-btn" class="btn-sm" style="display:none;white-space:nowrap" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly(this.dataset.memoNo)">View Source Memo</button>
+        </div>
+      </div>
     </div>
     <div class="form-grid" style="margin-bottom:10px">
       <div class="fg"><label>Warranty Expiry</label><input type="date" id="dev-warranty"></div>
-      <div class="fg"><label>สภาพ (Condition)</label><select id="dev-condition"><option value="new">New</option><option value="good">Good</option><option value="fair">Fair</option><option value="poor">Poor</option></select></div>
-      <div class="fg"><label>สถานะ</label><select id="dev-status"><option value="in-use">In Use</option><option value="available">Available</option><option value="maintenance">Maintenance</option><option value="retired">Retired</option></select></div>
+      <div class="fg"><label>สถานะ</label><select id="dev-status"><option value="not_identified">Not Identified</option><option value="in-use">In Use</option><option value="available">Available</option><option value="maintenance">Maintenance</option><option value="retired">Retired</option></select></div>
     </div>
     <div class="fg" style="margin-bottom:16px">
       <label>หมายเหตุ</label>
@@ -2260,6 +2315,27 @@ svg.icon { display: inline-block; vertical-align: middle; }
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn-ghost" onclick="closeDeviceModal()">ยกเลิก</button>
       <button class="btn-primary" onclick="saveDevice()">บันทึก</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mark Arrived Modal -->
+<div id="mark-arrived-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:300;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border-radius:var(--r);padding:24px;width:460px;max-width:95vw">
+    <div style="font-size:15px;font-weight:600;margin-bottom:6px">Mark devices as arrived</div>
+    <div style="font-size:12px;color:var(--text-3);margin-bottom:16px" id="mark-arrived-subtitle"></div>
+    <input type="hidden" id="mark-arrived-po-id">
+    <div class="fg" style="margin-bottom:12px">
+      <label>จำนวนที่มาถึง *</label>
+      <input type="number" id="mark-arrived-qty" min="1" class="ri" placeholder="เช่น 3">
+    </div>
+    <div class="fg" style="margin-bottom:16px">
+      <label>Serial numbers (1 ต่อบรรทัด — ถ้ามี)</label>
+      <textarea id="mark-arrived-serials" class="ri" rows="4" placeholder="F2NXQ8XXXXX&#10;F2NXQ9XXXXX&#10;..." style="resize:vertical;font-family:var(--font-mono);font-size:12px"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn-ghost" onclick="closeMarkArrivedModal()">ยกเลิก</button>
+      <button class="btn-primary" onclick="submitMarkArrived()">บันทึก</button>
     </div>
   </div>
 </div>
