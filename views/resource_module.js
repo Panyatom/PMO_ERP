@@ -727,6 +727,14 @@ function periodsOverlap(startA, endA, startB, endB) {
 function isActiveResource(r) {
   return r.status === 'filled';
 }
+function isVisibleEmployeeMaster(master, related=[]) {
+  const status = String(master?.status || 'active').toLowerCase();
+  const offboardDate = isoDay(master?.offboardDate);
+  if(status === 'offboarded' || status === 'inactive') return false;
+  if(offboardDate && offboardDate <= isoDay(todayISO)) return false;
+  if((related||[]).length && related.every(r => !isActiveResource(r))) return false;
+  return true;
+}
 function requiresCancelReason(toStatus) {
   return typeof PMO_RESOURCE_FLOW !== 'undefined' && PMO_RESOURCE_FLOW.requiresCancelReason
     ? PMO_RESOURCE_FLOW.requiresCancelReason(toStatus)
@@ -1838,7 +1846,7 @@ function renderPeopleView(base) {
       );
       const related = matches.length ? matches : [resourceLikeFromMaster(m)];
       return { master:m, related, requestId: matches[0]?.id || '' };
-    })
+    }).filter(row => isVisibleEmployeeMaster(row.master, row.related))
     : base.filter(r => isActiveResource(r) && (employeeDirectoryName(r) || resourceEmployeeCode(r))).map(r => ({ master:resourceMasterFromRequest(r), related:[r], requestId:r.id }));
 
   const rows = masterRows.map(({ master, related, requestId }) => {
@@ -3427,8 +3435,12 @@ async function offboardResource(id) {
     remark: (r.remark ? r.remark+'\n' : '') + `[Offboard] ${reason}`,
   };
   await saveResourceAsync(updated);
+  if(employeeDirectoryName(updated) || resourceEmployeeCode(updated)) {
+    await saveResourceMasterAsync(resourceMasterFromRequest(updated));
+  }
   closeResDetail();
   renderResource();
+  resourceToast('Employee offboarded and hidden from Employee Directory.', 'ok');
 }
 
 function ensureDetailDrawer() {
