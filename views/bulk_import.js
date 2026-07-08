@@ -128,7 +128,7 @@ async function importResourcePeople(rows) {
   const byName = new Map(existingMaster.filter(r => strVal(r.resourceName)).map(r => [strVal(r.resourceName).toLowerCase(), r]));
   const byRequestEmployee = new Map(existing.filter(r => strVal(r.employeeCode)).map(r => [strVal(r.employeeCode).toLowerCase(), r]));
   const now = new Date().toISOString();
-  let added = 0, updated = 0, skipped = 0;
+  let added = 0, updated = 0, skipped = 0, active = 0, offboarded = 0;
 
   for(let i=0; i<rows.length; i++) {
     const row = rows[i];
@@ -151,6 +151,7 @@ async function importResourcePeople(rows) {
     const email = strVal(rowVal(row, ['Email','email','E-mail']));
     const onboard = parseExcelDate(rowVal(row, ['Onboard','onboard','Onboard Date']));
     const offboard = parseExcelDate(rowVal(row, ['Offboard','offboard','Offboard Date']));
+    const offboardReached = !!(offboard && offboard <= todayISO);
     const startDate = parseExcelDate(rowVal(row, ['\u0e27\u0e31\u0e19\u0e40\u0e23\u0e34\u0e48\u0e21\u0e07\u0e32\u0e19','Start Date','Start','start_date'])) || onboard || todayISO;
     const role = strVal(rowVal(row, ['Role','role']));
     const existingMasterRow = employeeCode ? byEmployee.get(employeeCode.toLowerCase()) : byName.get(resourceName.toLowerCase());
@@ -177,7 +178,7 @@ async function importResourcePeople(rows) {
       employmentType: hiringType,
       sourceCompany: from,
       currentProject: project || existingMasterRow?.currentProject || '',
-      status: offboard ? 'offboarded' : 'active',
+      status: offboardReached ? 'offboarded' : 'active',
       onboardDate: onboard || startDate,
       offboardDate: offboard || '',
       note: meta,
@@ -200,9 +201,9 @@ async function importResourcePeople(rows) {
       startDate,
       endDate: offboard || null,
       requestDate: existingRow?.requestDate || onboard || startDate || todayISO,
-      resolvedDate: existingRow?.resolvedDate || todayISO,
+      resolvedDate: offboardReached ? (existingRow?.resolvedDate || offboard || todayISO) : null,
       remark: meta,
-      status: 'filled',
+      status: offboardReached ? 'resolved' : 'filled',
       requesterName: existingRow?.requesterName || 'Employee Import',
       transferFrom: existingRow?.transferFrom || null,
       projectCodes: existingRow?.projectCodes || [],
@@ -225,10 +226,11 @@ async function importResourcePeople(rows) {
     if(resourceName) byName.set(resourceName.toLowerCase(), linkedMaster);
     if(employeeCode) byRequestEmployee.set(employeeCode.toLowerCase(), saved || payload);
     if(existingMasterRow || existingRow) updated++; else added++;
+    if(offboardReached) offboarded++; else active++;
   }
 
   if(typeof renderResource === 'function') renderResource();
-  alert(`Employee import completed\nAdded: ${added}\nUpdated: ${updated}\nSkipped: ${skipped}`);
+  alert(`Employee import completed\nAdded: ${added}\nUpdated: ${updated}\nActive: ${active}\nOffboarded: ${offboarded}\nSkipped: ${skipped}`);
 }
 
 function importProjectCodes(rows) {
@@ -459,8 +461,8 @@ function downloadTemplate(type) {
     filename: 'employee_people_import_template.xlsx',
     headers: ['\u0e23\u0e2b\u0e31\u0e2a\u0e1e\u0e19\u0e31\u0e01\u0e07\u0e32\u0e19','\u0e0a\u0e37\u0e48\u0e2d-\u0e19\u0e32\u0e21\u0e2a\u0e01\u0e38\u0e25','Name','Surname','Nickname','Project','TYPE','From','\u0e15\u0e33\u0e41\u0e2b\u0e19\u0e48\u0e07\u0e07\u0e32\u0e19\u0e1b\u0e31\u0e08\u0e08\u0e38\u0e1a\u0e31\u0e19 (Agreement)','Level','\u0e41\u0e1c\u0e19\u0e01','Email','Onboard','Offboard','\u0e27\u0e31\u0e19\u0e40\u0e23\u0e34\u0e48\u0e21\u0e07\u0e32\u0e19','Role'],
     sample: [['EMP001','Person A Example','Person','Example','A','Project A','Direct Head Count (Permanent)','Orbit','Business Analyst','Senior','BA','person.a@example.com','2026-01-01','','2026-01-01','BA'],
-             ['EMP002','Person B Example','Person','Example','B','Project B','Secondment','ParentCo','Developer','Mid','FE','person.b@example.com','2026-02-01','2026-08-31','2026-02-01','Frontend Developer'],
-             ['EMP003','Person C Example','Person','Example','C','Project C','Sub-contract','VendorCo','QA Engineer','Junior','QA','person.c@example.com','2026-03-01','2026-06-30','2026-03-01','QA']]
+             ['EMP002','Person B Example','Person','Example','B','Project B','Secondment','ParentCo','Developer','Mid','FE','person.b@example.com','2026-02-01','','2026-02-01','Frontend Developer'],
+             ['EMP003','Person C Example','Person','Example','C','Project C','Sub-contract','VendorCo','QA Engineer','Junior','QA','person.c@example.com','2026-03-01','','2026-03-01','QA']]
   };
   templates.projectCodes = {
     filename: 'project_code_import_template.xlsx',
