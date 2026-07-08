@@ -1419,10 +1419,31 @@ async function syncLocalToSupabase() {
 // ─────────────────────────────────────────
 
 // ── Date helpers ──
+// Milestone 2 Task 2.2 — business-facing dates/times must display in Asia/Bangkok
+// regardless of the viewer's own browser/OS timezone (docs/SYSTEM_OVERVIEW.md §7).
+// Shared extraction helper: every display helper below reads its date/time parts
+// through this single function instead of viewer-local getDate()/getMonth()/etc.
+const BANGKOK_TZ = 'Asia/Bangkok';
+function bangkokParts(d) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: BANGKOK_TZ,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d);
+  const get = type => parts.find(p => p.type === type)?.value || '0';
+  return {
+    year: Number(get('year')), month: Number(get('month')), day: Number(get('day')),
+    hour: Number(get('hour')) % 24, minute: Number(get('minute')),
+  };
+}
 const MONTHS_TH = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
-function thaiDate(d) { return `${d.getDate()} ${MONTHS_TH[d.getMonth()]} ${d.getFullYear()+543}`; }
+function thaiDate(d) { const p = bangkokParts(d); return `${p.day} ${MONTHS_TH[p.month-1]} พ.ศ. ${p.year+543}`; }
 const TODAY = thaiDate(new Date());
-const todayISO = new Date().toISOString().slice(0,10);
+function bangkokTodayISO() {
+  const p = bangkokParts(new Date());
+  return `${p.year}-${String(p.month).padStart(2,'0')}-${String(p.day).padStart(2,'0')}`;
+}
+const todayISO = bangkokTodayISO();
 
 const THEME_KEY = 'pmo-color-theme';
 function currentTheme() {
@@ -1567,6 +1588,742 @@ function updateMemoStatus(memoNo, status, extra={}) {
     .catch(e => console.warn('Supabase status update failed', e));
   return memos[idx];
 }
+
+
+// ── Memo integration overrides from PMO-dashboard-v0.1 (Batch 1) ──
+// ── Memo field mapping: JS camelCase ↔ DB snake_case ──
+function memoToDb(m) {
+  return {
+    id: m.id || m.memoNo,
+    memo_no: m.memoNo,
+    type: m.type, type_label: m.typeLabel,
+    status: m.status || 'pending',
+    project: m.project, subject: m.subject, reason: m.reason,
+    to: m.to, date: m.date, total: Number(m.total)||0,
+    currency: m.currency || 'THB',
+    amount_words: m.amountWords,
+    requester_name: m.requesterName, requester_title: m.requesterTitle,
+    requester_profile_id: m.requesterProfileId || null,
+    current_approver_profile_id: m.currentApproverProfileId || null,
+    self_reviewed_at: m.selfReviewedAt || null,
+    source_memo_no: m.sourceMemoNo || null,
+    reviewer_name: m.reviewerName, reviewer_title: m.reviewerTitle, reviewer_date: m.reviewerDate,
+    approver_name: m.approverName, approver_title: m.approverTitle, approver_date: m.approverDate,
+    approvers: m.approvers || [],
+    approved_by: m.approvedBy, rejected_by: m.rejectedBy,
+    approval_note: m.approvalNote, rejection_reason: m.rejectionReason,
+    cancellation_reason: m.cancellationReason || null,
+    cancelled_by: m.cancelledBy || null,
+    pmo_override_note: m.pmoOverrideNote || null,
+    pmo_override_by: m.pmoOverrideBy || null,
+    fx_rate: m.fxRate || null,
+    sections: m.sections || [], sl_items: m.slItems || [], audit_log: m.auditLog || [],
+    budget_source:  m.budgetSource  || null,
+    budget_pool_id: m.budgetPoolId  || null,
+    // Hotfix: Memo Detail Restore — structured detail data that has no other
+    // home in the schema (previously only rendered as read-only HTML in
+    // `sections`, so it could not be restored into the form on re-edit/duplicate).
+    hw_items:  m.hwItems  || [], hw_owner:  m.hwOwner  || null,
+    acct_cols: m.acctCols || [], acct_rows: m.acctRows || [],
+    int_names: m.intNames || [],
+    dep_items: m.depItems || [],
+    // INT fields
+    int_activity:  m.intActivity  || null,
+    int_date:      m.intDate      || null,
+    int_headcount: m.intHeadcount || null,
+    int_pp:        m.intPP        || null,
+    // ENT fields
+    ent_client: m.entClient || null,
+    ent_date:   m.entDate   || null,
+    ent_time:   m.entTime   || null,
+    ent_place:  m.entPlace  || null,
+    ent_people: m.entPeople || null,
+    // DEP fields
+    dep_location:  m.depLocation  || null,
+    dep_start:     m.depStart     || null,
+    dep_end:       m.depEnd       || null,
+    dep_emp_count: m.depEmpCount  || null,
+    pmo_evidence_url:      m.pmoEvidenceUrl      || null,
+    approval_evidence_url: m.approvalEvidenceUrl || null,
+    submitted_at: m.submittedAt || null,
+    approved_at: m.approvedAt || null, rejected_at: m.rejectedAt || null,
+    cancelled_at: m.cancelledAt || null,
+    // Milestone 1B — Void (memo-side)
+    voided_at: m.voidedAt || null, voided_by: m.voidedBy || null,
+    void_reason: m.voidReason || null, void_evidence_url: m.voidEvidenceUrl || null,
+    // Milestone 1B — Draft soft delete
+    deleted: m.deleted || false, deleted_at: m.deletedAt || null,
+    deleted_by: m.deletedBy || null, delete_reason: m.deleteReason || null,
+    created_at: m.createdAt || new Date().toISOString(),
+    updated_at: m.updatedAt || new Date().toISOString(),
+    // Milestone 2 Task 2.3 — Created By / Updated By metadata.
+    created_by: m.createdBy || null, updated_by: m.updatedBy || null,
+  };
+}
+function dbToMemo(r) {
+  return {
+    id: r.memo_no, memoNo: r.memo_no,
+    type: r.type, typeLabel: r.type_label,
+    status: r.status, project: r.project, subject: r.subject, reason: r.reason,
+    to: r.to, date: r.date, total: Number(r.total)||0, amountWords: r.amount_words,
+    currency: r.currency || 'THB',
+    requesterName: r.requester_name, requesterTitle: r.requester_title,
+    requesterProfileId: r.requester_profile_id || null,
+    currentApproverProfileId: r.current_approver_profile_id || null,
+    selfReviewedAt: r.self_reviewed_at || null,
+    sourceMemoNo: r.source_memo_no || null,
+    reviewerName: r.reviewer_name, reviewerTitle: r.reviewer_title, reviewerDate: r.reviewer_date,
+    approverName: r.approver_name, approverTitle: r.approver_title, approverDate: r.approver_date,
+    approvers: r.approvers || [],
+    approvedBy: r.approved_by, rejectedBy: r.rejected_by,
+    approvalNote: r.approval_note, rejectionReason: r.rejection_reason,
+    cancellationReason: r.cancellation_reason || null,
+    cancelledBy: r.cancelled_by || null,
+    pmoOverrideNote: r.pmo_override_note || null, pmoOverrideBy: r.pmo_override_by || null,
+    entClient: r.ent_client || null, entDate: r.ent_date || null,
+    entTime: r.ent_time || null, entPlace: r.ent_place || null, entPeople: r.ent_people || null,
+    intActivity:  r.int_activity  || null,
+    intDate:      r.int_date      || null,
+    intHeadcount: r.int_headcount || null,
+    intPP:        r.int_pp        || null,
+    depLocation:  r.dep_location  || null,
+    depStart:     r.dep_start     || null,
+    depEnd:       r.dep_end       || null,
+    depEmpCount:  r.dep_emp_count || null,
+    fxRate: r.fx_rate, sections: r.sections || [], slItems: r.sl_items || [], auditLog: r.audit_log || [],
+    budgetSource:  r.budget_source   || null,
+    budgetPoolId:  r.budget_pool_id  || null,
+    // Hotfix: Memo Detail Restore — see memoToDb() above.
+    hwItems:  r.hw_items  || [], hwOwner:  r.hw_owner  || null,
+    acctCols: r.acct_cols || [], acctRows: r.acct_rows || [],
+    intNames: r.int_names || [],
+    depItems: r.dep_items || [],
+    pmoEvidenceUrl:      r.pmo_evidence_url      || null,   // available after ALTER TABLE
+    approvalEvidenceUrl: r.approval_evidence_url || null,   // available after ALTER TABLE
+    submittedAt: r.submitted_at, approvedAt: r.approved_at, rejectedAt: r.rejected_at,
+    cancelledAt: r.cancelled_at || null,
+    // Milestone 1B — Void (memo-side), available after ALTER TABLE
+    voidedAt: r.voided_at || null, voidedBy: r.voided_by || null,
+    voidReason: r.void_reason || null, voidEvidenceUrl: r.void_evidence_url || null,
+    // Milestone 1B — Draft soft delete, available after ALTER TABLE
+    deleted: r.deleted || false, deletedAt: r.deleted_at || null,
+    deletedBy: r.deleted_by || null, deleteReason: r.delete_reason || null,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+    // Milestone 2 Task 2.3 — Created By / Updated By metadata.
+    createdBy: r.created_by || null, updatedBy: r.updated_by || null,
+  };
+}
+
+// ── Memo storage (async, with localStorage fallback) ──
+
+async function checkSupa() {
+  if(_supaAvailable !== null) return _supaAvailable;
+  try {
+    await supaFetch('memos', 'GET', null, '?limit=1');
+    _supaAvailable = true;
+  } catch(e) {
+    console.warn('Supabase unavailable, using localStorage', e.message);
+    _supaAvailable = false;
+  }
+  return _supaAvailable;
+}
+
+// Milestone 1B — a soft-deleted Draft must disappear from every normal view.
+// Filtering here (the single shared read path) covers Pending/History/Budget/
+// License/Device/Dashboard at once instead of touching each view.
+function _excludeDeletedMemos(memos) {
+  return (memos || []).filter(m => !m.deleted);
+}
+
+async function loadMemosAsync() {
+  if(await checkSupa()) {
+    try {
+      const rows = await supaFetch('memos', 'GET', null, '?order=created_at.desc&limit=500');
+      _memCache = (rows||[]).map(dbToMemo);
+      return _excludeDeletedMemos(_memCache);
+    } catch(e) {
+      console.warn('Supabase read failed, using cache');
+      if (_memCache) return _excludeDeletedMemos(_memCache);
+    }
+  }
+  // Offline fallback: localStorage
+  try { const p = JSON.parse(localStorage.getItem(MEMO_KEY)||'[]'); return _excludeDeletedMemos(Array.isArray(p)?p:[]); }
+  catch(e) { return []; }
+}
+
+async function saveMemoAsync(data) {
+  const now = new Date().toISOString();
+  const existing = loadMemos().find(m => m.memoNo === data.memoNo);
+  const saved = { ...data, id:data.memoNo, status:data.status||'pending',
+    createdAt: existing ? existing.createdAt : now, updatedAt: now,
+    // Milestone 2 Task 2.3 — Created By / Updated By metadata.
+    createdBy: existing ? existing.createdBy : (data.createdBy || currentUser()),
+    updatedBy: currentUser() };
+
+  if(await checkSupa()) {
+    try {
+      const db = memoToDb(saved);
+      await supaFetch('memos', 'POST', db, '?on_conflict=memo_no');
+      // update cache directly — no need to re-fetch
+      if (_memCache) {
+        const ci = _memCache.findIndex(m => m.memoNo === saved.memoNo);
+        if (ci >= 0) _memCache[ci] = saved; else _memCache.unshift(saved);
+      } else {
+        _memCache = [saved];
+      }
+      if (saved.status === 'completed') {
+        const actualSpend = syncMemoToActualSpend(saved);
+        if (actualSpend) Object.assign(saved, {
+          autoBudgetPoolId: actualSpend.autoBudgetPoolId,
+          manualBudgetPoolId: actualSpend.manualBudgetPoolId,
+          finalBudgetPoolId: actualSpend.finalBudgetPoolId,
+          budgetStatus: actualSpend.budgetStatus,
+        });
+      }
+      return saved;
+    } catch(e) { console.warn('Supabase save failed', e.message); }
+  }
+  // Offline fallback: localStorage
+  const memos = loadMemos();
+  const idx = memos.findIndex(m => m.memoNo === data.memoNo);
+  if(idx>=0) memos[idx]=saved; else memos.push(saved);
+  storeMemos(memos);
+  if (saved.status === 'completed') {
+    const actualSpend = syncMemoToActualSpend(saved);
+    if (actualSpend) Object.assign(saved, {
+      autoBudgetPoolId: actualSpend.autoBudgetPoolId,
+      manualBudgetPoolId: actualSpend.manualBudgetPoolId,
+      finalBudgetPoolId: actualSpend.finalBudgetPoolId,
+      budgetStatus: actualSpend.budgetStatus,
+    });
+    storeMemos(memos);
+  }
+  return saved;
+}
+
+async function updateMemoStatusAsync(memoNo, status, extra={}) {
+  // Read from cache first (fastest), fall back to Supabase if not found
+  let memo = loadMemos().find(m => m.memoNo === memoNo);
+  if (!memo) {
+    const freshMemos = await loadMemosAsync();
+    memo = freshMemos.find(m => m.memoNo === memoNo);
+  }
+  if (!memo) return null;
+
+  // ── Terminal state guard ──
+  // completed and rejected memos cannot be changed except by PMO override or Void
+  // (Milestone 1B: Void is its own guarded transition, not a PMO Override — it
+  // must not trigger the override-specific approver-marking logic below).
+  const isPmoOverride = extra.pmoOverrideNote || extra.pmoOverrideBy;
+  const isVoiding      = memo.status === 'completed' && status === 'voided';
+  const isTerminal    = memo.status === 'completed' || memo.status === 'rejected' || memo.status === 'cancelled';
+  if (isTerminal && !isPmoOverride && !isVoiding) return memo;
+
+  // ── Approver order enforcement ──
+  // Prevent A2 from approving if A1 hasn't approved yet
+  if (status === 'approved_a2' && memo.status !== 'pending_a2') return memo;
+  if (status === 'approved_a3' && memo.status !== 'pending_a3') return memo;
+
+  const now     = new Date().toISOString();
+  const deferRender = !!extra._deferRender;
+  // Milestone 2 Task 2.3 — Created By / Updated By metadata: whoever triggered
+  // this transition (approve/reject/cancel/void/PMO override) is the updater.
+  const updated = { ...memo, ...extra, status, updatedAt: now, updatedBy: extra.updatedBy || currentUser() };
+  delete updated._deferRender;
+  delete updated.throwOnSyncError;
+
+  // ── Multi-approver flow logic ──
+  const approvers = memo.approvers || [];
+  const currentPendingIdx = approvers.findIndex(a => !a.status || a.status === 'pending');
+
+  if (status === 'approved_a1' || status === 'approved_a2' || status === 'approved_a3') {
+    // Find which approver is approving
+    const approvingIdx = status === 'approved_a1' ? 0 : status === 'approved_a2' ? 1 : 2;
+    const nextIdx = approvingIdx + 1;
+
+    updated.approvers = approvers.map((a, i) =>
+      i === approvingIdx
+        ? {
+            ...a,
+            status: 'approved',
+            approvedAt: now,
+            approvedBy: extra.approvedBy || currentUser(),
+            approvedByProfileId: currentUserProfileId(),
+          }
+        : a
+    );
+
+    if (nextIdx < approvers.length && approvers[nextIdx]) {
+      // Still more approvers
+      updated.status = nextIdx === 1 ? 'pending_a2' : 'pending_a3';
+      updated.currentApproverProfileId = approvers[nextIdx].profileId || null;
+      updated.approvedAt = null;
+    } else {
+      // All done
+      updated.status    = 'completed';
+      updated.approvedAt = now;
+      updated.currentApproverProfileId = null;
+    }
+  } else if (status === 'cancelled') {
+    updated.cancelledAt = extra.cancelledAt || now;
+    updated.currentApproverProfileId = null;
+  } else if (status === 'rejected') {
+    updated.rejectedAt = now;
+    updated.currentApproverProfileId = null;
+    const pendingIdx = approvers.findIndex(a => !a.status || a.status === 'pending');
+    if (pendingIdx >= 0 && !extra.approvers) {
+      // Milestone 1A Task 1.3: a PMO override that results in 'rejected' marks the
+      // step PMO acted on as Overridden, not Rejected — the approver themselves
+      // didn't reject it, PMO did, with evidence. A genuine in-system reject
+      // (isPmoOverride false) keeps the original 'rejected' step status.
+      updated.approvers = isPmoOverride
+        ? approvers.map((a, i) =>
+            i === pendingIdx ? {
+              ...a,
+              status: 'overridden',
+              overriddenAt: now,
+              overriddenBy: extra.pmoOverrideBy || currentUser(),
+              overrideNote: extra.pmoOverrideNote || null,
+            } : a
+          )
+        : approvers.map((a, i) =>
+            i === pendingIdx ? {
+              ...a,
+              status: 'rejected',
+              rejectedAt: now,
+              rejectedBy: extra.rejectedBy || currentUser(),
+              rejectedByProfileId: currentUserProfileId(),
+            } : a
+          );
+    }
+  }
+
+  if (updated.status === 'completed') {
+    updated.approvedAt = updated.approvedAt || now;
+    updated.currentApproverProfileId = null;
+  } else if (['pending','pending_a2','pending_a3'].includes(updated.status)) {
+    updated.currentApproverProfileId = memoCurrentApprover(updated)?.profileId || null;
+  } else if (['rejected','cancelled'].includes(updated.status)) {
+    updated.currentApproverProfileId = null;
+  }
+
+  // Sync to Supabase
+  const supaReady = await checkSupa();
+  if (!supaReady && extra.throwOnSyncError) {
+    throw new Error('Supabase is unavailable');
+  }
+  if (supaReady) {
+    try {
+      const toSnake = s => s.replace(/([A-Z])/g, '_$1').toLowerCase();
+      // Only exclude auditLog (handled separately above) and evidence URLs (now in DB)
+      const PENDING_COLUMNS = new Set(['auditLog', 'throwOnSyncError', '_deferRender']);
+      const patch = {
+        status: updated.status,
+        updated_at: now,
+        approvers: updated.approvers,
+        audit_log: extra.auditLog || updated.auditLog || memo.auditLog || [],
+        current_approver_profile_id: updated.currentApproverProfileId || null,
+        ...Object.fromEntries(
+          Object.entries(extra)
+            .filter(([k]) => !PENDING_COLUMNS.has(k))
+            .map(([k,v]) => [toSnake(k), v])
+        )
+      };
+      if (updated.approvedAt)  patch.approved_at  = updated.approvedAt;
+      if (updated.rejectedAt)  patch.rejected_at  = updated.rejectedAt;
+      if (updated.cancelledAt) patch.cancelled_at = updated.cancelledAt;
+      if (updated.updatedBy)   patch.updated_by   = updated.updatedBy;
+      await supaFetch('memos', 'PATCH', patch, '?memo_no=eq.' + encodeURIComponent(memoNo));
+    } catch(e) {
+      console.warn('Supabase patch failed', e.message);
+      if(extra.throwOnSyncError) throw e;
+    }
+  }
+
+  // Update in-memory cache (always — whether Supabase succeeded or not)
+  if (!_memCache) _memCache = [];
+  const cacheIdx = _memCache.findIndex(m => m.memoNo === memoNo);
+  if (cacheIdx >= 0) _memCache[cacheIdx] = updated;
+  else _memCache.unshift(updated);
+  // Keep the offline backup current as well. Without this, status changes made
+  // while Supabase is unavailable disappear on the next page load.
+  storeMemos(_memCache);
+  const actualSpend = syncMemoToActualSpend(updated);
+  if (actualSpend) {
+    Object.assign(updated, {
+      autoBudgetPoolId: actualSpend.autoBudgetPoolId,
+      manualBudgetPoolId: actualSpend.manualBudgetPoolId,
+      finalBudgetPoolId: actualSpend.finalBudgetPoolId,
+      budgetStatus: actualSpend.budgetStatus,
+    });
+    storeMemos(_memCache);
+  }
+
+  // Side effects on completion
+  if (updated.status === 'completed') {
+    if (typeof createPurchaseOrdersFromMemo === 'function') {
+      createPurchaseOrdersFromMemo(updated);
+    }
+  }
+
+  // Safe render — only if DOM is ready
+  if(!deferRender) {
+    try { if (typeof renderPendingMemos === 'function') renderPendingMemos(); } catch(e) {}
+    try { if (typeof renderHistoryMemos === 'function') renderHistoryMemos(); } catch(e) {}
+  }
+
+  return updated;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Milestone 1B — Void (memo-side lifecycle only)
+// ══════════════════════════════════════════════════════════════════
+const VOID_DOWNSTREAM_WARNING = 'This memo has already created downstream records. Please resolve downstream records before voiding.';
+
+// Safest available guard given the current data model: a Device Registry
+// record is created once devices have "arrived" for a Hardware memo (see
+// views/device.js's markArrived-style flow, which stamps memoNo onto each
+// device row). A Purchase Order alone (no arrived devices yet) does not
+// block — matching the allowed/not-allowed examples in MEMO_LIFECYCLE.md §12.
+// Limitation: this only detects the one downstream record type named in the
+// requirement (Device Registry); see docs/TECHNICAL_DEBT.md for scope notes.
+function memoHasIrreversibleDownstreamRecords(memo) {
+  const devices = typeof loadDevices === 'function' ? loadDevices() : [];
+  return devices.some(d => d.memoNo === memo.memoNo);
+}
+
+async function voidMemoAsync(memoNo, reason, evidenceUrl = '') {
+  let memo = loadMemos().find(m => m.memoNo === memoNo);
+  if (!memo) {
+    const fresh = await loadMemosAsync();
+    memo = fresh.find(m => m.memoNo === memoNo);
+  }
+  if (!memo) return { ok: false, error: 'not_found' };
+  if (typeof isPMO !== 'function' || !isPMO()) return { ok: false, error: 'forbidden' };
+  if (memo.status !== 'completed') return { ok: false, error: 'invalid_status' };
+  if (!reason || !reason.trim()) return { ok: false, error: 'reason_required' };
+  if (memoHasIrreversibleDownstreamRecords(memo)) {
+    return { ok: false, error: 'downstream_blocked', message: VOID_DOWNSTREAM_WARNING };
+  }
+
+  const now = new Date().toISOString();
+  const user = currentUser();
+  const trimmedReason = reason.trim();
+  const memos = loadMemos();
+  appendAuditLog(memos, memoNo, `Voided by ${user}`, trimmedReason, {
+    statusBefore: memo.status,
+    statusAfter: 'voided',
+    evidenceUrl: evidenceUrl || null,
+  });
+  storeMemos(memos);
+  const updatedAuditLog = memos.find(m => m.memoNo === memoNo)?.auditLog || [];
+
+  const updated = await updateMemoStatusAsync(memoNo, 'voided', {
+    voidedAt: now,
+    voidedBy: user,
+    voidReason: trimmedReason,
+    voidEvidenceUrl: evidenceUrl || null,
+    auditLog: updatedAuditLog,
+  });
+
+  // Voided Hardware Memo downstream PO handling: never delete a related
+  // Purchase Order — mark it as a terminal 'voided_source' status instead,
+  // carrying the memo's void reason onto the PO's own audit trail. Only
+  // reachable when no devices have arrived yet (memoHasIrreversibleDownstream
+  // Records() above already blocks Void once any have).
+  if (typeof cancelPurchaseOrdersForVoidedMemo === 'function') {
+    try { cancelPurchaseOrdersForVoidedMemo(memoNo, trimmedReason); }
+    catch (e) { console.warn('PO void-cascade failed', e); }
+  }
+
+  return { ok: true, memo: updated };
+}
+
+// ── Sync: push all localStorage memos to Supabase ──
+async function syncLocalToSupabase() {
+  if(!(await checkSupa())) return { ok:false, msg:'Supabase unavailable' };
+  const local = loadMemos();
+  if(!local.length) return { ok:true, pushed:0 };
+  let pushed = 0;
+  for(const m of local) {
+    try {
+      await supaFetch('memos', 'POST', memoToDb(m), '?on_conflict=memo_no');
+      pushed++;
+    } catch(e) { console.warn('Sync failed for', m.memoNo, e.message); }
+  }
+  _memCache = null;
+  return { ok:true, pushed };
+}
+
+
+function money(n, currency = 'THB') {
+  const symbol = currency === 'USD' ? '$' : '฿';
+  return symbol + (Number(n)||0).toLocaleString('th-TH', { maximumFractionDigits: 2 });
+}
+
+// ── Multi-select filter widget (UX consistency pass, Part 8) ───────────────
+// Progressively enhances a native <select id="..."> into a searchable
+// checkbox dropdown (Select all / Clear all, keyboard accessible) while the
+// hidden native <select multiple> stays the single source of truth for
+// selected values. Toggling a checkbox dispatches a real 'change' event on
+// that same <select>, so every existing onchange="render...()" wiring on it
+// keeps firing completely unchanged — call sites only need to swap
+// val(id)/single-equality filtering for msValues(id)/.includes() filtering.
+//
+// Selection semantics: an empty selection (nothing checked) means "no
+// filter" (show everything) — the same meaning the old single-select "all"
+// option had. Selecting every individual option produces the same visible
+// result, which matches how most multi-select filter UIs behave (e.g. Jira,
+// Linear filter chips).
+function msValues(id) {
+  const el = document.getElementById(id);
+  if (!el) return [];
+  // Real <select multiple> in the browser exposes selectedOptions; simplified
+  // test-double DOM stubs (see tests/device.test.js) only implement a plain
+  // `.value` — fall back to that (single value, same as the old select)
+  // rather than silently reporting "no filter" in those environments.
+  if (el.selectedOptions) return Array.from(el.selectedOptions).map(o => o.value);
+  return el.value ? [el.value] : [];
+}
+
+function initMultiSelect(id, placeholder, fieldLabel) {
+  const select = document.getElementById(id);
+  if (!select) return;
+  const alreadyMultiple = select.multiple;
+  select.multiple = true;
+  select.style.display = 'none';
+  // A plain (non-multiple) <select> always has its first <option> selected
+  // by default; that stale single-selection must not survive the upgrade to
+  // multi-select (it would show as an active filter nobody chose) — but only
+  // clear it the first time this select is enhanced, never on a later
+  // (idempotent) re-init call, or the user's own selection would be wiped
+  // out on every re-render.
+  if (!alreadyMultiple) Array.from(select.options).forEach(o => o.selected = false);
+  let wrap = document.querySelector(`[data-ms-for="${id}"]`);
+  if (!wrap) {
+    const existingControl = select.parentElement?.classList.contains('filter-control') ? select.parentElement : null;
+    wrap = existingControl || document.createElement('div');
+    wrap.classList.add('filter-control', 'ms-wrap');
+    wrap.dataset.msFor = id;
+    if (!existingControl) select.insertAdjacentElement('afterend', wrap);
+    if (fieldLabel && !wrap.querySelector('.filter-label')) {
+      wrap.insertAdjacentHTML('afterbegin', `<label class="filter-label" for="${esc(id)}">${esc(fieldLabel)}</label>`);
+    }
+    wrap.insertAdjacentHTML('beforeend', `
+      <button type="button" class="ms-trigger" aria-haspopup="listbox" aria-expanded="false"></button>
+      <div class="ms-panel" role="listbox" aria-multiselectable="true" style="display:none">
+        <input type="text" class="ms-search" placeholder="ค้นหา...">
+        <div class="ms-actions">
+          <button type="button" class="ms-all">Select all</button>
+          <button type="button" class="ms-clear">Clear all</button>
+        </div>
+        <div class="ms-options"></div>
+      </div>`);
+    const trigger = wrap.querySelector('.ms-trigger');
+    const panel   = wrap.querySelector('.ms-panel');
+    const search  = wrap.querySelector('.ms-search');
+    const closeAllPanels = () => {
+      document.querySelectorAll('.ms-panel').forEach(p => p.style.display = 'none');
+      document.querySelectorAll('.ms-trigger').forEach(t => t.setAttribute('aria-expanded', 'false'));
+    };
+    trigger.addEventListener('click', e => {
+      e.stopPropagation();
+      const isOpen = panel.style.display !== 'none';
+      closeAllPanels();
+      panel.style.display = isOpen ? 'none' : 'block';
+      trigger.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+      if (!isOpen) { search.value = ''; _msFilterOptions(id); search.focus(); }
+    });
+    wrap.querySelector('.ms-all').addEventListener('click', e => {
+      e.stopPropagation();
+      Array.from(select.options).forEach(o => o.selected = true);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      refreshMultiSelectUI(id);
+    });
+    wrap.querySelector('.ms-clear').addEventListener('click', e => {
+      e.stopPropagation();
+      Array.from(select.options).forEach(o => o.selected = false);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      refreshMultiSelectUI(id);
+    });
+    search.addEventListener('input', () => _msFilterOptions(id));
+    search.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { panel.style.display = 'none'; trigger.setAttribute('aria-expanded','false'); trigger.focus(); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); wrap.querySelector('.ms-option:not(.ms-hidden) input')?.focus(); }
+    });
+    panel.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { panel.style.display = 'none'; trigger.setAttribute('aria-expanded','false'); trigger.focus(); }
+    });
+    document.addEventListener('click', e => { if (!wrap.contains(e.target)) closeAllPanels(); });
+  }
+  wrap.dataset.msPlaceholder = placeholder || 'ทั้งหมด';
+  refreshMultiSelectUI(id);
+}
+
+function _msFilterOptions(id) {
+  const wrap = document.querySelector(`[data-ms-for="${id}"]`);
+  if (!wrap) return;
+  const q = (wrap.querySelector('.ms-search')?.value || '').toLowerCase();
+  wrap.querySelectorAll('.ms-option').forEach(row => {
+    const label = row.dataset.label || '';
+    row.classList.toggle('ms-hidden', !!q && !label.includes(q));
+  });
+}
+
+// Re-renders the checkbox list + trigger label from the hidden select's
+// current <option> list and selected state. Call this after any code
+// repopulates a multi-select-backed <select>'s options (e.g. a project list
+// derived from live data), so the visible widget stays in sync.
+function refreshMultiSelectUI(id) {
+  const select = document.getElementById(id);
+  const wrap = document.querySelector(`[data-ms-for="${id}"]`);
+  if (!select || !wrap) return;
+  const optionsBox = wrap.querySelector('.ms-options');
+  const selected = new Set(msValues(id));
+  const opts = Array.from(select.options);
+  optionsBox.innerHTML = opts.map((o, i) => `
+    <label class="ms-option" data-label="${esc(o.textContent.toLowerCase())}">
+      <input type="checkbox" data-idx="${i}"${selected.has(o.value) ? ' checked' : ''}>
+      <span>${esc(o.textContent)}</span>
+    </label>`).join('');
+  optionsBox.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      opts[Number(cb.dataset.idx)].selected = cb.checked;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      _msUpdateTriggerLabel(id);
+    });
+    cb.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); cb.closest('label').nextElementSibling?.querySelector('input')?.focus(); }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); cb.closest('label').previousElementSibling?.querySelector('input')?.focus(); }
+    });
+  });
+  _msUpdateTriggerLabel(id);
+}
+
+function _msUpdateTriggerLabel(id) {
+  const select = document.getElementById(id);
+  const wrap = document.querySelector(`[data-ms-for="${id}"]`);
+  if (!select || !wrap) return;
+  const trigger = wrap.querySelector('.ms-trigger');
+  const values = msValues(id);
+  const placeholder = wrap.dataset.msPlaceholder || 'ทั้งหมด';
+  if (!values.length) { trigger.textContent = placeholder; return; }
+  const labels = Array.from(select.selectedOptions).map(o => o.textContent);
+  trigger.textContent = labels.length <= 2 ? labels.join(', ') : `${labels.slice(0,2).join(', ')} +${labels.length - 2}`;
+}
+
+function loadMemos() {
+  // Prefer in-memory cache (populated from Supabase by loadMemosAsync on app init)
+  // An empty array is a valid, authoritative result from Supabase.
+  if (_memCache !== null) return _excludeDeletedMemos(_memCache);
+  // Offline fallback: localStorage
+  if (!HAS_LS) return _excludeDeletedMemos(_memMemos);
+  try { const p = JSON.parse(localStorage.getItem(MEMO_KEY)||'[]'); return _excludeDeletedMemos(Array.isArray(p)?p:[]); }
+  catch(e) { return _excludeDeletedMemos(_memMemos); }
+}
+
+function storeMemos(memos) {
+  _memMemos = Array.isArray(memos) ? memos : [];
+  // Always keep in-memory cache in sync
+  _memCache = _memMemos;
+  // localStorage as offline backup only
+  if (!HAS_LS) return;
+  try { localStorage.setItem(MEMO_KEY, JSON.stringify(_memMemos)); }
+  catch(e) { console.warn('localStorage write failed'); }
+}
+function currentMemoPrefix() {
+  const d = new Date();
+  return `ORB-${String(d.getFullYear()).slice(-2)}${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+function nextMemoNo() {
+  const prefix = currentMemoPrefix();
+  const max = loadMemos().reduce((m,memo) => {
+    const match = String(memo.memoNo||'').match(new RegExp(`^${prefix}-(\\d{3})$`));
+    return match ? Math.max(m, Number(match[1])) : m;
+  }, 0);
+  return `${prefix}-${String(max+1).padStart(3,'0')}`;
+}
+function setNextMemoNo() {
+  const el = document.getElementById('f-memo-no');
+  if(el && !el.value.trim()) el.value = nextMemoNo();
+}
+function saveMemo(data) {
+  // Sync version for backward compat — pushes to Supabase async in background
+  const now = new Date().toISOString();
+  const memos = loadMemos();
+  const idx = memos.findIndex(m => m.memoNo === data.memoNo);
+  const existing = idx >= 0 ? memos[idx] : null;
+  const saved = {
+    ...data,
+    id:          data.memoNo,
+    status:      data.status || 'pending',
+    createdAt:   existing?.createdAt || data.createdAt || now,
+    updatedAt:   now,
+  };
+  if (!saved.submittedAt && saved.status !== 'draft') {
+    saved.submittedAt = existing?.submittedAt || now;
+  }
+  // Update in-memory cache immediately
+  if (!_memCache) _memCache = [];
+  const ci = _memCache.findIndex(m => m.memoNo === saved.memoNo);
+  if (ci >= 0) _memCache[ci] = saved; else _memCache.unshift(saved);
+  // Async push to Supabase in background
+  saveMemoAsync(saved).catch(e => console.warn('Background Supabase save failed', e));
+  return saved;
+}
+function updateMemoStatus(memoNo, status, extra={}) {
+  const memos = loadMemos();
+  const idx = memos.findIndex(m => m.memoNo === memoNo);
+  if(idx<0) { alert('ไม่พบ Memo ที่เลือก'); return null; }
+  memos[idx] = { ...memos[idx], ...extra, status, updatedAt: new Date().toISOString() };
+  if(status==='completed') memos[idx].approvedAt = memos[idx].updatedAt;
+  if(status==='rejected')  memos[idx].rejectedAt = memos[idx].updatedAt;
+  storeMemos(memos);
+  const actualSpend = syncMemoToActualSpend(memos[idx]);
+  if (actualSpend) Object.assign(memos[idx], {
+    autoBudgetPoolId: actualSpend.autoBudgetPoolId,
+    manualBudgetPoolId: actualSpend.manualBudgetPoolId,
+    finalBudgetPoolId: actualSpend.finalBudgetPoolId,
+    budgetStatus: actualSpend.budgetStatus,
+  });
+  storeMemos(memos);
+  // _memCache is already updated by storeMemos — do not null it here
+  // Auto-create purchase orders for HW memos (sync only — avoid double-firing)
+  if(status === 'completed' && memos[idx].type === 'hw') {
+    if(typeof createPurchaseOrdersFromMemo === 'function') {
+      createPurchaseOrdersFromMemo(memos[idx]);
+    }
+  }
+  updateMemoStatusAsync(memoNo, status, { ...extra, _deferRender:true })
+    .then(() => { renderPendingMemos(); renderHistoryMemos(); })
+    .catch(e => console.warn('Supabase status update failed', e));
+  return memos[idx];
+}
+
+// ── Navigation ──
+function swView(id, el, title) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.sb-sub-item').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.sb-item').forEach(s => s.classList.remove('active'));
+  document.getElementById('view-'+id).classList.add('active');
+  document.getElementById('page-title').textContent = title;
+  if(el) el.classList.add('active');
+  if(['create','pending','history'].includes(id)) document.getElementById('nav-memo').classList.add('active');
+  if(id === 'budget')  renderBudget();
+  if(id === 'license') renderLicense();
+  if(id === 'device')  renderDevice();
+  if(id === 'history') { renderHistoryMemos(); if(typeof populateHistTabCounts==='function') populateHistTabCounts(); }
+  if(id === 'pending') renderPendingMemos();
+
+  if(id === 'resource') { if(typeof renderResource==='function') renderResource(); }
+  if(id === 'settings') { if(typeof renderSettings==='function') renderSettings(); }
+}
+function toggleMemoSub(el) {
+  el.classList.add('active');
+  swView('create', document.querySelector('#memo-sub .sb-sub-item'), 'Create Memo');
+}
+
+// ── PDF ──
 
 // Notification center
 const NOTIFICATION_READ_KEY = 'orbit-pmo-notifications-read-v1';
@@ -2010,6 +2767,554 @@ function openMemoPdf(memoNo) {
   downloadMemoPdf(memo);
 }
 
+
+// ── Memo PDF/readback overrides from PMO-dashboard-v0.1 (Batch 1) ──
+function renderMemoPdf(data) {
+  // Use server CSS classes (.mp-*) — injected by PDF server with THSarabun font
+  // Auto-derive data.to from last approver title if not set
+  if(!data.to && data.approvers && data.approvers.length > 0) {
+    data = Object.assign({}, data, { to: data.approvers[data.approvers.length-1].title || '' });
+  }
+
+  function fmtDate(v) {
+    if(!v || v === '-') return '';
+    // Already a Thai full date string e.g. "17 มิถุนายน 2569" — return as-is
+    if(/[ก-๙]/.test(v)) return v;
+    // ISO YYYY-MM-DD or any parseable → full Thai date. UTC-anchored for a
+    // date-only value, matching dateInput() — see Bangkok timezone helper above.
+    const d = new Date(v.length===10 ? v+'T00:00:00Z' : v);
+    if(isNaN(d.getTime())) return v;
+    return thaiDate(d); // "17 มิถุนายน พ.ศ. 2569"
+  }
+  // YYYY-MM → "มิถุนายน 2569"
+  function fmtMonth(v) {
+    if(!v || v==='-') return v;
+    const m = v.match(/^(\d{4})-(\d{2})$/);
+    if(!m) return v;
+    return `${MONTHS_TH[parseInt(m[2],10)-1]} ${parseInt(m[1])+543}`;
+  }
+
+  // ── Authority — dynamic from Supabase (_authorityCache) with fallback ──
+  function getAuthority(memoType) {
+    const approvers = data.approvers || [];
+    const finalApprover = approvers.length > 0 ? approvers[approvers.length-1] : null;
+    const title = finalApprover?.title || data.approverTitle || 'ประธานเจ้าหน้าที่บริหาร';
+    const limit = getAuthorityLimit(title, memoType);
+    return { title, limit };
+  }
+  function fmtLimit(n) { return (Number(n)||0).toLocaleString('th-TH',{maximumFractionDigits:0}); }
+
+  // ── SL: collect software names from slItems ──
+  const slProgramNames = (data.slItems||[]).filter(it=>it.name&&it.name!=='-').map(it=>it.name);
+  const slProgramStr   = slProgramNames.length ? slProgramNames.join(', ') : 'โปรแกรม';
+
+  const typeBody = {
+    sl: `เนื่องด้วยพนักงานโครงการ ${esc(data.project||'-')} - บริษัท ออร์บิท ดิจิทัล จำกัด มีความจำเป็นต้องใช้งานโปรแกรม ${esc(slProgramStr)} ${esc(data.reason||'')} จึงขออนุมัติงบประมาณเพื่อจัดซื้อโปรแกรมดังกล่าว ตามรายละเอียดดังต่อไปนี้`,
+    hw: `เนื่องด้วยพนักงานโครงการ ${esc(data.project||'-')} บริษัท ออร์บิท ดิจิทัล จำกัด มีความจำเป็นต้องจัดซื้ออุปกรณ์ Hardware ${esc(data.reason||'')} จึงขออนุมัติงบประมาณตามรายละเอียดดังต่อไปนี้`,
+    int: `เนื่องด้วยโครงการ ${esc(data.project||'-')} มีความประสงค์จัดกิจกรรม Team Activity ${esc(data.reason||'')} จึงขออนุมัติงบประมาณตามรายละเอียดดังต่อไปนี้`,
+    ent: `สืบเนื่องจากพนักงานโครงการ ${esc(data.project||'-')} บริษัท ออร์บิท ดิจิทัล จำกัด ได้วางแผนจัดงานบริษัทเลี้ยงรับรองลูกค้าเพื่อขอบคุณ ซึ่งจะจัดวันที่ ${esc(fmtDate(data.entDate)||'-')} สถานที่จัดคือ ${esc(data.entPlace||'-')} จำนวนผู้เข้าร่วมโดยประมาณ ${esc(data.entPeople||'-')} คน โดยกำหนดงบประมาณสำหรับค่าใช้จ่ายงานเลี้ยงรับรองลูกค้าเป็นจำนวนเงินไม่เกิน ${data.total ? (Number(data.total)||0).toLocaleString('th-TH',{maximumFractionDigits:0}) : '-'} บาท`,
+    dep: `เนื่องด้วยพนักงานโครงการ ${esc(data.project||'-')} บริษัท ออร์บิท ดิจิทัล จำกัด วางแผนดำเนินการปฏิบัติงานที่ ${esc(data.depLocation||'-')} ในช่วงวันที่ ${esc(fmtDate(data.depStart)||'-')}${data.depEnd && data.depEnd !== data.depStart ? ` – ${esc(fmtDate(data.depEnd))}` : ''} โดยมีจำนวนทั้งสิ้น ${data.depEmpCount||'-'} คน โดยมีรายละเอียดดังต่อไปนี้`,
+  };
+  const bodyText = typeBody[data.type] || `ด้วยฝ่าย PMO มีความประสงค์ขออนุมัติรายการตามรายละเอียดด้านล่าง เพื่อสนับสนุนการดำเนินงานของโครงการ ${esc(data.project||'-')} ให้เป็นไปตามแผนงาน`;
+
+  const amtStr = data.total ? `<strong>${(Number(data.total)||0).toLocaleString('th-TH', {maximumFractionDigits:0})} บาท</strong> (${esc(data.amountWords||'-')})` : '';
+  const totalNoSign = data.total ? (Number(data.total)||0).toLocaleString('th-TH',{maximumFractionDigits:0}) : '-';
+
+  const closingMap = {
+    // SL — ค่าบริการ พ.ศ. 2566
+    sl: data.total ? (function(){
+      const slSection = (data.sections||[]).find(s => s.title === 'รายการ Software');
+      let totalSeats = 0, months = 12;
+      if(slSection && slSection.html) {
+        const doc = new DOMParser().parseFromString(slSection.html, 'text/html');
+        doc.querySelectorAll('tbody tr').forEach(row => {
+          const cells = row.querySelectorAll('td');
+          if(cells.length >= 5) {
+            const mo  = parseInt(cells[4]?.textContent)||0;
+            const qty = parseInt(cells[5]?.textContent)||0;
+            if(mo)  months = mo;
+            totalSeats += qty;
+          }
+        });
+      }
+      const auth = getAuthority('sl');
+      const seatsStr  = totalSeats ? `จำนวนรวมทั้งหมด ${totalSeats} Seats ` : '';
+      const monthsStr = `ระยะเวลา ${months} เดือน `;
+      const limitStr  = auth.limit>0 ? `ซึ่งให้อำนาจแก่${esc(auth.title)}ไม่เกิน ${fmtLimit(auth.limit)} บาท` : `ซึ่งให้อำนาจแก่${esc(auth.title)}ในการอนุมัติงบประมาณ`;
+      return `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณสำหรับค่าใช้จ่ายดังกล่าว รวมเป็นจำนวนเงินไม่เกิน ${amtStr} ${seatsStr}${monthsStr}อ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงินที่มี (การตั้งงบประมาณไว้) หมวดการชำระค่าบริการ ${limitStr}`;
+    })() : '',
+    // HW — ค่าสวัสดิการพนักงาน พ.ศ. 2566
+    hw: data.total ? (function(){
+      const auth = getAuthority('hw');
+      const limitStr = auth.limit>0 ? `ซึ่งให้อำนาจแก่${esc(auth.title)}ไม่เกิน ${fmtLimit(auth.limit)} บาท` : `ซึ่งให้อำนาจแก่${esc(auth.title)}ในการอนุมัติงบประมาณ`;
+      return `จึงขอความกรุณาโปรดพิจารณาอนุมัติค่าใช้จ่ายสำหรับรายการจัดซื้อข้างต้น ในวงเงิน ${amtStr} อ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงินที่มี (การตั้งงบประมาณไว้) หมวดการชำระเงินค่าสวัสดิการพนักงาน ${limitStr}`;
+    })() : '',
+    // INT — ไม่มี authority reference ตาม policy
+    int: data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณสำหรับค่ากิจกรรมทีม ${esc(data.project||'-')} เพื่อใช้จัดกิจกรรมดังกล่าว เป็นวงเงินจำนวนไม่เกิน ${totalNoSign} บาท (${esc(data.amountWords||'-')})` : '',
+    // ENT — ค่าเลี้ยงรับรอง พ.ศ. 2564
+    ent: data.total ? (function(){
+      const auth = getAuthority('ent');
+      const limitStr = auth.limit>0 ? `วงเงินไม่เกิน ${fmtLimit(auth.limit)} บาท ซึ่งให้อำนาจแก่${esc(auth.title)}ในการอนุมัติงบประมาณ` : `ซึ่งให้อำนาจแก่${esc(auth.title)}ในการอนุมัติงบประมาณ`;
+      return `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณค่ารับรองลูกค้าจาก ${esc(data.entClient||data.project||'-')} ในช่วงเวลาดังกล่าว อ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2564 ข้อ 3.2 หมวดค่าเลี้ยงรับรอง ${limitStr}`;
+    })() : '',
+    // DEP — ค่าสวัสดิการพนักงาน พ.ศ. 2566
+    dep: data.total ? (function(){
+      const auth = getAuthority('dep');
+      const limitStr = auth.limit>0 ? `ซึ่งให้อำนาจแก่${esc(auth.title)}ไม่เกิน ${fmtLimit(auth.limit)} บาท` : `ซึ่งให้อำนาจแก่${esc(auth.title)}ในการอนุมัติงบประมาณ`;
+      return `จึงขอความอนุเคราะห์อนุมัติการจัดซื้อสำหรับรายการจัดซื้อข้างต้น ในวงเงิน ${amtStr} อ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงินที่มี (การตั้งงบประมาณไว้) หมวดการชำระเงินค่าสวัสดิการพนักงาน ${limitStr}`;
+    })() : '',
+  };
+  const closingText = closingMap[data.type] || (data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณรวมเป็นจำนวนเงินไม่เกิน ${amtStr}` : '');
+
+  // sectionsHtml rendered inline below with fxNote injection
+
+  const fxNote = data.type === 'sl'
+    ? `<p class="mp-note">* <u>หมายเหตุ</u> : เรทราคาโปรแกรมดังกล่าวแปลงเรทเงินตราจากหน่วย USD เป็น THB ณ วันที่ ${esc(fmtDate(data.date)||TODAY)}${data.fxRate ? ` (1 USD = ฿${data.fxRate})` : ''}</p>`
+    : '';
+
+  // Dates stored as Thai strings from dateInput() — display directly
+  // fmtDate only as safety net for raw ISO strings
+  const reviewerDate = data.reviewerDate && data.reviewerDate !== '-' ? data.reviewerDate : (data.date||'');
+  const approverDate = data.approverDate && data.approverDate !== '-' ? data.approverDate : (data.date||'');
+
+  // ── Status Banner — Task 4. Reuses the single status vocabulary
+  // (histStatusLabel/histStatusBadgeClass, both above) instead of a second
+  // status→label mapping. Colors are presentation-only, keyed off the
+  // existing badge class name, not off memo.status directly.
+  const _statusBadgeClass = data.status ? histStatusBadgeClass(data) : '';
+  const _statusColors = ({
+    'badge-green': { bg: '#ECFDF5', fg: '#065F46', border: '#10B981' },
+    'badge-red':   { bg: '#FEF2F2', fg: '#991B1B', border: '#EF4444' },
+    'badge-amber': { bg: '#FFFBEB', fg: '#92400E', border: '#F59E0B' },
+    'badge-gray':  { bg: '#F3F4F6', fg: '#374151', border: '#9CA3AF' },
+  })[_statusBadgeClass] || { bg: '#F3F4F6', fg: '#374151', border: '#9CA3AF' };
+  const statusBannerHtml = data.status ? `<div style="text-align:center;margin:0 0 10px">
+    <span style="display:inline-block;padding:5px 18px;border:1.5px solid ${_statusColors.border};background:${_statusColors.bg};color:${_statusColors.fg};border-radius:6px;font-weight:700;font-size:13pt;letter-spacing:.06em">${esc(String(histStatusLabel(data)).toUpperCase())}</span>
+  </div>` : '';
+
+  return `<div class="preview-wrap">
+    <!-- Header row: memo no + date (logo injected by server) -->
+    <div class="mp-hdr">
+      <div class="mp-hdr-right">
+        <div><strong>เลขที่</strong>&nbsp;&nbsp;${esc(data.memoNo)}</div>
+        <div><strong>ลงวันที่</strong>&nbsp;&nbsp;${esc(fmtDate(data.date)||TODAY)}</div>
+      </div>
+    </div>
+
+    <!-- Status Banner -->
+    ${statusBannerHtml}
+
+    <!-- Title -->
+    <div class="mp-title">บันทึกข้อความ</div>
+
+    <!-- เรื่อง / เรียน -->
+    <div class="mp-field"><span class="mp-field-label">เรื่อง</span><span class="mp-field-value">${esc(data.subject||'-')}</span></div>
+    <div class="mp-field"><span class="mp-field-label">เรียน</span><span class="mp-field-value">${esc(data.to||'-')}</span></div>
+
+    <!-- Body -->
+    <div class="mp-body"><p style="font-size:14pt;line-height:1.8;text-indent:2.5em">${bodyText}</p></div>
+
+    <!-- Sections with fxNote after SL table -->
+    ${(data.sections||[]).map(function(s){
+      let html = s.html;
+
+      if(s.title === 'รายการ Software') {
+        const renameHeader = (from, to) => {
+          html = html.replace(new RegExp('<th([^>]*)>' + from + '<\/th>', 'g'), '<th$1>' + to + '</th>');
+        };
+        renameHeader('#', 'No');
+        renameHeader('ชื่อ Software', 'Item');
+        renameHeader('฿\/เดือน', 'Price/Month (THB)');
+        renameHeader('จำนวน', 'QTY (License)');
+        renameHeader('รวม', 'Amount (THB)');
+        renameHeader('เดือน', 'Month');
+        renameHeader('เริ่ม', 'Start');
+        renameHeader('สิ้นสุด', 'End');
+        html = html.replace(/>([0-9]{4}-[0-9]{2})</g, function(m, v) {
+          var parts = v.match(/^([0-9]{4})-([0-9]{2})$/);
+          if (!parts) return m;
+          return '>' + MONTHS_TH[parseInt(parts[2],10)-1] + ' ' + (parseInt(parts[1])+543) + '<';
+        });
+        html = html.replace(/<tr>(.*?)<\/tr>/gs, function(match, cells) {
+          if(match.includes('<th')) return match;
+          var tds = [];
+          var idx = 0;
+          cells.replace(/<td([^>]*)>(.*?)<\/td>/gs, function(m, attrs, content) {
+            var isLeft = (idx === 1 || idx === 2);
+            var isBold = attrs.includes('font-weight:700');
+            tds.push('<td style="padding:7px 10px;border:1px solid #ccc;font-size:13pt;text-align:'+(isLeft?'left':'center')+';'+(isBold?'font-weight:700;':'')+'">'+content+'</td>');
+            idx++;
+            return m;
+          });
+          return tds.length ? '<tr>'+tds.join('')+'</tr>' : match;
+        });
+        if(!html.includes('Total Amount') && data.total) {
+          var totalRow = '<tr><td colspan="8" style="text-align:right;font-weight:700;background:#f0f0f0;padding:7px 10px;border:1px solid #ccc;font-size:13pt">Total Amount</td><td style="text-align:center;font-weight:700;background:#f0f0f0;padding:7px 10px;border:1px solid #ccc;font-size:13pt">'+esc(money(data.total))+'</td></tr>';
+          html = html.replace('</tbody></table>', totalRow+'</tbody></table>');
+        }
+      }
+
+      if(s.title === 'ตาราง Account') {
+        html = html.replace('<thead><tr>', '<thead><tr><th style="background:#e8e8e8;color:#111;font-weight:600;padding:8px 10px;text-align:center;border:1px solid #ccc;font-size:13pt;width:40px">No</th>');
+        var rowNum = 0;
+        html = html.replace(/<tr>(.*?)<\/tr>/gs, function(match, cells) {
+          if(match.includes('<th')) return match;
+          rowNum++;
+          var tds = ['<td style="padding:7px 10px;border:1px solid #ccc;font-size:13pt;text-align:center">'+rowNum+'</td>'];
+          var idx = 0;
+          cells.replace(/<td([^>]*)>(.*?)<\/td>/gs, function(m, attrs, content) {
+            var isLeft = idx === 0;
+            tds.push('<td style="padding:7px 10px;border:1px solid #ccc;font-size:13pt;text-align:'+(isLeft?'left':'center')+'">'+content+'</td>');
+            idx++;
+            return m;
+          });
+          return tds.length > 1 ? '<tr>'+tds.join('')+'</tr>' : match;
+        });
+      }
+
+      if(s.title === 'รายการ Hardware') {
+        if(!html.includes('Total Amount') && data.total) {
+          var thMatch = html.match(/<thead>(.*?)<\/thead>/s);
+          var colCount = thMatch ? (thMatch[1].match(/<th/g)||[]).length : 5;
+          var totalRow = '<tr><td colspan="'+(colCount-1)+'" style="text-align:right;font-weight:700;background:#f0f0f0;padding:7px 10px;border:1px solid #ccc;font-size:13pt">Total Amount</td><td style="text-align:center;font-weight:700;background:#f0f0f0;padding:7px 10px;border:1px solid #ccc;font-size:13pt">'+esc(money(data.total))+'</td></tr>';
+          html = html.replace('</tbody></table>', totalRow+'</tbody></table>');
+        }
+      }
+
+      if(s.title === 'รายการค่าใช้จ่าย') {
+        // Convert <ol> list to numbered table for DEP
+        if(html.includes('<ol')) {
+          var depItems = [];
+          html.replace(/<li>(.*?)<\/li>/g, function(m, item) { depItems.push(item.trim()); });
+          var depRows = depItems.map(function(item, i) {
+            return '<tr>'
+              + '<td style="padding:7px 10px;border:1px solid #ccc;font-size:13pt;text-align:center;width:50px;vertical-align:top">'+(i+1)+'.</td>'
+              + '<td style="padding:7px 10px;border:1px solid #ccc;font-size:13pt;text-align:left">'+item+'</td>'
+              + '</tr>';
+          }).join('');
+          html = '<table style="width:100%;border-collapse:collapse"><thead><tr>'
+            + '<th style="background:#e8e8e8;color:#111;font-weight:600;padding:8px 10px;text-align:center;border:1px solid #ccc;font-size:13pt;width:50px">ที่</th>'
+            + '<th style="background:#e8e8e8;color:#111;font-weight:600;padding:8px 10px;text-align:center;border:1px solid #ccc;font-size:13pt">รายการ</th>'
+            + '</tr></thead><tbody>'+depRows+'</tbody></table>';
+          if(!html.includes('Total Amount') && data.total) {
+            var depTotal = '<tr><td style="text-align:right;font-weight:700;background:#f0f0f0;padding:7px 10px;border:1px solid #ccc;font-size:13pt;text-align:center">รวม</td>'
+              + '<td style="text-align:right;font-weight:700;background:#f0f0f0;padding:7px 10px;border:1px solid #ccc;font-size:13pt">'+esc(money(data.total))+'</td></tr>';
+            html = html.replace('</tbody></table>', depTotal+'</tbody></table>');
+          }
+        }
+      }
+
+      if(s.title === 'รายชื่อผู้เข้าร่วม') {
+        if(!html.includes('<table') && html.includes('<ol')) {
+          var names = [];
+          html.replace(/<li>(.*?)<\/li>/g, function(m, name) { names.push(name.trim()); });
+          var rows = names.map(function(n,i) {
+            return '<tr><td style="padding:7px 10px;border:1px solid #ccc;font-size:13pt;text-align:center;width:50px">'+(i+1)+'</td><td style="padding:7px 10px;border:1px solid #ccc;font-size:13pt;text-align:left">'+n+'</td></tr>';
+          }).join('');
+          html = '<table style="width:100%;border-collapse:collapse"><thead><tr>'
+            + '<th style="background:#e8e8e8;color:#111;font-weight:600;padding:8px 10px;text-align:center;border:1px solid #ccc;font-size:13pt;width:50px">No.</th>'
+            + '<th style="background:#e8e8e8;color:#111;font-weight:600;padding:8px 10px;text-align:center;border:1px solid #ccc;font-size:13pt">รายชื่อ</th>'
+            + '</tr></thead><tbody>' + rows + '</tbody></table>';
+        }
+      }
+
+      return '<div style="margin-top:12px"><p style="font-weight:700;margin-bottom:6px">'+esc(s.title)+'</p>'+html+(s.title==='รายการ Software'?fxNote:'')+'</div>';
+    }).join('')}
+
+
+
+    <!-- Closing -->
+    ${closingText ? `<div class="mp-closing"><p style="font-size:14pt;line-height:1.8;text-indent:2.5em">${closingText}</p></div>` : ''}
+
+    <!-- Signature boxes -->
+    ${(function(){
+      // Build approver array — always minimum 2 (reviewer + approver)
+      let arr = data.approvers && data.approvers.length > 0
+        ? [...data.approvers]
+        : [];
+      // If only 1 approver, prepend a reviewer slot
+      if(arr.length < 2) {
+        const revName  = data.reviewerName  && data.reviewerName  !== '-' ? data.reviewerName  : '';
+        const revTitle = data.reviewerTitle && data.reviewerTitle !== '-' ? data.reviewerTitle : 'ผู้จัดการโครงการ';
+        if(revName) {
+          // Use the actual status from approvers if the reviewer is already in the list
+          const revEntry = (data.approvers||[]).find(a => a.name === revName);
+          arr.unshift({ name: revName, title: revTitle,
+            status: revEntry?.status || 'pending',
+            approvedAt: revEntry?.approvedAt || null });
+        } else if(arr.length === 1) {
+          // Duplicate as reviewer — copy full entry including status
+          arr.unshift({ ...arr[0], title: 'ผู้จัดการโครงการ' });
+        } else {
+          arr = [
+            { name: data.reviewerName||'-', title: data.reviewerTitle||'ผู้จัดการโครงการ', status:'pending' },
+            { name: data.approverName||'-', title: data.approverTitle||'ประธานเจ้าหน้าที่บริหาร', status:'pending' },
+          ];
+        }
+      }
+      return '<div class="mp-approval" style="display:grid;grid-template-columns:repeat('+arr.length+',1fr);gap:0;width:100%;margin-top:8px">'
+        + arr.map(function(a, i) {
+          const isFirst = i === 0;
+          const isLast  = i === arr.length - 1;
+          // A1 always has headText
+          const headText = isFirst
+            ? 'เรียน ' + esc(data.to || 'ผู้อำนวยการโครงการ') + ' เพื่อโปรดพิจารณาอนุมัติดำเนินการ'
+            : '';
+          // Options: A1=เห็นชอบ (multi) or อนุมัติ (single), Last=อนุมัติ, Middle=เห็นชอบ
+          const optText = isFirst && arr.length === 1
+            ? '<div class="mp-appr-opt" style="font-size:12pt">&#9675; อนุมัติ, เพื่อโปรดพิจารณาดำเนินการ</div><div class="mp-appr-opt" style="font-size:12pt">&#9675; อื่นๆ ..............................………</div>'
+            : isFirst && arr.length > 1
+            ? '<div class="mp-appr-opt" style="font-size:12pt">&#9675; เห็นชอบ, เพื่อโปรดพิจารณาอนุมัติ</div><div class="mp-appr-opt" style="font-size:12pt">&#9675; อื่นๆ ..............................………</div>'
+            : isLast
+            ? '<div class="mp-appr-opt" style="font-size:12pt">&#9675; อนุมัติ, เพื่อโปรดพิจารณาดำเนินการ</div><div class="mp-appr-opt" style="font-size:12pt">&#9675; อื่นๆ ..............................………</div>'
+            : '<div class="mp-appr-opt" style="font-size:12pt">&#9675; เห็นชอบ, เพื่อโปรดพิจารณาอนุมัติ</div><div class="mp-appr-opt" style="font-size:12pt">&#9675; อื่นๆ ..............................………</div>';
+          const sigDate = data.date || '';
+          // Milestone 1A Task 1.3: a self-bypassed A1 (status 'bypassed') still shows its
+          // signature/date exactly as it did when this was recorded as 'approved'. An
+          // 'overridden' step never had its own in-system signature captured either
+          // before or after this change, so it's intentionally excluded here.
+          const isApproved = a.status === 'approved' || a.status === 'bypassed';
+          const sigImgUrl  = isApproved ? getSignatureFromCache(a.name) : null;
+          const sigHtml    = sigImgUrl
+            ? `<div style="text-align:center;height:54px;display:flex;align-items:center;justify-content:center">` +
+              `<img src="${sigImgUrl}" style="max-width:170px;max-height:52px;object-fit:contain"></div>`
+            : `<div class="mp-sig-space" style="height:54px"></div>`;
+          return '<div class="mp-appr-cell" style="font-size:12pt;padding:10px 12px;min-height:160px;display:flex;flex-direction:column;border:1px solid #000;'+(i>0?'margin-left:-1px;':'')+'">'
+            + (headText ? '<div class="mp-appr-head" style="font-size:12pt">'+headText+'</div>' : '')
+            + optText
+            + '<div style="flex:1"></div>'
+            + sigHtml
+            + '<div class="mp-sig-name" style="font-size:12pt;font-weight:600;text-align:center">( '+esc(a.name||'-')+' )</div>'
+            + '<div class="mp-sig-role" style="font-size:12pt;text-align:center">'+esc(a.title||'-')+'</div>'
+            + '<div class="mp-sig-date" style="font-size:12pt;text-align:center">'+(isApproved ? sigDate : '')+'</div>'
+            + '</div>';
+        }).join('')
+        + '</div>';
+    })()}
+
+    <!-- Approval Record appendix — Tasks 2/3/4. Business/audit data that
+         supplements (does not replace) the official memo body above. Reuses
+         the exact same data functions the History "View Memo" detail modal
+         uses (views/history.js) — no parallel formatting logic. A new page
+         so the original signed memo layout above is never disturbed. -->
+    ${(function(){
+      const infoHtml     = typeof buildApprovalInfoPdfHtml === 'function' ? buildApprovalInfoPdfHtml(data) : '';
+      const timelineHtml = typeof buildApprovalTimelinePdfHtml === 'function' ? buildApprovalTimelinePdfHtml(data) : '';
+      if (!infoHtml && !timelineHtml) return '';
+      return `<div style="page-break-before:always;padding-top:16px;border-top:2px solid #185FA5">
+        <div style="font-size:14pt;font-weight:700;color:#185FA5;margin-bottom:4px">เอกสารประกอบการอนุมัติ (Approval Record)</div>
+        <div style="font-size:10pt;color:#666;margin-bottom:6px">เลขที่ ${esc(data.memoNo)} — ข้อมูลประกอบสำหรับการตรวจสอบ ไม่ใช่ส่วนหนึ่งของบันทึกข้อความต้นฉบับ</div>
+        ${statusBannerHtml}
+        ${infoHtml}
+        ${timelineHtml}
+      </div>`;
+    })()}
+    </div>
+  </div>`;
+}
+
+// ── Normalise memo data before PDF render ────────────────────────
+// Rebuilds sections[] from raw item fields when sections is empty.
+// This ensures PDF output is identical whether generated at create-time
+// or downloaded later from History/Pending tab.
+function _normalisePdfData(data) {
+  const d = Object.assign({}, data, { sections: (data.sections || []).slice() });
+
+  function _tbl(headers, rows, numericIdx) {
+    const thStyle = 'background:#e8e8e8;color:#111;font-weight:600;padding:5px 8px;border:1px solid #ccc;font-size:12pt;text-align:center';
+    const ths = headers.map(h => `<th style="${thStyle}">${h}</th>`).join('');
+    const trs = rows.map(r => `<tr>${r.map((c, i) => {
+      const align = numericIdx.includes(i) ? 'right' : i <= 1 ? 'left' : 'center';
+      return `<td style="padding:6px 8px;border:1px solid #ccc;font-size:12pt;text-align:${align}">${c ?? ''}</td>`;
+    }).join('')}</tr>`).join('');
+    return `<table style="width:100%;border-collapse:collapse"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+  }
+
+  // Account PDF: omit unnamed application columns and require a real email row.
+  d.sections = d.sections.flatMap(section => {
+    if(section.title !== 'ตาราง Account' || !section.html) return [section];
+    const doc = new DOMParser().parseFromString(section.html, 'text/html');
+    const headers = Array.from(doc.querySelectorAll('thead th')).map(th => th.textContent.trim());
+    const keep = headers.map((header, i) => i === 0 || header ? i : -1).filter(i => i >= 0);
+    const rows = Array.from(doc.querySelectorAll('tbody tr')).map(row =>
+      Array.from(row.querySelectorAll('td')).map(td => td.textContent.trim())
+    ).filter(row => row[0] && row[0] !== '-' && row[0] !== '—');
+    if(keep.length < 2 || !rows.length) return [];
+    return [{ title:section.title, html:_tbl(keep.map(i => headers[i]), rows.map(row => keep.map(i => row[i] || '')), []) }];
+  });
+
+  // SL — rebuild from slItems if no software section
+  if (d.type === 'sl' && !(d.sections.find(s => s.title === 'รายการ Software')) && (d.slItems||[]).length) {
+    const rows = d.slItems.map((it, i) => [
+      i+1, it.name||'—', it.plan||'—',
+      it.price ? money(it.price) : '—',
+      it.months||'—', it.qty||'—',
+      it.startMonth||'—', it.endMonth||'—',
+      (it.price&&it.months&&it.qty) ? money(it.price*it.months*it.qty) : '—',
+    ]);
+    d.sections.unshift({ title:'รายการ Software', html: _tbl(
+      ['#','ชื่อ Software','Plan','฿/เดือน','เดือน','จำนวน','เริ่ม','สิ้นสุด','รวม'], rows, [3,8]
+    )});
+  }
+
+  // HW — rebuild from hwItems if no hardware section
+  if (d.type === 'hw' && !(d.sections.find(s => s.title === 'รายการ Hardware')) && (d.hwItems||[]).length) {
+    const rows = d.hwItems.map((it, i) => [
+      i+1, it.name||'—',
+      it.price ? money(it.price) : '—',
+      it.qty||'—',
+      (it.price&&it.qty) ? money(it.price*it.qty) : '—',
+    ]);
+    d.sections.push({ title:'รายการ Hardware', html: _tbl(
+      ['#','ชื่ออุปกรณ์','ราคา/ชิ้น','จำนวน','รวม'], rows, [2,4]
+    )});
+  }
+
+  return d;
+}
+
+async function downloadMemoPdf(data) {
+  // ── Ensure sections are populated before PDF render ──────────────
+  data = _normalisePdfData(data);
+
+  // ── Preload signatures for all approvers ─────────────────────────
+  // Also include legacy reviewerName/approverName fields used in PDF arr construction
+  if (typeof _preloadSignatures === 'function') {
+    const approversList = [...(data.approvers || [])];
+    // Add legacy reviewer/approver if they have names not already in list
+    if (data.reviewerName && data.reviewerName !== '-') {
+      if (!approversList.find(a => a.name === data.reviewerName)) {
+        approversList.push({ name: data.reviewerName, status: 'pending' });
+      }
+    }
+    if (data.approverName && data.approverName !== '-') {
+      if (!approversList.find(a => a.name === data.approverName)) {
+        approversList.push({ name: data.approverName, status: 'pending' });
+      }
+    }
+    await _preloadSignatures(approversList);
+  }
+
+  const stage = document.getElementById('pdf-stage');
+  stage.innerHTML = renderMemoPdf(data);
+  // File naming: [TYPE]_[MemoNo]_[Project]_[Extra]_[Date].Ver1.0.0
+  const typeTag = ({ sl:'SL', hw:'HW', int:'INT', ent:'EXT', dep:'DEP' }[data.type] || data.type?.toUpperCase() || 'MEMO');
+  const proj    = (data.project || '').replace(/\s+/g,'');
+  const memoNo  = (data.memoNo  || 'memo').replace(/\s+/g,'');
+  const dateStr = (data.date    || new Date().toISOString().slice(0,10)).replace(/\//g,'-').replace(/\s.*/,'');
+
+  let extra = '';
+  if(data.type === 'sl') {
+    // Read first software name from memo sections data, NOT from live form DOM
+    const slSection = (data.sections||[]).find(s => s.title === 'รายการ Software');
+    let firstName = '';
+    if (slSection?.html) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = slSection.html;
+      const firstTd = tmp.querySelector('tbody tr td:nth-child(2)');
+      firstName = firstTd?.textContent?.trim() || '';
+    }
+    // Fallback to slItems array
+    if (!firstName) {
+      firstName = (data.slItems||[]).find(it => it.name && it.name !== '-')?.name || '';
+    }
+    extra = firstName ? '_' + firstName.replace(/\s+/g,'') : '';
+  }
+
+  const filename = `[${typeTag}]_${memoNo}_${proj}${extra}_${dateStr}.Ver1.0.0.pdf`;
+  async function fetchWithRetry(url, opts, ms=55000, retries=2) {
+    for(let i=0; i<=retries; i++) {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), ms);
+      try {
+        const r = await fetch(url, {...opts, signal:ctrl.signal});
+        clearTimeout(t); return r;
+      } catch(e) { clearTimeout(t); if(i===retries) throw e; await new Promise(r=>setTimeout(r,2000)); }
+    }
+  }
+  // ── Show loading indicator ────────────────────────────────────────
+  const loadingEl = document.createElement('div');
+  loadingEl.id = 'pdf-loading-overlay';
+  loadingEl.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center';
+  loadingEl.innerHTML = '<div style="background:#fff;border-radius:12px;padding:28px 36px;text-align:center;font-family:\'IBM Plex Sans Thai\',sans-serif">'
+    + '<div style="font-size:15px;font-weight:600;color:#185FA5;margin-bottom:8px">⏳ กำลังสร้าง PDF...</div>'
+    + '<div id="pdf-loading-msg" style="font-size:12px;color:#666">กรุณารอสักครู่</div>'
+    + '</div>';
+  document.body.appendChild(loadingEl);
+  const setMsg = msg => { const el = document.getElementById('pdf-loading-msg'); if(el) el.textContent = msg; };
+
+  try {
+    setMsg('กำลังติดต่อ PDF server...');
+    const html = stage.firstElementChild?.outerHTML || stage.innerHTML;
+    console.log('[PDF] Sending to server, html length:', html.length, 'filename:', filename);
+    const resp = await fetchWithRetry('https://memo-pdf-server.onrender.com/generate-pdf', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ html, filename, logoBase64: LOGO_B64 })
+    });
+    if(!resp.ok) throw new Error('Server '+resp.status);
+    setMsg('กำลัง download...');
+    const blob = await resp.blob();
+    console.log('[PDF] Received blob, size:', blob.size, 'bytes');
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement('a'); a.href=url; a.download=filename; a.click();
+    URL.revokeObjectURL(url);
+    console.log('[PDF] Download triggered:', filename);
+  } catch(err) {
+    console.warn('[PDF] Server failed, fallback to print:', err.message);
+    setMsg('Server ไม่ตอบสนอง — เปิด Print dialog แทน');
+    await new Promise(r => setTimeout(r, 800));
+    document.body.classList.add('printing-pdf');
+    try { window.print(); } finally { document.body.classList.remove('printing-pdf'); }
+  } finally {
+    loadingEl.remove();
+  }
+}
+function openMemoPdf(memoNo) {
+  const memo = loadMemos().find(m => m.memoNo === memoNo);
+  if(!memo) { alert('ไม่พบ Memo'); return; }
+  downloadMemoPdf(memo);
+}
+
+// ── Init ──
+// ── Shared CSV export helper ──────────────────────────────────────
+// UTF-8 CSV with BOM so Excel opens Thai text correctly
+function _downloadCSV(filename, headers, rows) {
+  const esc = v => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  };
+  const lines = [headers.map(esc).join(','), ...rows.map(r => r.map(esc).join(','))];
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = filename + '_' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── Sidebar collapse ──────────────────────────────────────────────
+function toggleSidebar() {
+  const sb = document.querySelector('.sidebar');
+  if (!sb) return;
+  const collapsed = sb.classList.toggle('collapsed');
+  try { localStorage.setItem('orbit-sb-collapsed', collapsed ? '1' : '0'); } catch(e) {}
+}
+function initSidebarState() {
+  const sb = document.querySelector('.sidebar');
+  if (!sb) return;
+  try {
+    const savedState = localStorage.getItem('orbit-sb-collapsed');
+    const compactScreen = window.matchMedia?.('(max-width: 700px)').matches;
+    if (savedState === '1' || (savedState === null && compactScreen)) sb.classList.add('collapsed');
+  } catch(e) {}
+}
+
+
 // ── Micro interactions ──
 function pmoMotionHide(el, afterHide) {
   if(!el) return;
@@ -2415,15 +3720,18 @@ function initApp() {
   refreshNotifications();
   rebuildAcct();
   setInterval(() => fetch('https://memo-pdf-server.onrender.com/ping').catch(()=>{}), 4*60*1000);
-  // Load from Supabase on startup and refresh UI
-  loadMemosAsync().then(() => {
-      renderPendingMemos();
-      renderHistoryMemos();
-      refreshNotifications();
-  
+  // Load Supabase-backed Memo dependencies and refresh UI.
+  Promise.all([
+    loadMemosAsync(),
+    loadUserProfilesAsync(),
+    loadAuthorityAsync(),
+    typeof initSettings === 'function' ? initSettings() : Promise.resolve(),
+  ]).then(() => {
+    renderPendingMemos();
+    renderHistoryMemos();
+    refreshNotifications();
+    if(typeof refreshApproverDropdowns === 'function') refreshApproverDropdowns();
   }).catch(e => console.warn('Supabase init load failed', e));
-  // Load settings and refresh all dropdowns
-  if(typeof initSettings === 'function') initSettings();
   document.addEventListener('click', event => {
     const panel = document.getElementById('notification-panel');
     if(!panel?.classList.contains('is-open')) return;
