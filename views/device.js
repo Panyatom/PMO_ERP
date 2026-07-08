@@ -40,6 +40,7 @@ function deviceToDb(d, isNew=false) {
     photo_url:     d.photoUrl || null,
     status:        d.status || 'not_identified',
     memo_ref:      d.memoNo || null,    // use memoNo as single field name
+    purchase_order_id: d.purchaseOrderId || null,
     note:          d.note || null,
     source:        d.source || 'manual',
     created_at:    d.createdAt || new Date().toISOString(),
@@ -79,6 +80,7 @@ function dbToDevice(r) {
     photoUrl:     r.photo_url || '',
     status:       r.status || 'not_identified',
     memoNo:       r.memo_ref || '',   // canonical field name
+    purchaseOrderId: r.purchase_order_id || '',
     note:         r.note || '',
     source:       r.source || 'manual',
     createdAt:    r.created_at,
