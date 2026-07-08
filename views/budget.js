@@ -2436,10 +2436,16 @@ function showManualExpenses(proj, type) {
 const BGT_POOLS_KEY = 'orbit-pmo-budget-pools-v1';
 let _poolCache = null;
 
-function loadBudgetPools() {
+function isActiveBudgetPool(pool) {
+  return (pool?.status || 'active') === 'active';
+}
+function loadBudgetPoolsRaw() {
   if (_poolCache) return _poolCache;
   try { _poolCache = JSON.parse(localStorage.getItem(BGT_POOLS_KEY) || '[]'); } catch(e) { _poolCache = []; }
   return _poolCache;
+}
+function loadBudgetPools() {
+  return loadBudgetPoolsRaw().filter(isActiveBudgetPool);
 }
 function storeBudgetPools(arr) {
   _poolCache = arr;
@@ -2453,6 +2459,7 @@ async function loadBudgetPoolsAsync() {
         id:         r.id,
         project:    r.project,
         name:       r.name,
+        status:     r.status || 'active',
         budget:     Number(r.budget) || 0,
         year:       r.year,
         startMonth: r.start_month || null,
@@ -2460,7 +2467,7 @@ async function loadBudgetPoolsAsync() {
         memoTypes:  r.memo_types  || [],
       }));
       try { localStorage.setItem(BGT_POOLS_KEY, JSON.stringify(_poolCache)); } catch(e) {}
-      return _poolCache;
+      return loadBudgetPools();
     } catch(e) { console.warn('Budget pools load failed', e.message); }
   }
   return loadBudgetPools();
@@ -2469,8 +2476,8 @@ async function savePoolAsync(rawPool, opts = {}) {
   // Phase 7A-9A: savePoolAsync() is the single Budget Pool write path (manual save and bulk
   // import both call it) — canonicalize here so startMonth/endMonth/year can never be persisted
   // out of sync with each other, regardless of what the caller computed.
-  const pool = createBudgetPoolRecord(rawPool);
-  const all = loadBudgetPools();
+  const pool = { ...createBudgetPoolRecord(rawPool), status: rawPool.status || 'active' };
+  const all = loadBudgetPoolsRaw();
   const idx = all.findIndex(p => p.id === pool.id);
   if (idx >= 0) all[idx] = pool; else all.push(pool);
   storeBudgetPools(all);
@@ -2478,6 +2485,7 @@ async function savePoolAsync(rawPool, opts = {}) {
     try {
       await supaFetch('budget_pools', 'POST', {
         id: pool.id, project: pool.project, name: pool.name,
+        status: pool.status,
         budget: pool.budget, year: pool.year,
         start_month: pool.startMonth || null,
         end_month:   pool.endMonth   || null,
@@ -2499,10 +2507,19 @@ async function savePoolAsync(rawPool, opts = {}) {
   if (!opts.skipRemap) remapActualSpendForBudgetPools();
 }
 async function deletePoolAsync(id) {
-  storeBudgetPools(loadBudgetPools().filter(p => p.id !== id));
-  _poolCache = null;
+  const now = new Date().toISOString();
+  const all = loadBudgetPoolsRaw();
+  const idx = all.findIndex(p => p.id === id);
+  if (idx >= 0) {
+    all[idx] = { ...all[idx], status: 'inactive', updatedBy: currentUser(), updatedAt: now };
+    storeBudgetPools(all);
+  }
   if (await checkSupa()) {
-    try { await supaFetch('budget_pools', 'DELETE', null, '?id=eq.' + encodeURIComponent(id)); } catch(e) {}
+    await supaFetch('budget_pools', 'PATCH', {
+      status: 'inactive',
+      updated_by: currentUser(),
+      updated_at: now,
+    }, '?id=eq.' + encodeURIComponent(id));
   }
   remapActualSpendForBudgetPools();
 }
@@ -3507,5 +3524,8 @@ function deleteBudgetPool(id) {
   if (!confirm(`ลบ Budget Pool "${poolLabel}" นี้?`)) return;
   deletePoolAsync(id)
     .then(() => renderBudgetSettings())
-    .catch(e => console.warn('Pool delete error:', e));
+    .catch(e => {
+      console.warn('Pool delete error:', e);
+      alert('ไม่สามารถลบ Budget Pool ได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่');
+    });
 }

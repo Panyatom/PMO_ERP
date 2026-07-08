@@ -47,6 +47,9 @@ function dbToLicense(r) {
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
+function isDeletedLicense(lic) {
+  return lic?.statusOverride === 'deleted';
+}
 
 // ── localStorage / Supabase CRUD ───────────────────────────
 function loadManualLicenses() {
@@ -62,12 +65,13 @@ async function loadManualLicensesAsync() {
   if (await checkSupa()) {
     try {
       const rows = await supaFetch('licenses', 'GET', null, '?source=eq.manual&order=created_at.desc&limit=500');
-      _licCache = (rows || []).map(dbToLicense);
-      try { localStorage.setItem(LICENSE_KEY, JSON.stringify(_licCache)); } catch(e) {}
+      const allLicenses = (rows || []).map(dbToLicense);
+      _licCache = allLicenses.filter(l => !isDeletedLicense(l));
+      try { localStorage.setItem(LICENSE_KEY, JSON.stringify(allLicenses)); } catch(e) {}
       return _licCache;
     } catch(e) { console.warn('Supabase licenses read failed', e.message); }
   }
-  return loadManualLicenses();
+  return loadManualLicenses().filter(l => !isDeletedLicense(l));
 }
 async function saveLicenseAsync(data) {
   const saved = { ...data, updatedAt: new Date().toISOString() };
@@ -80,11 +84,26 @@ async function saveLicenseAsync(data) {
   storeManualLicenses(ls); return saved;
 }
 async function deleteLicenseAsync(id) {
+  const now = new Date().toISOString();
+  const existing = getAllLicenses().find(l => String(l.id) === String(id))
+    || loadManualLicenses().find(l => String(l.id) === String(id));
+  const deletedNote = existing?.note
+    ? `${existing.note}\nDeleted ${now} by ${currentUser()}`
+    : `Deleted ${now} by ${currentUser()}`;
   if (await checkSupa()) {
-    try { await supaFetch('licenses', 'DELETE', null, '?id=eq.' + encodeURIComponent(id)); _licCache = null; }
+    try {
+      await supaFetch('licenses', 'PATCH', {
+        status_override: 'deleted',
+        note: deletedNote,
+        updated_at: now,
+      }, '?id=eq.' + encodeURIComponent(id));
+      _licCache = null;
+    }
     catch(e) { console.warn('Supabase license delete failed', e.message); }
   }
-  storeManualLicenses(loadManualLicenses().filter(l => String(l.id) !== String(id)));
+  storeManualLicenses(loadManualLicenses().map(l => String(l.id) === String(id)
+    ? { ...l, statusOverride: 'deleted', note: deletedNote, updatedAt: now }
+    : l));
 }
 
 // ── Parse SL memo → licenses (use slItems JSON not HTML) ───
@@ -197,13 +216,15 @@ function getAllLicenses() {
   const memoLicenses = loadMemos()
     .filter(m => m.type === 'sl' && m.status === 'completed')
     .flatMap(parseLicenseFromMemo);
-  const manual = _licCache !== null ? _licCache : loadManualLicenses();
-  const manualIds = new Set(manual.map(l => l.id));
+  const manualAll = loadManualLicenses();
+  const manual = (_licCache !== null ? _licCache : manualAll).filter(l => !isDeletedLicense(l));
+  const manualIds = new Set(manualAll.map(l => l.id));
   return [...memoLicenses.filter(l => !manualIds.has(l.id)), ...manual];
 }
 
 // ── Status logic ─────────────────────────────────────────
 function getLicenseStatus(lic) {
+  if (isDeletedLicense(lic)) return { label: 'Deleted', badge: 'badge-gray', days: null, key: 'deleted' };
   if (lic.statusOverride === 'cancelled') return { label: 'Cancelled', badge: 'badge-gray', days: null, key: 'cancelled' };
   if (!lic.expiry) return { label: 'Active', badge: 'badge-green', days: null, key: 'active' };
   const days = Math.floor((new Date(lic.expiry) - new Date()) / 86400000);
@@ -218,7 +239,7 @@ function getLicenseStatus(lic) {
 // ── Export License CSV ──────────────────────────────────────────
 function exportLicenseCSV() {
   const memos    = loadMemos().filter(m => m.type === 'sl' && m.status === 'completed');
-  const manuals  = typeof loadManualLicenses === 'function' ? loadManualLicenses() : [];
+  const manuals  = typeof loadManualLicenses === 'function' ? loadManualLicenses().filter(l => !isDeletedLicense(l)) : [];
   // Build one row per license item from SL memos
   const headers = ['Memo No','โครงการ','ชื่อ Software','Plan','฿/เดือน','จำนวน (Seats)',
     'เริ่ม','สิ้นสุด','รวม (฿)','วันที่อนุมัติ','สถานะ','ผู้ขอ','แหล่งข้อมูล'];
@@ -2403,7 +2424,10 @@ function deleteLicense(id) {
   if (!lic) return;
   if (lic.source === 'memo') { alert('ไม่สามารถลบ License ที่มาจาก Memo ได้'); return; }
   if (!confirm(`ลบ "${lic.name}" ออกจากระบบ?`)) return;
-  storeManualLicenses(loadManualLicenses().filter(l => String(l.id) !== String(id)));
+  const now = new Date().toISOString();
+  storeManualLicenses(loadManualLicenses().map(l => String(l.id) === String(id)
+    ? { ...l, statusOverride: 'deleted', updatedAt: now }
+    : l));
   _licCache = null;
   _renderLicTab(_licCurrentTab);
   deleteLicenseAsync(id).catch(e => console.warn(e));
