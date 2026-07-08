@@ -777,14 +777,89 @@ function formatMonthBE(value) {
   return `${String(parsed.month).padStart(2, '0')}/${gregorianYearToBuddhistEra(value)}`;
 }
 
-// Canonical Project list — the single source of truth for "Project" dropdowns that should reflect
-// Settings' configured project list (as opposed to dropdowns that intentionally derive their
-// options from observed data, e.g. Pending's project filter). Phase 7A-9A foundation: only
-// Budget Pool Settings (`bpool-project`) is migrated onto this helper in this phase; the rest of
-// the app's Project dropdowns are deferred, not redesigned, here — see docs/TECHNICAL_DEBT.md.
-function getCanonicalProjectList() {
+let _organizationProjectsCache = null;
+let _organizationProjectsLoaded = false;
+
+function normalizeOrganizationProject(row = {}) {
+  const name = String(row.name || row.project || row.code || '').trim();
+  const code = String(row.code || name).trim();
+  return {
+    id: String(row.id || code || name).trim(),
+    code,
+    name,
+    status: String(row.status || 'active').toLowerCase(),
+  };
+}
+
+function fallbackProjectList() {
   const s = typeof loadSettings === 'function' ? loadSettings() : null;
-  return s?.projects || [];
+  return Array.isArray(s?.projects) ? s.projects : [];
+}
+
+async function loadOrganizationProjectsAsync() {
+  _organizationProjectsLoaded = true;
+  if (typeof checkSupa === 'function' && await checkSupa()) {
+    try {
+      const rows = await supaFetch('organization_projects', 'GET', null, '?status=eq.active&order=name.asc');
+      _organizationProjectsCache = (rows || [])
+        .map(normalizeOrganizationProject)
+        .filter(project => project.status === 'active' && (project.name || project.code));
+    } catch(e) {
+      console.warn('organization_projects load failed; using local project fallback', e.message);
+    }
+  }
+  return getCanonicalProjectList();
+}
+
+// Canonical Project list for owned project dropdowns. Supabase organization_projects is primary;
+// local Settings is only an offline/first-load fallback.
+function getCanonicalProjectList() {
+  const source = Array.isArray(_organizationProjectsCache) && _organizationProjectsCache.length
+    ? _organizationProjectsCache.map(project => project.name || project.code)
+    : fallbackProjectList();
+  const values = source
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+  return [...new Set(values)];
+}
+
+function projectOptionsHtml(projects, selected = '', options = {}) {
+  const current = String(selected || '').trim();
+  const rows = (projects || []).map(project =>
+    `<option value="${esc(project)}" ${project === current ? 'selected' : ''}>${esc(project)}</option>`
+  );
+  if (current && !rows.length && options.includeCurrentValue !== false) {
+    rows.push(`<option value="${esc(current)}" selected>${esc(current)} / Current value</option>`);
+  } else if (current && options.includeCurrentValue !== false && !(projects || []).includes(current)) {
+    rows.push(`<option value="${esc(current)}" selected>${esc(current)} / Current value</option>`);
+  }
+  return rows.join('');
+}
+
+function setCanonicalProjectSelectOptions(select, options = {}) {
+  if (!select) return [];
+  const selected = String(options.selected ?? select.value ?? '').trim();
+  const includeBlank = options.includeBlank !== false;
+  const blankLabel = options.blankLabel || '- Select project -';
+  const includeOther = !!options.includeOther;
+  const projects = getCanonicalProjectList();
+  const rows = [];
+  if (includeBlank) rows.push(`<option value="">${esc(blankLabel)}</option>`);
+  rows.push(projectOptionsHtml(projects, selected, {
+    includeCurrentValue: selected !== 'other',
+  }));
+  if (includeOther) rows.push(`<option value="other" ${selected === 'other' ? 'selected' : ''}>อื่นๆ (กรอกเอง)</option>`);
+  select.innerHTML = rows.join('');
+  if ([...select.options].some(option => option.value === selected)) select.value = selected;
+  else if (includeOther && selected) select.value = 'other';
+  else select.value = '';
+  return projects;
+}
+
+function refreshOwnedProjectControls() {
+  if (typeof refreshMemoProjectOptions === 'function') refreshMemoProjectOptions();
+  if (typeof refreshLicenseProjectOptions === 'function') refreshLicenseProjectOptions();
+  if (typeof refreshDeviceProjectOptions === 'function') refreshDeviceProjectOptions();
 }
 
 function actualSpendOverlapsYear(record = {}, year) {
@@ -3723,6 +3798,7 @@ function initApp() {
   // Load Supabase-backed Memo dependencies and refresh UI.
   Promise.all([
     loadMemosAsync(),
+    typeof loadOrganizationProjectsAsync === 'function' ? loadOrganizationProjectsAsync() : Promise.resolve(),
     loadUserProfilesAsync(),
     loadAuthorityAsync(),
     typeof loadDevicesAsync === 'function' ? loadDevicesAsync() : Promise.resolve(),
@@ -3732,6 +3808,7 @@ function initApp() {
     renderPendingMemos();
     renderHistoryMemos();
     refreshNotifications();
+    if(typeof refreshOwnedProjectControls === 'function') refreshOwnedProjectControls();
     if(typeof refreshApproverDropdowns === 'function') refreshApproverDropdowns();
   }).catch(e => console.warn('Supabase init load failed', e));
   document.addEventListener('click', event => {

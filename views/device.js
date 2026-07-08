@@ -727,6 +727,7 @@ function renderDevice() {
   // Part 8 (UX consistency pass) — Platform/Type/Status/Project/Company are
   // now multi-select filters; initMultiSelect() is idempotent (no-op past
   // the first call) so it's safe to call on every render.
+  refreshDeviceProjectOptions();
   const _devFilterLabels = {
     'dev-filter-platform': 'Platform', 'dev-filter-type': 'Type', 'dev-filter-status': 'Status',
     'dev-filter-project': 'Project', 'dev-filter-company': 'Company',
@@ -939,6 +940,7 @@ function openDeviceModal(id) {
   if(id) {
     const d = loadDevices().find(dev => String(dev.id) === String(id));
     if(!d) return;
+    refreshDeviceProjectOptions(d.project || '');
     document.getElementById('dev-modal-title').textContent = 'Edit Device';
     document.getElementById('dev-edit-id').value = d.id;
     setVal('dev-name', d.name);        setVal('dev-brand', d.brand);
@@ -957,6 +959,7 @@ function openDeviceModal(id) {
     // === 'memo') keeps its memo link read-only; manual devices stay editable.
     _setDeviceMemoLinkUI(d.source === 'memo' && !!d.memoNo, d.memoNo);
   } else {
+    refreshDeviceProjectOptions('');
     document.getElementById('dev-modal-title').textContent = 'Add Device';
     document.getElementById('dev-edit-id').value = '';
     ['dev-name','dev-brand','dev-asset','dev-serial','dev-owner','dev-return-date',
@@ -982,6 +985,30 @@ function _setDeviceMemoLinkUI(readOnly, memoNo) {
   }
 }
 function closeDeviceModal() { document.getElementById('device-modal').style.display='none'; }
+
+function refreshProjectMultiSelectOptions(id) {
+  const select = document.getElementById(id);
+  if(!select || typeof getCanonicalProjectList !== 'function') return;
+  const selected = typeof msValues === 'function' ? msValues(id) : Array.from(select.selectedOptions || []).map(o => o.value);
+  const projects = getCanonicalProjectList();
+  select.innerHTML = projects.map(project =>
+    `<option value="${esc(project)}" ${selected.includes(project) ? 'selected' : ''}>${esc(project)}</option>`
+  ).join('');
+  if(typeof refreshMultiSelectUI === 'function') refreshMultiSelectUI(id);
+}
+
+function refreshDeviceProjectOptions(selectedDeviceProject = '') {
+  const devProject = document.getElementById('dev-project');
+  if(devProject && typeof setCanonicalProjectSelectOptions === 'function') {
+    setCanonicalProjectSelectOptions(devProject, {
+      selected: selectedDeviceProject || devProject.value,
+      blankLabel: '— ไม่ระบุ —',
+    });
+    if(typeof renderPmoSelect === 'function') renderPmoSelect(devProject);
+  }
+  refreshProjectMultiSelectOptions('dev-filter-project');
+  refreshProjectMultiSelectOptions('po-filter-project');
+}
 
 // ── Dedup check — find existing device by serial or assetTag ──
 function findExistingDevice(devices, data) {
@@ -1311,6 +1338,7 @@ function switchDevTab(tab, btn) {
 }
 
 function renderPurchaseOrders() {
+  refreshDeviceProjectOptions();
   const _poFilterLabels = { 'po-filter-status': 'Status', 'po-filter-project': 'Project' };
   Object.keys(_poFilterLabels).forEach(id => initMultiSelect(id, undefined, _poFilterLabels[id]));
   loadPurchaseOrdersAsync().then(() => _renderPOTable()).catch(() => _renderPOTable());

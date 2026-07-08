@@ -1795,16 +1795,12 @@ function openManualExpenseModal(editId = null) {
   if (expense?.voidedAt) { alert('รายการที่ void แล้วแก้ไขไม่ได้'); return; }
   document.getElementById('manual-expense-modal')?.remove();
 
-  const settingsProjects = typeof loadSettings === 'function' ? (loadSettings()?.projects || []) : [];
-  const projects = [...new Set([
-    ...settingsProjects,
-    ...loadMemos().map(m => m.project),
-    ...loadBudgetPools().map(p => p.project),
-    ...loadManualExpenses().map(e => e.project),
-  ].filter(Boolean))].sort();
+  const g = (key, fallback = '') => expense?.[key] ?? fallback;
+  const projects = typeof getCanonicalProjectList === 'function'
+    ? getCanonicalProjectList()
+    : [g('project')].filter(Boolean);
   const pools = loadBudgetPools();
   const today = new Date().toISOString().slice(0, 10);
-  const g = (key, fallback = '') => expense?.[key] ?? fallback;
 
   const modal = document.createElement('div');
   modal.id = 'manual-expense-modal';
@@ -1826,7 +1822,9 @@ function openManualExpenseModal(editId = null) {
         <div class="fg"><label>Project *</label>
           <select id="me-project" class="ri">
             <option value="">— เลือก —</option>
-            ${projects.map(p=>`<option value="${esc(p)}" ${g('project')===p?'selected':''}>${esc(p)}</option>`).join('')}
+            ${typeof projectOptionsHtml === 'function'
+              ? projectOptionsHtml(projects, g('project'))
+              : projects.map(p=>`<option value="${esc(p)}" ${g('project')===p?'selected':''}>${esc(p)}</option>`).join('')}
           </select>
         </div>
         <div class="fg"><label>Budget Pool</label>
@@ -3377,7 +3375,6 @@ function _onBpoolStartMonthChange() {
 }
 
 function openBudgetPoolModal(editId) {
-  const projects = getCanonicalProjectList();
   const pool    = editId ? loadBudgetPools().find(p => p.id === editId) : null;
   // Phase 7A-9A: createBudgetPoolRecord() is now the single Gregorian-safe canonicalizer, so the
   // date/year fields are sourced from it rather than re-normalizing ad hoc here. Other fields
@@ -3388,7 +3385,10 @@ function openBudgetPoolModal(editId) {
   const year    = document.getElementById('bset-year')?.value || getCurrentBuddhistYear();
 
   const g = (f, def = '') => pool ? (pool[f] ?? def) : def;
-  const projOpts = projects.map(p => `<option value="${esc(p)}" ${g('project') === p ? 'selected' : ''}>${esc(p)}</option>`).join('');
+  const projects = getCanonicalProjectList();
+  const projOpts = typeof projectOptionsHtml === 'function'
+    ? projectOptionsHtml(projects, g('project'))
+    : projects.map(p => `<option value="${esc(p)}" ${g('project') === p ? 'selected' : ''}>${esc(p)}</option>`).join('');
   const initialStart = canonicalPool?.startMonth || '';
   const initialEnd   = canonicalPool?.endMonth || '';
   const initialYear  = canonicalPool?.year || g('year', year);

@@ -129,6 +129,18 @@ function toggleOtherProject() {
   if(wrap) wrap.style.display = sel.value==='other' ? 'block' : 'none';
   if(sel.value==='other') document.getElementById('f-project-other')?.focus();
 }
+function refreshMemoProjectOptions(selected = '') {
+  const sel = document.getElementById('f-project');
+  if(!sel || typeof setCanonicalProjectSelectOptions !== 'function') return;
+  const current = selected || sel.value;
+  setCanonicalProjectSelectOptions(sel, {
+    selected: current,
+    blankLabel: '— เลือกโครงการ —',
+    includeOther: true,
+  });
+  toggleOtherProject();
+  if(typeof renderPmoSelect === 'function') renderPmoSelect(sel);
+}
 function toggleOther() {
   const sel = document.getElementById('f-reason');
   document.getElementById('other-wrap').style.display = sel.value==='other' ? 'block' : 'none';
@@ -1316,6 +1328,7 @@ async function applyDraftEdit() {
 
       const projSel = document.getElementById('f-project');
       if(projSel) {
+        if(typeof refreshMemoProjectOptions === 'function') refreshMemoProjectOptions(memo.project || '');
         const opt = [...projSel.options].find(o => o.value === memo.project);
         if(opt) { projSel.value = memo.project; toggleOtherProject(); }
         else { projSel.value = 'other'; toggleOtherProject(); const oth = document.getElementById('f-project-other'); if(oth) oth.value = memo.project || ''; }

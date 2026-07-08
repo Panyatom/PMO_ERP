@@ -390,13 +390,18 @@ function _populateLicenseFilters(allLicenses) {
   }
   const modalProj = document.getElementById('lic-project');
   if (modalProj) {
-    const s = typeof loadSettings === 'function' ? loadSettings() : null;
-    const projects = s?.projects || [...new Set(allLicenses.map(l => l.project).filter(Boolean))].sort();
-    const cur = modalProj.value;
-    modalProj.innerHTML = `<option value="">— ไม่ระบุ —</option>` +
-      projects.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
-    if ([...modalProj.options].some(o => o.value === cur)) modalProj.value = cur;
+    refreshLicenseProjectOptions(modalProj.value);
   }
+}
+
+function refreshLicenseProjectOptions(selected = '') {
+  const modalProj = document.getElementById('lic-project');
+  if(!modalProj || typeof setCanonicalProjectSelectOptions !== 'function') return;
+  setCanonicalProjectSelectOptions(modalProj, {
+    selected,
+    blankLabel: '— ไม่ระบุ —',
+  });
+  if(typeof renderPmoSelect === 'function') renderPmoSelect(modalProj);
 }
 
 function _renderLicMemoIndex() {
@@ -2341,6 +2346,7 @@ function openLicenseModal(id) {
     document.getElementById('lic-price').value       = lic.pricePerMonth || 0;
     document.getElementById('lic-owner').value       = lic.owner || '';
     document.getElementById('lic-dept').value        = lic.department || '';
+    refreshLicenseProjectOptions(lic.project || '');
     document.getElementById('lic-project').value     = lic.project || '';
     document.getElementById('lic-type-field').value  = lic.licenseType || 'subscription';
     document.getElementById('lic-purchase-date').value = lic.purchaseDate?.slice(0,10) || '';
