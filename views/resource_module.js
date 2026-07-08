@@ -746,33 +746,6 @@ function employeeDirectoryStatusBadge(row) {
   }
   return '<span class="badge badge-green" style="font-size:10px;white-space:nowrap">Active</span>';
 }
-function closePeopleActionMenus(exceptEl=null) {
-  document.querySelectorAll('.res-people-action-menu.is-open').forEach(menu => {
-    if(menu !== exceptEl) menu.classList.remove('is-open');
-  });
-}
-function togglePeopleActionMenu(event, requestId) {
-  event.stopPropagation();
-  const menu = event.currentTarget?.closest?.('.res-people-action-menu');
-  if(!menu) return;
-  const open = menu.classList.contains('is-open');
-  closePeopleActionMenus(menu);
-  menu.classList.toggle('is-open', !open);
-}
-function employeeDirectoryActionMenu(row) {
-  if(!row.requestId) return '<span style="font-size:11px;color:var(--text-3)">Master only</span>';
-  const id = esc(row.requestId);
-  const actions = [
-    `<button class="res-people-action-item" onclick="event.stopPropagation();closePeopleActionMenus();openEmployeeEdit('${id}')">Edit</button>`,
-    canTransfer(currentRole()) ? `<button class="res-people-action-item" onclick="event.stopPropagation();closePeopleActionMenus();openResTransfer('${id}')">Transfer</button>` : '',
-    canProjectCode(currentRole()) ? `<button class="res-people-action-item" onclick="event.stopPropagation();closePeopleActionMenus();openAddCode('${id}')">Add Code</button>` : '',
-    (row.status === 'active' && canOffboard(currentRole())) ? `<button class="res-people-action-item is-danger" onclick="event.stopPropagation();closePeopleActionMenus();offboardResource('${id}')">Offboard</button>` : '',
-  ].filter(Boolean).join('');
-  return `<span class="res-people-action-menu">
-    <button class="btn-sm res-people-action-trigger" onclick="togglePeopleActionMenu(event,'${id}')" aria-haspopup="menu" type="button">Manage <b>v</b></button>
-    <span class="res-people-action-popover" role="menu">${actions || '<span style="padding:8px 9px;font-size:12px;color:var(--text-3)">No actions</span>'}</span>
-  </span>`;
-}
 function requiresCancelReason(toStatus) {
   return typeof PMO_RESOURCE_FLOW !== 'undefined' && PMO_RESOURCE_FLOW.requiresCancelReason
     ? PMO_RESOURCE_FLOW.requiresCancelReason(toStatus)
@@ -1675,14 +1648,6 @@ function ensureResChrome() {
       .res-filter-option em{font-style:normal;color:var(--text-3);font-size:11px}
       .res-filter-empty{padding:12px;color:var(--text-3);font-size:12px;text-align:center}
       .res-cell-clip{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .res-people-action-menu{position:relative;display:inline-flex;justify-content:center}
-      .res-people-action-trigger{font-size:11px!important;padding:5px 10px!important;min-height:30px;gap:7px}
-      .res-people-action-trigger b{font-size:12px;line-height:1;color:var(--text-3)}
-      .res-people-action-popover{display:none;position:absolute;right:0;top:calc(100% + 6px);z-index:70;min-width:150px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);box-shadow:0 14px 34px rgba(15,23,42,.18);padding:5px;text-align:left}
-      .res-people-action-menu.is-open .res-people-action-popover{display:grid;gap:3px}
-      .res-people-action-item{width:100%;border:0;background:transparent;color:var(--text-2);font-family:inherit;font-size:12px;font-weight:700;text-align:left;padding:8px 9px;border-radius:6px;cursor:pointer}
-      .res-people-action-item:hover{background:var(--bg);color:var(--text)}
-      .res-people-action-item.is-danger{color:var(--amber)}
       @keyframes res-filter-tick{0%{transform:scale(.985);background:color-mix(in srgb,var(--blue) 10%,transparent)}55%{transform:scale(1.018);background:color-mix(in srgb,var(--blue) 14%,transparent)}100%{transform:scale(1);background:transparent}}
       #view-resource{background:color-mix(in srgb,var(--surface) 96%,transparent);border:1px solid var(--border-md);border-radius:8px;padding:0 12px 12px;box-shadow:0 14px 42px rgba(0,0,0,.12);overflow:visible}
       #res-chrome{margin:0 -12px 12px;padding:0;background:color-mix(in srgb,var(--surface-2) 84%,var(--surface));border-bottom:1px solid var(--border-md);border-radius:8px 8px 0 0}
@@ -1936,13 +1901,12 @@ function renderPeopleView(base) {
   const filteredRows = applyResourceDropdownFilters(rows, filterDefs);
   renderResourceTable([
     { label:'Employee Code', th:'width:118px', cell:r=>`<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-2);font-weight:700">${esc(r.employeeCode||'-')}</span>` },
-    { label:'ชื่อ-นามสกุล', th:'width:15%', cell:r=>`<strong class="res-cell-clip" title="${esc(r.personTh||'-')}">${esc(r.personTh||'-')}</strong>` },
-    { label:'Name - Surname', th:'width:15%', cell:r=>r.personEn ? `<span class="res-cell-clip" title="${esc(r.personEn)}">${esc(r.personEn)}</span>` : '<span style="color:var(--text-3)">-</span>' },
-    { label:'Position', th:'width:13%', cell:r=>`<span class="res-cell-clip" title="${esc(r.position||'-')}">${esc(r.position||'-')}</span>` },
+    { label:'ชื่อ-นามสกุล', th:'width:17%', cell:r=>`<strong class="res-cell-clip" title="${esc(r.personTh||'-')}">${esc(r.personTh||'-')}</strong>` },
+    { label:'Name - Surname', th:'width:17%', cell:r=>r.personEn ? `<span class="res-cell-clip" title="${esc(r.personEn)}">${esc(r.personEn)}</span>` : '<span style="color:var(--text-3)">-</span>' },
+    { label:'Position', th:'width:15%', cell:r=>`<span class="res-cell-clip" title="${esc(r.position||'-')}">${esc(r.position||'-')}</span>` },
     { label:'Level', th:'width:72px', cell:r=>r.level ? `<span class="badge badge-gray" style="font-size:10px">${esc(r.level)}</span>` : '-' },
-    { label:'Current Allocation', th:'width:21%', cell:r=>r.projects.length ? `<span class="res-cell-clip">${r.projects.map(a=>projectPill(a.project, `${a.project}: ${a.allocation}%`)).join(' ')}</span>` : '-' },
-    { label:'Status', th:'width:116px', cell:r=>employeeDirectoryStatusBadge(r) },
-    { label:'Action', th:'width:112px;text-align:center', td:'text-align:center;overflow:visible', cell:r=>employeeDirectoryActionMenu(r) },
+    { label:'Current Allocation', th:'width:25%', cell:r=>r.projects.length ? `<span class="res-cell-clip">${r.projects.map(a=>projectPill(a.project, `${a.project}: ${a.allocation}%`)).join(' ')}</span>` : '-' },
+    { label:'Status', th:'width:128px', cell:r=>employeeDirectoryStatusBadge(r) },
   ], filteredRows, 'No employee records match the selected filters.');
 }
 
@@ -3694,7 +3658,6 @@ function exportResourceCsv() {
 // Close modals on backdrop
 document.addEventListener('click', e => {
   if(!e.target.closest('.res-filter-menu')) closeResourceFilterMenus();
-  if(!e.target.closest('.res-people-action-menu')) closePeopleActionMenus();
   if(e.target===document.getElementById('resource-modal')) closeResModal();
   if(e.target===document.getElementById('resource-status-modal')) closeResStatus();
   if(e.target===document.getElementById('resource-transfer-modal')) closeResTransfer();
