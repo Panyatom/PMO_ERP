@@ -9,7 +9,6 @@ begin;
 create table if not exists public.budget_pools (
   id text primary key,
   project text,
-  organization_project_id text references public.organization_projects(id) on delete set null,
   name text not null,
   budget numeric(16,2) not null default 0,
   year integer,
@@ -32,7 +31,6 @@ create table if not exists public.budget_pools (
 
 alter table public.budget_pools
   add column if not exists project text,
-  add column if not exists organization_project_id text,
   add column if not exists name text,
   add column if not exists budget numeric(16,2) not null default 0,
   add column if not exists year integer,
@@ -48,15 +46,12 @@ alter table public.budget_pools
 create table if not exists public.infra_costs (
   id text primary key,
   project text,
-  organization_project_id text references public.organization_projects(id) on delete set null,
   program text,
   monthly_cost numeric(16,2) not null default 0,
   start_month text,
   end_month text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  created_by text,
-  updated_by text,
   constraint infra_costs_monthly_cost_nonnegative_chk check (monthly_cost >= 0),
   constraint infra_costs_month_range_chk check (
     start_month ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'
@@ -67,27 +62,17 @@ create table if not exists public.infra_costs (
 
 alter table public.infra_costs
   add column if not exists project text,
-  add column if not exists organization_project_id text,
   add column if not exists program text,
   add column if not exists monthly_cost numeric(16,2) not null default 0,
   add column if not exists start_month text,
   add column if not exists end_month text,
   add column if not exists created_at timestamptz not null default now(),
-  add column if not exists updated_at timestamptz not null default now(),
-  add column if not exists created_by text,
-  add column if not exists updated_by text;
+  add column if not exists updated_at timestamptz not null default now();
 
 -- Constraints are added with existence checks so an already-created partial
 -- table can be brought up to the unified contract without data rewrites.
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conname = 'budget_pools_organization_project_fk' and conrelid = 'public.budget_pools'::regclass) then
-    alter table public.budget_pools
-      add constraint budget_pools_organization_project_fk
-      foreign key (organization_project_id) references public.organization_projects(id)
-      on delete set null not valid;
-  end if;
-
   if not exists (select 1 from pg_constraint where conname = 'budget_pools_budget_nonnegative_chk' and conrelid = 'public.budget_pools'::regclass) then
     alter table public.budget_pools
       add constraint budget_pools_budget_nonnegative_chk check (budget >= 0) not valid;
@@ -102,13 +87,6 @@ begin
           and end_month ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'
           and start_month <= end_month)
       ) not valid;
-  end if;
-
-  if not exists (select 1 from pg_constraint where conname = 'infra_costs_organization_project_fk' and conrelid = 'public.infra_costs'::regclass) then
-    alter table public.infra_costs
-      add constraint infra_costs_organization_project_fk
-      foreign key (organization_project_id) references public.organization_projects(id)
-      on delete set null not valid;
   end if;
 
   if not exists (select 1 from pg_constraint where conname = 'infra_costs_monthly_cost_nonnegative_chk' and conrelid = 'public.infra_costs'::regclass) then
@@ -126,34 +104,16 @@ begin
   end if;
 end $$;
 
--- Budget indexes support project filters, pool lookups, year filtering, and
--- BvA month-range queries.
-create index if not exists budget_pools_organization_project_idx
-  on public.budget_pools (organization_project_id);
-
+-- Budget indexes support current app query paths for project filters and
+-- pool lookups.
 create index if not exists budget_pools_project_idx
   on public.budget_pools (project);
-
-create index if not exists budget_pools_year_idx
-  on public.budget_pools (year);
 
 create index if not exists budget_pools_project_name_idx
   on public.budget_pools (project, name);
 
-create index if not exists budget_pools_organization_project_name_year_idx
-  on public.budget_pools (organization_project_id, name, year);
-
-create index if not exists infra_costs_organization_project_idx
-  on public.infra_costs (organization_project_id);
-
 create index if not exists infra_costs_project_idx
   on public.infra_costs (project);
-
-create index if not exists infra_costs_program_idx
-  on public.infra_costs (program);
-
-create index if not exists infra_costs_month_range_idx
-  on public.infra_costs (start_month, end_month);
 
 -- Updated-at triggers for budget tables.
 do $$

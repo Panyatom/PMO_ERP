@@ -10,7 +10,6 @@ create table if not exists public.purchase_orders (
   id text primary key,
   memo_no text,
   project text,
-  organization_project_id text references public.organization_projects(id) on delete set null,
   item_name text,
   ordered_qty integer not null default 1,
   arrived_qty integer not null default 0,
@@ -29,7 +28,6 @@ create table if not exists public.purchase_orders (
 alter table public.purchase_orders
   add column if not exists memo_no text,
   add column if not exists project text,
-  add column if not exists organization_project_id text,
   add column if not exists item_name text,
   add column if not exists ordered_qty integer not null default 1,
   add column if not exists arrived_qty integer not null default 0,
@@ -53,11 +51,9 @@ create table if not exists public.devices (
   asset_tag text,
   pbx_number text,
   owner text,
-  owner_profile_id bigint references public.user_profiles(id) on delete set null,
   position text,
   assigned_date date,
   project text,
-  organization_project_id text references public.organization_projects(id) on delete set null,
   company text,
   return_date date,
   warranty date,
@@ -88,11 +84,9 @@ alter table public.devices
   add column if not exists asset_tag text,
   add column if not exists pbx_number text,
   add column if not exists owner text,
-  add column if not exists owner_profile_id bigint,
   add column if not exists position text,
   add column if not exists assigned_date date,
   add column if not exists project text,
-  add column if not exists organization_project_id text,
   add column if not exists company text,
   add column if not exists return_date date,
   add column if not exists warranty date,
@@ -124,13 +118,6 @@ begin
       on delete set null not valid;
   end if;
 
-  if not exists (select 1 from pg_constraint where conname = 'purchase_orders_organization_project_fk' and conrelid = 'public.purchase_orders'::regclass) then
-    alter table public.purchase_orders
-      add constraint purchase_orders_organization_project_fk
-      foreign key (organization_project_id) references public.organization_projects(id)
-      on delete set null not valid;
-  end if;
-
   if not exists (select 1 from pg_constraint where conname = 'purchase_orders_ordered_qty_positive_chk' and conrelid = 'public.purchase_orders'::regclass) then
     alter table public.purchase_orders
       add constraint purchase_orders_ordered_qty_positive_chk check (ordered_qty > 0) not valid;
@@ -144,20 +131,6 @@ begin
   if not exists (select 1 from pg_constraint where conname = 'purchase_orders_arrived_qty_lte_ordered_chk' and conrelid = 'public.purchase_orders'::regclass) then
     alter table public.purchase_orders
       add constraint purchase_orders_arrived_qty_lte_ordered_chk check (arrived_qty <= ordered_qty) not valid;
-  end if;
-
-  if not exists (select 1 from pg_constraint where conname = 'devices_owner_profile_fk' and conrelid = 'public.devices'::regclass) then
-    alter table public.devices
-      add constraint devices_owner_profile_fk
-      foreign key (owner_profile_id) references public.user_profiles(id)
-      on delete set null not valid;
-  end if;
-
-  if not exists (select 1 from pg_constraint where conname = 'devices_organization_project_fk' and conrelid = 'public.devices'::regclass) then
-    alter table public.devices
-      add constraint devices_organization_project_fk
-      foreign key (organization_project_id) references public.organization_projects(id)
-      on delete set null not valid;
   end if;
 
   if not exists (select 1 from pg_constraint where conname = 'devices_memo_ref_fk' and conrelid = 'public.devices'::regclass) then
@@ -179,40 +152,14 @@ end $$;
 create index if not exists purchase_orders_memo_no_idx
   on public.purchase_orders (memo_no);
 
-create index if not exists purchase_orders_organization_project_idx
-  on public.purchase_orders (organization_project_id);
-
-create index if not exists purchase_orders_status_idx
-  on public.purchase_orders (status);
-
 create index if not exists purchase_orders_created_at_idx
   on public.purchase_orders (created_at);
-
-create index if not exists devices_organization_project_idx
-  on public.devices (organization_project_id);
-
-create index if not exists devices_owner_profile_idx
-  on public.devices (owner_profile_id);
 
 create index if not exists devices_memo_ref_idx
   on public.devices (memo_ref);
 
 create index if not exists devices_purchase_order_idx
   on public.devices (purchase_order_id);
-
-create index if not exists devices_status_idx
-  on public.devices (status);
-
-create index if not exists devices_deleted_idx
-  on public.devices (deleted);
-
-create index if not exists devices_serial_idx
-  on public.devices (serial)
-  where serial is not null and btrim(serial) <> '';
-
-create index if not exists devices_asset_tag_idx
-  on public.devices (asset_tag)
-  where asset_tag is not null and btrim(asset_tag) <> '';
 
 -- Updated-at triggers for device module tables.
 do $$
