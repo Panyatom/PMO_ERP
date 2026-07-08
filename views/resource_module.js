@@ -735,6 +735,11 @@ function isVisibleEmployeeMaster(master, related=[]) {
   if((related||[]).length && related.every(r => !isActiveResource(r))) return false;
   return true;
 }
+function isOffboardedEmployeeMaster(master) {
+  const status = String(master?.status || '').toLowerCase();
+  const offboardDate = isoDay(master?.offboardDate);
+  return status === 'offboarded' || (offboardDate && offboardDate <= isoDay(todayISO));
+}
 function requiresCancelReason(toStatus) {
   return typeof PMO_RESOURCE_FLOW !== 'undefined' && PMO_RESOURCE_FLOW.requiresCancelReason
     ? PMO_RESOURCE_FLOW.requiresCancelReason(toStatus)
@@ -914,6 +919,12 @@ function projectPeriod(r, windowEnd) {
 function personKey(r) {
   return resourceEmployeeCode(r) || resourcePersonName(r).toLowerCase() || r.id;
 }
+function offboardedTimelinePersonKeys() {
+  return new Set(loadResourceMaster()
+    .filter(isOffboardedEmployeeMaster)
+    .map(m => m.employeeCode || (m.resourceNameTh || m.resourceNameEn || m.resourceName || '').toLowerCase())
+    .filter(Boolean));
+}
 function timelineGroups(list) {
   const groups = new Map();
   (list||[]).forEach(r => {
@@ -941,8 +952,11 @@ function timelineGroups(list) {
 }
 function timelineItemGroups(list, mode='all') {
   const groups = new Map();
+  const offboardedKeys = offboardedTimelinePersonKeys();
   (list||[]).forEach(r => {
     if(!['filled','resolved','mitigated'].includes(r.status)) return;
+    const key = personKey(r);
+    const forceClosed = offboardedKeys.has(key);
     const items = [];
     if(mode === 'all') {
       items.push({
@@ -954,7 +968,7 @@ function timelineItemGroups(list, mode='all') {
         endDate: r.offboardDate || r.resolvedDate || r.endDate || '',
         hiringType: r.hiringType,
         source: isTransfer(r) ? 'Transfer' : 'Primary',
-        status: r.status === 'filled' ? 'active' : 'closed',
+        status: !forceClosed && r.status === 'filled' ? 'active' : 'closed',
       });
     }
     (r.projectCodes||[]).forEach(c => items.push({
@@ -966,10 +980,9 @@ function timelineItemGroups(list, mode='all') {
       endDate: c.endDate || r.offboardDate || r.resolvedDate || r.endDate || '',
       hiringType: r.hiringType,
       source: 'Project Code',
-      status: r.status === 'filled' ? 'active' : 'closed',
+      status: !forceClosed && r.status === 'filled' ? 'active' : 'closed',
     }));
     if(!items.length) return;
-    const key = personKey(r);
     if(!groups.has(key)) {
       groups.set(key, {
         key,
@@ -3428,28 +3441,39 @@ async function _doDeleteResource(id) {
 async function offboardResource(id) {
   const role = currentRole();
   if(!canOffboard(role)) { resourceError(`${roleLabel(role)} cannot offboard resources`); return; }
-  const r = loadResources().find(x => x.id === id);
+  const list = loadResources();
+  const r = list.find(x => x.id === id);
   if(!r) return;
   if(r.status !== 'filled') { resourceError('Offboard is available only for filled resources'); return; }
-  const ok = await resourceConfirm('Offboard resource?', `${resourcePersonName(r)||r.position} from ${r.project}`, 'Offboard');
+  const targetKey = personKey(r);
+  const targets = list.filter(x => personKey(x) === targetKey && x.status === 'filled');
+  const ok = await resourceConfirm(
+    'Offboard resource?',
+    `${resourcePersonName(r)||r.position}\nThis will close ${targets.length} active assignment${targets.length === 1 ? '' : 's'} for this employee.`,
+    'Offboard'
+  );
   if(!ok) return;
   const reason = 'Offboarded from Employee Directory';
   const now = new Date().toISOString();
-  const updated = { ...r,
-    status: 'resolved',
-    resolvedDate: todayISO,
-    offboardDate: todayISO,
-    updatedAt: now,
-    activityLog: [...(r.activityLog||[]), { action:'Offboarded', from:'filled', to:'resolved', by:roleLabel(role), remark:reason, at:now }],
-    remark: (r.remark ? r.remark+'\n' : '') + `[Offboard] ${reason}`,
-  };
-  await saveResourceAsync(updated);
-  if(employeeDirectoryName(updated) || resourceEmployeeCode(updated)) {
-    await saveResourceMasterAsync(resourceMasterFromRequest(updated));
+  let lastUpdated = null;
+  for(const target of targets) {
+    const updated = { ...target,
+      status: 'resolved',
+      resolvedDate: todayISO,
+      offboardDate: todayISO,
+      updatedAt: now,
+      activityLog: [...(target.activityLog||[]), { action:'Offboarded', from:'filled', to:'resolved', by:roleLabel(role), remark:reason, at:now }],
+      remark: (target.remark ? target.remark+'\n' : '') + `[Offboard] ${reason}`,
+    };
+    lastUpdated = updated;
+    await saveResourceAsync(updated);
+  }
+  if(lastUpdated && (employeeDirectoryName(lastUpdated) || resourceEmployeeCode(lastUpdated))) {
+    await saveResourceMasterAsync(resourceMasterFromRequest(lastUpdated));
   }
   closeResDetail();
   renderResource();
-  resourceToast('Employee offboarded and hidden from Employee Directory.', 'ok');
+  resourceToast(`Employee offboarded. Closed ${targets.length} active assignment${targets.length === 1 ? '' : 's'}.`, 'ok');
 }
 
 function ensureDetailDrawer() {
