@@ -729,16 +729,22 @@ function isActiveResource(r) {
 }
 function isVisibleEmployeeMaster(master, related=[]) {
   const status = String(master?.status || 'active').toLowerCase();
-  const offboardDate = isoDay(master?.offboardDate);
-  if(status === 'offboarded' || status === 'inactive') return false;
-  if(offboardDate && offboardDate <= isoDay(todayISO)) return false;
-  if((related||[]).length && related.every(r => !isActiveResource(r))) return false;
+  if(status === 'inactive') return false;
   return true;
 }
 function isOffboardedEmployeeMaster(master) {
   const status = String(master?.status || '').toLowerCase();
   const offboardDate = isoDay(master?.offboardDate);
   return status === 'offboarded' || (offboardDate && offboardDate <= isoDay(todayISO));
+}
+function employeeDirectoryStatusBadge(row) {
+  const offboardDate = isoDay(row?.offboardDate);
+  const isOffboarded = String(row?.status || '').toLowerCase() === 'offboarded' || (offboardDate && offboardDate <= isoDay(todayISO));
+  if(isOffboarded) {
+    const label = offboardDate ? `Offboard ${shortDate(offboardDate)}` : 'Offboarded';
+    return `<span class="badge badge-gray" style="font-size:10px;white-space:nowrap">${esc(label)}</span>`;
+  }
+  return '<span class="badge badge-green" style="font-size:10px;white-space:nowrap">Active</span>';
 }
 function requiresCancelReason(toStatus) {
   return typeof PMO_RESOURCE_FLOW !== 'undefined' && PMO_RESOURCE_FLOW.requiresCancelReason
@@ -1889,6 +1895,7 @@ function renderPeopleView(base) {
       projects: allocationByProject,
       totalAllocation: allocationByProject.reduce((sum,a)=>sum+a.allocation,0),
       startDate: master.onboardDate,
+      offboardDate: master.offboardDate,
       status: master.status,
     };
   }).sort((a,b)=>String(a.personTh||a.personEn).localeCompare(String(b.personTh||b.personEn)));
@@ -1901,12 +1908,12 @@ function renderPeopleView(base) {
     { label:'Position', th:'width:13%', cell:r=>`<span class="res-cell-clip" title="${esc(r.position||'-')}">${esc(r.position||'-')}</span>` },
     { label:'Level', th:'width:72px', cell:r=>r.level ? `<span class="badge badge-gray" style="font-size:10px">${esc(r.level)}</span>` : '-' },
     { label:'Current Allocation', th:'width:21%', cell:r=>r.projects.length ? `<span class="res-cell-clip">${r.projects.map(a=>projectPill(a.project, `${a.project}: ${a.allocation}%`)).join(' ')}</span>` : '-' },
-    { label:'Start', th:'width:90px', cell:r=>`<span style="font-size:11px;white-space:nowrap">${r.startDate?shortDate(String(r.startDate).slice(0,10)):'-'}</span>` },
+    { label:'Status', th:'width:116px', cell:r=>employeeDirectoryStatusBadge(r) },
     { label:'Action', th:'width:190px;text-align:center', td:'text-align:center', cell:r=>r.requestId ? `<span class="res-people-actions">
       <button class="btn-sm" onclick="event.stopPropagation();openEmployeeEdit('${r.requestId}')">Edit</button>
       ${canTransfer(currentRole())?`<button class="btn-sm" style="color:var(--blue)" onclick="event.stopPropagation();openResTransfer('${r.requestId}')">Transfer</button>`:''}
       ${canProjectCode(currentRole())?`<button class="btn-sm" style="color:var(--green)" onclick="event.stopPropagation();openAddCode('${r.requestId}')">Add Code</button>`:''}
-      ${canOffboard(currentRole())?`<button class="btn-sm" style="color:var(--amber)" onclick="event.stopPropagation();offboardResource('${r.requestId}')">Offboard</button>`:''}
+      ${(r.status === 'active' && canOffboard(currentRole()))?`<button class="btn-sm" style="color:var(--amber)" onclick="event.stopPropagation();offboardResource('${r.requestId}')">Offboard</button>`:''}
     </span>` : '<span style="font-size:11px;color:var(--text-3)">Master only</span>' },
   ], filteredRows, 'No employee records match the selected filters.');
 }
@@ -3332,6 +3339,32 @@ async function saveEmployeeEdit() {
   resourceToast('Employee updated.', 'ok');
 }
 
+function ensureOffboardModal() {
+  if(document.getElementById('resource-offboard-modal')) return;
+  const m = document.createElement('div');
+  m.id = 'resource-offboard-modal';
+  m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:1300;align-items:center;justify-content:center;padding:18px';
+  m.innerHTML = `
+    <div class="card" style="width:460px;max-width:95vw;padding:22px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <span style="font-size:15px;font-weight:800">Offboard Employee</span>
+        <button class="btn-sm" onclick="closeOffboardModal()" style="padding:4px 10px">x</button>
+      </div>
+      <input type="hidden" id="offboard-id">
+      <div id="offboard-summary" style="font-size:12px;color:var(--text-2);line-height:1.45;margin-bottom:12px"></div>
+      <div class="form-grid" style="grid-template-columns:1fr;gap:10px">
+        <div class="fg"><label>Offboard Date *</label><input id="offboard-date" class="ri" type="date" max="${todayISO}" value="${todayISO}"></div>
+        <div class="fg"><label>Reason *</label><textarea id="offboard-reason" class="ri" rows="3" placeholder="Reason / note for offboarding"></textarea></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+        <button class="btn-ghost" onclick="closeOffboardModal()">Cancel</button>
+        <button class="btn-primary" onclick="saveOffboardResource()">Offboard</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', e => { if(e.target === m) closeOffboardModal(); });
+}
+function closeOffboardModal() { pmoMotionHide(document.getElementById('resource-offboard-modal')); }
 
 async function saveAddCode() {
   const id = document.getElementById('addcode-id').value;
@@ -3441,7 +3474,7 @@ async function _doDeleteResource(id) {
 
 // â”€â”€ Detail drawer â”€â”€
 // à¸ªà¸£à¹‰à¸²à¸‡ drawer à¹€à¸­à¸‡à¸–à¹‰à¸² index.html à¹„à¸¡à¹ˆà¸¡à¸µ (à¸à¸±à¸™à¸›à¸¸à¹ˆà¸¡ "à¸ˆà¸±à¸”à¸à¸²à¸£" à¸à¸”à¹à¸¥à¹‰à¸§à¹€à¸‡à¸µà¸¢à¸š)
-async function offboardResource(id) {
+function offboardResource(id) {
   const role = currentRole();
   if(!canOffboard(role)) { resourceError(`${roleLabel(role)} cannot offboard resources`); return; }
   const list = loadResources();
@@ -3450,20 +3483,36 @@ async function offboardResource(id) {
   if(r.status !== 'filled') { resourceError('Offboard is available only for filled resources'); return; }
   const targetKey = personKey(r);
   const targets = list.filter(x => personKey(x) === targetKey && x.status === 'filled');
-  const ok = await resourceConfirm(
-    'Offboard resource?',
-    `${resourcePersonName(r)||r.position}\nThis will close ${targets.length} active assignment${targets.length === 1 ? '' : 's'} for this employee.`,
-    'Offboard'
-  );
-  if(!ok) return;
-  const reason = 'Offboarded from Employee Directory';
+  ensureOffboardModal();
+  document.getElementById('offboard-id').value = id;
+  document.getElementById('offboard-date').value = todayISO;
+  document.getElementById('offboard-date').max = todayISO;
+  document.getElementById('offboard-reason').value = '';
+  document.getElementById('offboard-summary').textContent = `${resourcePersonName(r)||r.position} - this will close ${targets.length} active assignment${targets.length === 1 ? '' : 's'} for this employee.`;
+  pmoMotionShow(document.getElementById('resource-offboard-modal'));
+}
+async function saveOffboardResource() {
+  const role = currentRole();
+  if(!canOffboard(role)) { resourceError(`${roleLabel(role)} cannot offboard resources`); return; }
+  const id = document.getElementById('offboard-id')?.value || '';
+  const offboardDate = document.getElementById('offboard-date')?.value || '';
+  const inputReason = document.getElementById('offboard-reason')?.value?.trim() || '';
+  if(!offboardDate) { resourceError('Offboard Date is required.'); return; }
+  if(offboardDate > todayISO) { resourceError('Offboard Date cannot be in the future.'); return; }
+  if(!inputReason) { resourceError('Reason is required.'); return; }
+  const list = loadResources();
+  const r = list.find(x => x.id === id);
+  if(!r) return;
+  const targetKey = personKey(r);
+  const targets = list.filter(x => personKey(x) === targetKey && x.status === 'filled');
+  const reason = `Offboarded from Employee Directory: ${inputReason}`;
   const now = new Date().toISOString();
   let lastUpdated = null;
   for(const target of targets) {
     const updated = { ...target,
       status: 'resolved',
-      resolvedDate: todayISO,
-      offboardDate: todayISO,
+      resolvedDate: offboardDate,
+      offboardDate,
       updatedAt: now,
       activityLog: [...(target.activityLog||[]), { action:'Offboarded', from:'filled', to:'resolved', by:roleLabel(role), remark:reason, at:now }],
       remark: (target.remark ? target.remark+'\n' : '') + `[Offboard] ${reason}`,
@@ -3474,6 +3523,7 @@ async function offboardResource(id) {
   if(lastUpdated && (employeeDirectoryName(lastUpdated) || resourceEmployeeCode(lastUpdated))) {
     await saveResourceMasterAsync(resourceMasterFromRequest(lastUpdated));
   }
+  closeOffboardModal();
   closeResDetail();
   renderResource();
   resourceToast(`Employee offboarded. Closed ${targets.length} active assignment${targets.length === 1 ? '' : 's'}.`, 'ok');
