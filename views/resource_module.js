@@ -1314,9 +1314,39 @@ function setResTab(t)  { _resTab = t; _resPage = 1; _renderResourceUI(loadResour
 function setResView(v) { _resView = v; _resPage = 1; _renderResourceUI(loadResources()); }
 
 
-const RES_FILTER_STATE = { status:[], hiring:[], project:[], level:[] };
+const RES_FILTER_STATE = {
+  request: { status:[], hiring:[], project:[], level:[] },
+  people: { project:[], position:[], level:[], type:[] },
+};
 
 function resourceFilterDefinitions(scoped) {
+  if(_resTab === 'people') {
+    const projects = [...new Set((scoped||[]).flatMap(r => (r.projects||[]).map(p => p.project)).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    const positions = [...new Set((scoped||[]).map(r => r.position).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    const levels = [...new Set((scoped||[]).map(r => r.level).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    return {
+      project: {
+        label: 'Project',
+        options: projects.map(value => ({ value, label:value, match:r=>(r.projects||[]).some(p => p.project === value) })),
+      },
+      position: {
+        label: 'Position',
+        options: positions.map(value => ({ value, label:value, match:r=>r.position === value })),
+      },
+      level: {
+        label: 'Level',
+        options: levels.map(value => ({ value, label:value, match:r=>r.level === value })),
+      },
+      type: {
+        label: 'Type',
+        options: [
+          { value:'dhc', label:'DHC', match:r=>r.employeeType === 'dhc' },
+          { value:'sec', label:'SEC', match:r=>r.employeeType === 'sec' },
+          { value:'subcon', label:'Sub Con', match:r=>r.employeeType === 'subcon' },
+        ],
+      },
+    };
+  }
   const projects = knownResourceProjects(scoped).sort((a,b)=>a.localeCompare(b));
   const levels = [...new Set([...resourceLevels(), ...scoped.map(r => r.level)].filter(Boolean))];
   return {
@@ -1340,7 +1370,8 @@ function resourceFilterDefinitions(scoped) {
 }
 
 function resourceFilterSelected(kind) {
-  return RES_FILTER_STATE[kind] || [];
+  const stateKey = _resTab === 'people' ? 'people' : 'request';
+  return RES_FILTER_STATE[stateKey]?.[kind] || [];
 }
 
 function resourceFilterSummary(kind, def) {
@@ -1400,9 +1431,10 @@ function toggleResourceFilterMenu(kind, ev) {
 }
 
 function setResourceFilter(kind, value, checked, input) {
+  const stateKey = _resTab === 'people' ? 'people' : 'request';
   const set = new Set(resourceFilterSelected(kind));
   checked ? set.add(value) : set.delete(value);
-  RES_FILTER_STATE[kind] = [...set];
+  RES_FILTER_STATE[stateKey][kind] = [...set];
   _resPage = 1;
   _renderResourceUI(loadResources(), { preserveResourceFilters: true });
   keepResourceFilterMenuOpen(kind);
@@ -1410,14 +1442,16 @@ function setResourceFilter(kind, value, checked, input) {
 }
 
 function clearResourceFilter(kind) {
-  RES_FILTER_STATE[kind] = [];
+  const stateKey = _resTab === 'people' ? 'people' : 'request';
+  RES_FILTER_STATE[stateKey][kind] = [];
   _resPage = 1;
   _renderResourceUI(loadResources(), { preserveResourceFilters: true });
   keepResourceFilterMenuOpen(kind);
 }
 
 function selectAllResourceFilter(kind, values) {
-  RES_FILTER_STATE[kind] = [...values];
+  const stateKey = _resTab === 'people' ? 'people' : 'request';
+  RES_FILTER_STATE[stateKey][kind] = [...values];
   _resPage = 1;
   _renderResourceUI(loadResources(), { preserveResourceFilters: true });
   keepResourceFilterMenuOpen(kind);
@@ -1758,17 +1792,23 @@ function renderPeopleView(base) {
       personTh: master.resourceNameTh || master.resourceName,
       personEn: master.resourceNameEn,
       employeeCode: master.employeeCode,
-      role: [master.position, master.level].filter(Boolean).join(' / '),
+      position: master.position || '',
+      level: master.level || '',
       team: master.resourceTeam || '',
+      employeeType: window.PMO_RESOURCE_FLOW?.employeeTypeKey ? window.PMO_RESOURCE_FLOW.employeeTypeKey(master.employmentType) : hiringKind(master.employmentType),
       projects: allocationByProject,
       totalAllocation: allocationByProject.reduce((sum,a)=>sum+a.allocation,0),
       startDate: master.onboardDate,
       status: master.status,
     };
   }).sort((a,b)=>String(a.personTh||a.personEn).localeCompare(String(b.personTh||b.personEn)));
+  const filterDefs = renderResourceDropdownFilters(rows);
+  const filteredRows = applyResourceDropdownFilters(rows, filterDefs);
   renderResourceTable([
-    { label:'ชื่อ-นามสกุล / Name - Surname', th:'width:21%', cell:r=>`<strong>${esc(r.personTh||'(missing Thai name)')}</strong>${r.personEn?`<div style="font-size:11px;color:var(--text-3)">${esc(r.personEn)}</div>`:''}${r.employeeCode?`<div style="font-size:11px;color:var(--text-3)">${esc(r.employeeCode)}</div>`:''}` },
-    { label:'Position / Level', th:'width:24%', cell:r=>esc(r.role||'-') },
+    { label:'ชื่อ-นามสกุล / Name - Surname', th:'width:19%', cell:r=>`<strong>${esc(r.personTh||'(missing Thai name)')}</strong>${r.personEn?`<div style="font-size:11px;color:var(--text-3)">${esc(r.personEn)}</div>`:''}` },
+    { label:'Employee Code', th:'width:120px', cell:r=>`<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-2);font-weight:700">${esc(r.employeeCode||'-')}</span>` },
+    { label:'Position', th:'width:16%', cell:r=>esc(r.position||'-') },
+    { label:'Level', th:'width:90px', cell:r=>r.level ? `<span class="badge badge-gray" style="font-size:10px">${esc(r.level)}</span>` : '-' },
     { label:'Current Allocation', th:'width:28%', cell:r=>r.projects.length ? r.projects.map(a=>projectPill(a.project, `${a.project}: ${a.allocation}%`)).join(' ') : '-' },
     { label:'Start', th:'width:110px', cell:r=>`<span style="font-size:11px;white-space:nowrap">${r.startDate?shortDate(String(r.startDate).slice(0,10)):'-'}</span>` },
     { label:'Action', th:'width:230px;text-align:center', td:'text-align:center;white-space:nowrap', cell:r=>r.requestId ? `<span style="display:inline-flex;justify-content:center;gap:4px;white-space:nowrap">
@@ -1777,7 +1817,7 @@ function renderPeopleView(base) {
       ${canProjectCode(currentRole())?`<button class="btn-sm" style="color:var(--green)" onclick="event.stopPropagation();openAddCode('${r.requestId}')">Add Code</button>`:''}
       ${canOffboard(currentRole())?`<button class="btn-sm" style="color:var(--amber)" onclick="event.stopPropagation();offboardResource('${r.requestId}')">Offboard</button>`:''}
     </span>` : '<span style="font-size:11px;color:var(--text-3)">Master only</span>' },
-  ], rows, 'No employee records yet. Import employees with Name - Surname / Employee Code first.');
+  ], filteredRows, 'No employee records match the selected filters.');
 }
 
 function renderTimelineView(base) {
@@ -2119,10 +2159,18 @@ function _renderResourceUI(allRaw, options = {}) {
   } else if(_resTab === 'code') {
     if(statusPanel) statusPanel.style.display = 'none';
     scoped = scoped.filter(r => (r.projectCodes||[]).length > 0);
-  } else if(['dashboard','people','timeline','allocation','movement'].includes(_resTab)) {
+  } else if(_resTab === 'people') {
+    if(statusPanel) {
+      statusPanel.style.display = '';
+      const title = statusPanel.querySelector('.res-request-filters-title');
+      if(title) title.textContent = 'Employee Filters';
+    }
+  } else if(['dashboard','timeline','allocation','movement'].includes(_resTab)) {
     if(statusPanel) statusPanel.style.display = 'none';
   } else {
     if(statusPanel) statusPanel.style.display = '';
+    const title = statusPanel.querySelector('.res-request-filters-title');
+    if(title) title.textContent = 'Filters';
     scoped = scoped.filter(isRequestRecord);
     const filterDefs = options.preserveResourceFilters
       ? refreshResourceDropdownFilters(scoped)
@@ -2147,9 +2195,9 @@ function _renderResourceUI(allRaw, options = {}) {
   if(kpiEl) {
     const cards = role === 'bbik'
       ? [
-          ['BBIK Queue', requestBase.filter(r => ['approved','sourcing','interviewing','offer'].includes(r.status)).length, 'var(--blue)', 'Approved + recruiting'],
-          ['Filled', requestBase.filter(r => r.status === 'filled').length, 'var(--green)', 'Completed by BBIK'],
+          ['BBIK Queue', requestBase.filter(r => r.status === 'approved').length, 'var(--blue)', 'Approved'],
           ['Recruiting', recr, 'var(--amber)', 'Active pipeline'],
+          ['Filled', requestBase.filter(r => r.status === 'filled').length, 'var(--green)', 'Completed by BBIK'],
         ]
       : [
           ['Total Open', open, 'var(--blue)', ''],
