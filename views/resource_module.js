@@ -716,6 +716,14 @@ function isPeriodActiveOn(startDate, endDate, asOf=todayISO) {
   if(!day || !start) return false;
   return start <= day && (!end || end >= day);
 }
+function periodsOverlap(startA, endA, startB, endB) {
+  const aStart = isoDay(startA);
+  const bStart = isoDay(startB);
+  if(!aStart || !bStart) return false;
+  const aEnd = isoDay(endA) || '9999-12-31';
+  const bEnd = isoDay(endB) || '9999-12-31';
+  return aStart <= bEnd && bStart <= aEnd;
+}
 function isActiveResource(r) {
   return r.status === 'filled';
 }
@@ -778,6 +786,43 @@ function allocationRows(list, opts={}) {
     const rows = (!activeOnly || isPeriodActiveOn(primaryRow.startDate, primaryRow.endDate, asOf)) ? [primaryRow, ...codeRows] : codeRows;
     return rows.filter(x => x.allocation > 0);
   });
+}
+function duplicateProjectCodeAssignment(resource, candidate, editIdx=-1) {
+  const project = String(candidate.project || '').trim().toLowerCase();
+  const code = String(candidate.code || '').trim().toLowerCase();
+  return (resource.projectCodes || []).find((entry, idx) => {
+    if(idx === editIdx) return false;
+    return String(entry.project || '').trim().toLowerCase() === project
+      && String(entry.code || '').trim().toLowerCase() === code
+      && periodsOverlap(entry.startDate || entry.at, entry.endDate, candidate.startDate, candidate.endDate);
+  });
+}
+function duplicateTransferAssignment(list, sourceId, destProject, startDate, endDate, editId='') {
+  const source = (list||[]).find(r => r.id === sourceId);
+  const emp = resourceEmployeeCode(source || {});
+  const person = employeeDirectoryName(source || {}) || resourcePersonName(source || {});
+  const dest = String(destProject || '').trim().toLowerCase();
+  return (list||[]).find(r => {
+    if(editId && r.id === editId) return false;
+    if(r.status !== 'filled') return false;
+    if(String(r.project || '').trim().toLowerCase() !== dest) return false;
+    const samePerson = emp
+      ? resourceEmployeeCode(r).toLowerCase() === emp.toLowerCase()
+      : (employeeDirectoryName(r) || resourcePersonName(r)).toLowerCase() === String(person || '').toLowerCase();
+    return samePerson && periodsOverlap(r.onboardDate || r.startDate, r.offboardDate || r.endDate, startDate, endDate);
+  });
+}
+function activeProjectCodeAllocationTotal(codes, asOf=todayISO) {
+  return (codes||[]).reduce((sum, code) => (
+    isPeriodActiveOn(code.startDate || code.at, code.endDate, asOf)
+      ? sum + clampAlloc(code.allocation)
+      : sum
+  ), 0);
+}
+function maxProjectCodeAllocationTotal(codes) {
+  const days = [...new Set((codes||[]).flatMap(code => [isoDay(code.startDate || code.at), isoDay(code.endDate)].filter(Boolean)))];
+  if(!days.length) return activeProjectCodeAllocationTotal(codes, todayISO);
+  return Math.max(...days.map(day => activeProjectCodeAllocationTotal(codes, day)));
 }
 function movementRows(list) {
   return (list||[]).flatMap(r => {
@@ -1305,6 +1350,11 @@ async function renderResource() {
 }
 
 function renderResourceSearch() {
+  window.clearTimeout(window.__resourceSearchTimer);
+  window.__resourceSearchTimer = window.setTimeout(renderResourceSearchNow, 140);
+}
+
+function renderResourceSearchNow() {
   _resPage = 1;
   _renderResourceUI(loadResources(), { preserveResourceFilters: true, suppressRowEnter: true });
 }
@@ -1660,6 +1710,17 @@ function renderResourceTable(cols, rows, emptyMsg) {
   }
   const pagEl = document.getElementById('res-pagination');
   if(pagEl) pagEl.innerHTML = `<span style="font-size:12px;color:var(--text-3)">${rows.length} rows</span>`;
+}
+
+function resourceSearchTextForRecord(r) {
+  const projectCodes = (r.projectCodes||[]).map(c => `${c.project || ''} ${c.code || ''} ${c.allocation || ''}`).join(' ');
+  return `${r.project || ''} ${r.position || ''} ${r.level || ''} ${r.hiringType || ''} ${resourcePersonName(r)} ${resourceEmployeeCode(r)} ${primaryProjectCode(r)} ${projectCodes}`.toLowerCase();
+}
+
+function applyResourceSearch(list) {
+  const search = (document.getElementById('res-search')?.value || '').trim().toLowerCase();
+  if(!search) return list || [];
+  return (list || []).filter(r => resourceSearchTextForRecord(r).includes(search));
 }
 
 function resourceWorkflowOwner(status) {
@@ -2239,39 +2300,35 @@ function _renderResourceUI(allRaw, options = {}) {
     renderResourceDashboard(base);
     return;
   }
+  const searchedBase = applyResourceSearch(base);
   if(_resTab === 'transfer') {
-    renderTransferView(base);
+    renderTransferView(searchedBase);
     return;
   }
   if(_resTab === 'code') {
-    renderProjectCodeView(base);
+    renderProjectCodeView(searchedBase);
     return;
   }
   if(_resTab === 'people') {
-    renderPeopleView(base);
+    renderPeopleView(searchedBase);
     return;
   }
   if(_resTab === 'timeline') {
-    renderTimelineView(base);
+    renderTimelineView(searchedBase);
     return;
   }
   if(_resTab === 'allocation') {
-    renderAllocationView(base);
+    renderAllocationView(searchedBase);
     return;
   }
   if(_resTab === 'movement') {
-    renderMovementView(base);
+    renderMovementView(searchedBase);
     return;
   }
 
 
   // â”€â”€ Search (facet dropdowns are rendered above the table) â”€â”€
-  const search   = (document.getElementById('res-search')?.value||'').toLowerCase();
-
-
-  let list = scoped;
-  if(search) list = list.filter(r =>
-    `${r.project} ${r.position} ${r.level} ${resourcePersonName(r)} ${resourceEmployeeCode(r)} ${primaryProjectCode(r)}`.toLowerCase().includes(search));
+  let list = applyResourceSearch(scoped);
 
 
   // Sort + paginate
@@ -2956,6 +3013,11 @@ async function saveResTransfer() {
     const previousAlloc = editIdx >= 0 ? clampAlloc(existingCodes[editIdx]?.allocation) : 0;
     const used = _allocUsed(source) - previousAlloc;
     if(used + allocation > 100) { resourceError(`Extra Project Code allocation exceeds 100% (available ${100-used}%).`); return; }
+    const candidate = { project: destProject, code, allocation, startDate, endDate };
+    if(duplicateProjectCodeAssignment(source, candidate, editIdx)) {
+      resourceError('Project Code นี้ถูก assign ให้ employee คนนี้ในช่วงวันที่ซ้ำกันแล้ว');
+      return;
+    }
     const now = new Date().toISOString();
     const codeEntry = {
       project: destProject,
@@ -2970,6 +3032,11 @@ async function saveResTransfer() {
     };
     if(editIdx >= 0) existingCodes[editIdx] = codeEntry;
     else existingCodes.push(codeEntry);
+    const activeExtra = maxProjectCodeAllocationTotal(existingCodes);
+    if(activeExtra > 100) {
+      resourceError(`Allocation รวมของ Project Code ที่ active ต้องไม่เกิน 100% (ตอนนี้ ${activeExtra}%). กรุณาแบ่ง allocation เช่น 50/50`);
+      return;
+    }
     const nextPrimaryAllocation = rebalancePrimaryAllocationForCodes(source, existingCodes);
     await saveResourceAsync({ ...source,
       projectCodes: existingCodes,
@@ -2992,6 +3059,11 @@ async function saveResTransfer() {
   if(endDate && endDate < startDate) { resourceError('Last day must be after first day.'); return; }
   if(code && !projectCodeByValue(code, destProject)) {
     resourceError('Project Code must belong to the selected To Project.');
+    return;
+  }
+  const duplicatedTransfer = sourceId ? duplicateTransferAssignment(list, sourceId, destProject, startDate, endDate, editId) : null;
+  if(duplicatedTransfer) {
+    resourceError('Transfer ซ้ำไม่ได้: employee คนนี้มี assignment ไป project นี้ในช่วงวันที่ซ้ำกันแล้ว');
     return;
   }
 
@@ -3253,6 +3325,11 @@ async function saveAddCode() {
   const previousAlloc = editIdx >= 0 ? clampAlloc(existingCodes[editIdx]?.allocation) : 0;
   const used = _allocUsed(r) - previousAlloc;
   if(used + alloc > 100) { resourceError(`Extra Project Code allocation exceeds 100% (available ${100-used}%).`); return; }
+  const candidate = { project, code, allocation:alloc, startDate, endDate };
+  if(duplicateProjectCodeAssignment(r, candidate, editIdx)) {
+    resourceError('Project Code นี้ถูก assign ให้ employee คนนี้ในช่วงวันที่ซ้ำกันแล้ว');
+    return;
+  }
 
 
   const now = new Date().toISOString();
@@ -3269,6 +3346,11 @@ async function saveAddCode() {
   };
   if(editIdx >= 0) existingCodes[editIdx] = codeEntry;
   else existingCodes.push(codeEntry);
+  const activeExtra = maxProjectCodeAllocationTotal(existingCodes);
+  if(activeExtra > 100) {
+    resourceError(`Allocation รวมของ Project Code ที่ active ต้องไม่เกิน 100% (ตอนนี้ ${activeExtra}%). กรุณาแบ่ง allocation เช่น 50/50`);
+    return;
+  }
   const updated = { ...r,
     projectCodes: existingCodes,
     allocationPercent: rebalancePrimaryAllocationForCodes(r, existingCodes),
