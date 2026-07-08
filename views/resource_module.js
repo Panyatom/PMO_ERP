@@ -3480,6 +3480,7 @@ function openResDetail(id) {
   if(!r) return;
   const role = currentRole();
   const s = RES_STATUS[r.status]||{label:r.status,cls:'badge-gray'};
+  const showWorkflowActions = _resTab !== 'people';
 
 
   const log = (r.activityLog||[]).slice().reverse().map(l=>
@@ -3534,7 +3535,7 @@ function openResDetail(id) {
     <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
       ${(canEditPending(role)&&r.status==='pending')?`<button class="btn-sm" onclick="openResModal('${r.id}');closeResDetail()">Edit</button>`:''}
       ${(canRecruit(role)&&r.status==='approved')?`<button class="btn-sm" style="color:var(--blue)" onclick="bbikAccept('${r.id}');closeResDetail()">Accept</button>`:''}
-      ${allowedStatusChoicesForRecord(r,role).length?`<button class="btn-sm" onclick="openResStatus('${r.id}');closeResDetail()">Change Status</button>`:''}
+      ${(showWorkflowActions && allowedStatusChoicesForRecord(r,role).length)?`<button class="btn-sm" onclick="openResStatus('${r.id}');closeResDetail()">Change Status</button>`:''}
       ${(r.status==='filled'&&canTransfer(role))?`<button class="btn-sm" style="color:var(--blue)" onclick="openResTransfer('${r.id}');closeResDetail()">Transfer</button>`:''}
       ${(r.status==='filled'&&canProjectCode(role))?`<button class="btn-sm" style="color:var(--green)" onclick="openAddCode('${r.id}');closeResDetail()">Add Project Code</button>`:''}
       ${canDelete(role)?`<button class="btn-sm" style="color:var(--red)" onclick="deleteResource('${r.id}')">Delete</button>`:''}
