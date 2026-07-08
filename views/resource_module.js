@@ -954,6 +954,7 @@ function timelineItemGroups(list, mode='all') {
         endDate: r.offboardDate || r.resolvedDate || r.endDate || '',
         hiringType: r.hiringType,
         source: isTransfer(r) ? 'Transfer' : 'Primary',
+        status: r.status === 'filled' ? 'active' : 'closed',
       });
     }
     (r.projectCodes||[]).forEach(c => items.push({
@@ -965,6 +966,7 @@ function timelineItemGroups(list, mode='all') {
       endDate: c.endDate || r.offboardDate || r.resolvedDate || r.endDate || '',
       hiringType: r.hiringType,
       source: 'Project Code',
+      status: r.status === 'filled' ? 'active' : 'closed',
     }));
     if(!items.length) return;
     const key = personKey(r);
@@ -1594,8 +1596,11 @@ function ensureResChrome() {
       .res-timeline-month{border-left:1px solid var(--border);padding:4px 3px;text-align:center;font-size:9px;font-weight:800;color:var(--text-2);text-transform:uppercase;line-height:1.1}
       .res-timeline-track{position:relative;min-height:38px;background-image:linear-gradient(to right,var(--border) 1px,transparent 1px);background-color:var(--surface-2,var(--bg));min-width:var(--timeline-grid-min-width);flex:1 0 var(--timeline-grid-min-width)}
       .res-timeline-row{border-bottom:1px solid var(--border)}
+      .res-timeline-row.is-offboarded .res-timeline-person{background:color-mix(in srgb,var(--surface) 72%,#94a3b8)}
+      .res-timeline-row.is-offboarded .res-timeline-track{background-color:color-mix(in srgb,var(--surface-2,var(--bg)) 76%,#94a3b8)}
       .res-timeline-row:last-child{border-bottom:none}
       .res-timeline-bar{position:absolute;top:7px;height:22px;border:none;border-radius:5px;color:white;text-align:left;padding:3px 5px;overflow:hidden;cursor:pointer;box-shadow:0 2px 8px rgba(15,23,42,.12)}
+      .res-timeline-bar.is-offboarded{background:#94a3b8!important;color:#fff!important;box-shadow:none}
       .res-timeline-bar span{display:block;font-size:9px;font-weight:800;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .res-timeline-bar small{display:block;font-size:8px;line-height:1.1;margin-top:2px;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .res-timeline-person-name{font-size:11px;font-weight:800;color:var(--text);line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1935,6 +1940,7 @@ function renderTimelineView(base) {
     const primaryType = g.hiringType;
     const meta = hiringMeta(primaryType);
     const laneCount = Math.max(1, ...g.items.map(item => Number(item.lane || 0) + 1));
+    const isOffboardedRow = g.items.length > 0 && g.items.every(item => item.status === 'closed');
     const segments = g.items.map(item => {
       const period = { start: parseDay(item.startDate), end: parseDay(item.endDate) || end, hasPlannedEnd: !!item.endDate };
       if(!period.start) return '';
@@ -1942,16 +1948,18 @@ function renderTimelineView(base) {
       const segEnd = period.end > end ? end : period.end;
       const left = daysBetween(start, segStart) / totalDays * 100;
       const width = Math.max(1.2, daysBetween(segStart, segEnd) / totalDays * 100);
-      const color = projectAccentColor(item.project);
-      const textColor = projectTextColor(color);
+      const isClosed = item.status === 'closed';
+      const color = isClosed ? '#94a3b8' : projectAccentColor(item.project);
+      const textColor = isClosed ? '#fff' : projectTextColor(color);
       const top = 7 + (Number(item.lane || 0) * 26);
-      const title = `${g.person} | ${item.project} | ${isoDay(item.startDate)} - ${item.endDate ? isoDay(item.endDate) : 'ongoing'} | ${item.source}`;
-      return `<button class="res-timeline-bar" onclick="event.stopPropagation();openResDetail('${item.requestId}')" title="${esc(title)}" style="left:${left}%;width:${width}%;top:${top}px;background:${color};color:${textColor}">
+      const state = isClosed ? 'Offboarded/Closed' : 'Active';
+      const title = `${g.person} | ${item.project} | ${isoDay(item.startDate)} - ${item.endDate ? isoDay(item.endDate) : 'ongoing'} | ${item.source} | ${state}`;
+      return `<button class="res-timeline-bar ${isClosed?'is-offboarded':''}" onclick="event.stopPropagation();openResDetail('${item.requestId}')" title="${esc(title)}" style="left:${left}%;width:${width}%;top:${top}px;background:${color};color:${textColor}">
         <span>${esc(item.project || '-')}</span>
-        <small>${esc([item.code, `${item.allocation}%`, item.source].filter(Boolean).join(' / '))}</small>
+        <small>${esc([item.code, `${item.allocation}%`, item.source, isClosed ? 'Closed' : ''].filter(Boolean).join(' / '))}</small>
       </button>`;
     }).join('');
-    return `<div class="res-timeline-row">
+    return `<div class="res-timeline-row ${isOffboardedRow?'is-offboarded':''}">
       <div class="res-timeline-person">
         <div class="res-timeline-person-name">${esc(g.person || '-')}</div>
         <div class="res-timeline-person-meta">${esc([g.employeeCode, g.level].filter(Boolean).join(' / ') || '-')}</div>
