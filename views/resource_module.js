@@ -1641,6 +1641,9 @@ function ensureResChrome() {
       .res-filter-option span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .res-filter-option em{font-style:normal;color:var(--text-3);font-size:11px}
       .res-filter-empty{padding:12px;color:var(--text-3);font-size:12px;text-align:center}
+      .res-cell-clip{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .res-people-actions{display:flex;justify-content:center;gap:4px;flex-wrap:wrap;max-width:100%}
+      .res-people-actions .btn-sm{font-size:11px;padding:5px 8px;min-height:30px}
       @keyframes res-filter-tick{0%{transform:scale(.985);background:color-mix(in srgb,var(--blue) 10%,transparent)}55%{transform:scale(1.018);background:color-mix(in srgb,var(--blue) 14%,transparent)}100%{transform:scale(1);background:transparent}}
       #view-resource{background:color-mix(in srgb,var(--surface) 96%,transparent);border:1px solid var(--border-md);border-radius:8px;padding:0 12px 12px;box-shadow:0 14px 42px rgba(0,0,0,.12);overflow:visible}
       #res-chrome{margin:0 -12px 12px;padding:0;background:color-mix(in srgb,var(--surface-2) 84%,var(--surface));border-bottom:1px solid var(--border-md);border-radius:8px 8px 0 0}
@@ -1893,13 +1896,13 @@ function renderPeopleView(base) {
   const filteredRows = applyResourceDropdownFilters(rows, filterDefs);
   renderResourceTable([
     { label:'Employee Code', th:'width:118px', cell:r=>`<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-2);font-weight:700">${esc(r.employeeCode||'-')}</span>` },
-    { label:'ชื่อ-นามสกุล', th:'width:17%', cell:r=>`<strong>${esc(r.personTh||'-')}</strong>` },
-    { label:'Name - Surname', th:'width:17%', cell:r=>r.personEn ? esc(r.personEn) : '<span style="color:var(--text-3)">-</span>' },
-    { label:'Position', th:'width:14%', cell:r=>esc(r.position||'-') },
-    { label:'Level', th:'width:82px', cell:r=>r.level ? `<span class="badge badge-gray" style="font-size:10px">${esc(r.level)}</span>` : '-' },
-    { label:'Current Allocation', th:'width:24%', cell:r=>r.projects.length ? r.projects.map(a=>projectPill(a.project, `${a.project}: ${a.allocation}%`)).join(' ') : '-' },
-    { label:'Start', th:'width:110px', cell:r=>`<span style="font-size:11px;white-space:nowrap">${r.startDate?shortDate(String(r.startDate).slice(0,10)):'-'}</span>` },
-    { label:'Action', th:'width:230px;text-align:center', td:'text-align:center;white-space:nowrap', cell:r=>r.requestId ? `<span style="display:inline-flex;justify-content:center;gap:4px;white-space:nowrap">
+    { label:'ชื่อ-นามสกุล', th:'width:15%', cell:r=>`<strong class="res-cell-clip" title="${esc(r.personTh||'-')}">${esc(r.personTh||'-')}</strong>` },
+    { label:'Name - Surname', th:'width:15%', cell:r=>r.personEn ? `<span class="res-cell-clip" title="${esc(r.personEn)}">${esc(r.personEn)}</span>` : '<span style="color:var(--text-3)">-</span>' },
+    { label:'Position', th:'width:13%', cell:r=>`<span class="res-cell-clip" title="${esc(r.position||'-')}">${esc(r.position||'-')}</span>` },
+    { label:'Level', th:'width:72px', cell:r=>r.level ? `<span class="badge badge-gray" style="font-size:10px">${esc(r.level)}</span>` : '-' },
+    { label:'Current Allocation', th:'width:21%', cell:r=>r.projects.length ? `<span class="res-cell-clip">${r.projects.map(a=>projectPill(a.project, `${a.project}: ${a.allocation}%`)).join(' ')}</span>` : '-' },
+    { label:'Start', th:'width:90px', cell:r=>`<span style="font-size:11px;white-space:nowrap">${r.startDate?shortDate(String(r.startDate).slice(0,10)):'-'}</span>` },
+    { label:'Action', th:'width:190px;text-align:center', td:'text-align:center', cell:r=>r.requestId ? `<span class="res-people-actions">
       <button class="btn-sm" onclick="event.stopPropagation();openEmployeeEdit('${r.requestId}')">Edit</button>
       ${canTransfer(currentRole())?`<button class="btn-sm" style="color:var(--blue)" onclick="event.stopPropagation();openResTransfer('${r.requestId}')">Transfer</button>`:''}
       ${canProjectCode(currentRole())?`<button class="btn-sm" style="color:var(--green)" onclick="event.stopPropagation();openAddCode('${r.requestId}')">Add Code</button>`:''}
