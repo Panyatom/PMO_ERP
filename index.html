@@ -653,6 +653,7 @@ body {
 .hist-table tr:last-child td { border-bottom: none; }
 .hist-table tbody tr.hist-row { transition: background .1s; cursor: pointer; }
 .hist-table tbody tr.hist-row:hover td { background: var(--bg); }
+.bpool-table tbody tr:nth-child(even) td { background: var(--bg); }
 .filter-row input[type="search"],
 .filter-row input[type="text"] {
   font-family: 'IBM Plex Sans Thai', sans-serif;
@@ -1401,6 +1402,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
                 </div>
               </div>
             </div>
+            <div style="font-size:10px;font-weight:500;color:var(--text-3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em">Filter by project</div>
             <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px" id="ov-proj-chips"></div>
             <div id="ov-type-col" style="margin-bottom:12px">
               <div style="font-size:10px;font-weight:500;color:var(--text-3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em">Filter by type <span id="ov-type-count" style="font-weight:400"></span></div>
@@ -1431,21 +1433,19 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
           <div id="as-panel-report">
 
-            <div class="filter-row">
-              <select id="as-year" onchange="renderActualSpend()" aria-label="ปีข้อมูล Actual Spend">
+            <div class="filter-toolbar">
+              <span class="filter-control"><span class="filter-label">Year</span><select id="as-year" onchange="renderActualSpend()" aria-label="ปีข้อมูล Actual Spend">
                 <option value="2026">ปี 2026</option>
-              </select>
-              <div style="display:flex;align-items:center;gap:6px">
-                <label style="font-size:11px;color:var(--text-3)">จาก</label>
-                <input type="month" id="as-from" onchange="renderActualSpend()">
-                <label style="font-size:11px;color:var(--text-3)">ถึง</label>
-                <input type="month" id="as-to" onchange="renderActualSpend()">
-              </div>
+              </select></span>
+              <span class="filter-range">
+                <span class="filter-control"><span class="filter-label">Month From</span>
+                  <input type="month" id="as-from" class="filter-month" onchange="renderActualSpend()"></span>
+                <span class="filter-control"><span class="filter-label">Month To</span>
+                  <input type="month" id="as-to" class="filter-month" onchange="renderActualSpend()"></span>
+              </span>
               <select id="as-project" onchange="renderActualSpend()">
-                <option value="all">ทุกโปรเจค</option>
               </select>
               <select id="as-type" onchange="renderActualSpend()">
-                <option value="all">ทุกประเภท</option>
                 <option value="sl">Software License</option>
                 <option value="hw">Hardware</option>
                 <option value="int">Team Activity</option>
@@ -1454,41 +1454,44 @@ svg.icon { display: inline-block; vertical-align: middle; }
                 <option value="infra">Infrastructure</option>
                 <option value="other">Other</option>
               </select>
-              <select id="as-source" onchange="renderActualSpend()">
+              <span class="filter-control"><span class="filter-label">Source</span><select id="as-source" onchange="renderActualSpend()">
                 <option value="all">ทุกแหล่งข้อมูล</option>
                 <option value="memo">จาก Memo</option>
                 <option value="manual">Historical / Manual</option>
                 <option value="infra">Infra Cost</option>
-              </select>
+              </select></span>
               <select id="as-budget-status" onchange="renderActualSpend()">
-                <option value="all">ทุก Budget Status</option>
                 <option value="Mapped">Mapped</option>
                 <option value="Manual Override">Manual Override</option>
                 <option value="Needs PMO Review">Needs PMO Review</option>
                 <option value="Unbudgeted">Unbudgeted</option>
               </select>
-              <span id="as-period-label" style="font-size:11px;color:var(--text-3)">ทั้งหมด</span>
-              <button class="btn-export" onclick="exportActualSpendCSV()">⬇ Export CSV</button>
+              <div class="filter-actions">
+                <span id="as-period-label" style="font-size:11px;color:var(--text-3);white-space:nowrap">ทั้งหมด</span>
+                <button class="btn-export" onclick="exportActualSpendCSV()">⬇ Export CSV</button>
+              </div>
             </div>
 
             <div id="as-content"></div>
           </div>
 
           <div id="as-panel-manual" style="display:none">
-            <div class="filter-row">
-              <button class="btn-primary" id="as-add-manual" onclick="openManualExpenseModal()" style="font-size:11px;padding:5px 10px">+ Add Actual Spend</button>
-              <button class="btn-export" id="as-import-button" onclick="document.getElementById('as-import-file').click()">⬆ Import Excel</button>
-              <input id="as-import-file" type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleActualSpendImport(event)">
-              <button class="btn-export" onclick="downloadActualSpendTemplate()">⬇ Download Template</button>
-            </div>
-            <div class="filter-row">
-              <input id="as-manual-search" class="ri" type="search" placeholder="Search reference or description..." oninput="renderManualEntries()" style="max-width:300px">
-              <select id="as-manual-project" onchange="renderManualEntries()"><option value="all">All projects</option></select>
-              <select id="as-manual-type" onchange="renderManualEntries()"><option value="all">All spend types</option></select>
-              <select id="as-manual-frequency" onchange="renderManualEntries()"><option value="all">All frequencies</option><option value="one_time">One-time</option><option value="monthly">Monthly</option></select>
-              <input id="as-manual-from" type="month" onchange="renderManualEntries()" aria-label="Coverage from">
-              <input id="as-manual-to" type="month" onchange="renderManualEntries()" aria-label="Coverage to">
-              <select id="as-manual-budget-status" onchange="renderManualEntries()"><option value="all">All budget statuses</option><option value="Mapped">Mapped</option><option value="Manual Override">Manual Override</option><option value="Needs PMO Review">Needs PMO Review</option><option value="Unbudgeted">Unbudgeted</option></select>
+            <div class="filter-toolbar">
+              <input id="as-manual-search" type="search" class="filter-search" placeholder="Search..." oninput="renderManualEntries()">
+              <select id="as-manual-project" onchange="renderManualEntries()"></select>
+              <select id="as-manual-type" onchange="renderManualEntries()"></select>
+              <span class="filter-control"><span class="filter-label">Frequency</span><select id="as-manual-frequency" onchange="renderManualEntries()"><option value="all">All frequencies</option><option value="one_time">One-time</option><option value="monthly">Monthly</option></select></span>
+              <span class="filter-range">
+                <span class="filter-control"><span class="filter-label">Coverage From</span><input id="as-manual-from" type="month" onchange="renderManualEntries()" aria-label="Coverage from"></span>
+                <span class="filter-control"><span class="filter-label">Coverage To</span><input id="as-manual-to" type="month" onchange="renderManualEntries()" aria-label="Coverage to"></span>
+              </span>
+              <select id="as-manual-budget-status" onchange="renderManualEntries()"><option value="Mapped">Mapped</option><option value="Manual Override">Manual Override</option><option value="Needs PMO Review">Needs PMO Review</option><option value="Unbudgeted">Unbudgeted</option></select>
+              <div class="filter-actions">
+                <button class="btn-export" onclick="downloadActualSpendTemplate()">⬇ Download Template</button>
+                <button class="btn-export" id="as-import-button" onclick="document.getElementById('as-import-file').click()">⬆ Import Excel</button>
+                <input id="as-import-file" type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleActualSpendImport(event)">
+                <button class="btn-primary" id="as-add-manual" onclick="openManualExpenseModal()">+ Add Actual Spend</button>
+              </div>
             </div>
             <div id="as-manual-content"></div>
           </div>
@@ -1499,14 +1502,13 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <div id="bgt-tab-forecast" class="cost-tab-panel" style="display:none">
           <div style="padding:10px 0 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
             <span style="font-size:11px;color:var(--text-3)">Rolling 6 months Actual + 6 months Forecast · Software และ Infra</span>
-            <div class="filter-row" style="margin-bottom:0">
+            <div class="filter-toolbar" style="margin-bottom:0">
               <select id="sl-forecast-proj" onchange="renderBudgetSLInfra()">
                 <option value="all">ทุกโปรเจค</option>
               </select>
-              <select id="sl-forecast-months" onchange="renderBudgetSLInfra()">
-                <option value="6">6 เดือน</option>
-              </select>
-              <button class="btn-export" onclick="exportForecastCSV()">⬇ Export CSV</button>
+              <div class="filter-actions">
+                <button class="btn-export" onclick="exportForecastCSV()">⬇ Export CSV</button>
+              </div>
             </div>
           </div>
           <div class="card" style="padding:0;overflow:hidden">
@@ -1536,17 +1538,18 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <!-- ── TAB: BUDGET VS ACTUAL ── -->
         <div id="bgt-tab-bva" class="cost-tab-panel" style="display:none">
 
-          <div class="filter-row">
+          <div class="filter-toolbar">
+            <input id="bva-search" type="search" class="filter-search" placeholder="Search records..." oninput="bvaSearchDebounced()">
             <!-- Options populated dynamically by populateBudgetYearSelect('bva-year') (views/budget.js)
                  from getCurrentBuddhistYear() — never hardcode a BE year list here (Phase 7A-9A). -->
-            <select id="bva-year" onchange="renderBudgetVsActual()"></select>
-            <select id="bva-project" onchange="renderBudgetVsActual()">
+            <span class="filter-control"><span class="filter-label">Year</span><select id="bva-year" class="filter-select" onchange="renderBudgetVsActual()"></select></span>
+            <span class="filter-control"><span class="filter-label">Project</span><select id="bva-project" onchange="renderBudgetVsActual()">
               <option value="all">ทุกโปรเจค</option>
-            </select>
+            </select></span>
             <!-- Same short-code options, order, and labels as the Actual Spend tab's `as-type`
                  filter (index.html, "TAB: ACTUAL SPEND"), so Spend Type filtering behaves and reads
                  identically on both tabs. -->
-            <select id="bva-type" onchange="renderBudgetVsActual()">
+            <span class="filter-control"><span class="filter-label">Type</span><select id="bva-type" onchange="renderBudgetVsActual()">
               <option value="all">ทุกประเภท</option>
               <option value="sl">Software License</option>
               <option value="hw">Hardware</option>
@@ -1555,11 +1558,12 @@ svg.icon { display: inline-block; vertical-align: middle; }
               <option value="dep">Deployment</option>
               <option value="infra">Infrastructure</option>
               <option value="other">Other</option>
-            </select>
-            <input id="bva-search" class="ri" type="search" placeholder="Search reference or description..." oninput="bvaSearchDebounced()" style="max-width:220px">
-            <span id="bva-untagged-alert" style="display:none;font-size:11px;color:var(--amber);margin-left:8px"></span>
-            <button class="btn-export" onclick="exportBudgetVsActualCSV()">⬇ Export BvA</button>
-            <button class="btn-export" onclick="exportBudgetPoolsCSV()">⬇ Export Pools</button>
+            </select></span>
+            <span id="bva-untagged-alert" style="display:none;flex-basis:100%;font-size:11px;color:var(--amber)"></span>
+            <div class="filter-actions">
+              <button class="btn-export" onclick="exportBudgetVsActualCSV()">⬇ Export BvA</button>
+              <button class="btn-export" onclick="exportBudgetPoolsCSV()">⬇ Export Pools</button>
+            </div>
           </div>
 
           <div id="bva-content"></div>
@@ -1577,18 +1581,20 @@ svg.icon { display: inline-block; vertical-align: middle; }
                     <span style="font-size:12px;font-weight:600">Budget Pools</span>
                     <span style="font-size:11px;color:var(--text-3);margin-left:8px">ตั้งงบประมาณต่อโปรเจค แยกตาม pool และช่วงเวลา</span>
                   </div>
-                  <div style="display:flex;gap:8px;align-items:center">
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <input id="bset-search" type="search" class="filter-search" placeholder="Search..." oninput="renderBudgetSettings()">
                     <!-- Options populated dynamically by populateBudgetYearSelect('bset-year')
                          (views/budget.js) from getCurrentBuddhistYear() (Phase 7A-9A). -->
-                    <select id="bset-year" onchange="renderBudgetSettings()" style="font-size:11px;padding:3px 8px"></select>
-                    <input id="bset-search" class="ri" type="search" placeholder="Search project or pool name..." oninput="renderBudgetSettings()" style="font-size:11px;padding:3px 8px;max-width:180px">
-                    <button class="btn-sm" style="font-size:11px;padding:4px 10px" onclick="downloadBudgetPoolTemplate()">⬇ Template</button>
-                    <label class="btn-sm" style="font-size:11px;padding:4px 10px;cursor:pointer">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                      Import Excel
-                      <input type="file" id="pool-excel-upload" accept=".xlsx" style="display:none" onchange="handlePoolBulkUpload(this)">
-                    </label>
-                    <button class="btn-primary" onclick="openBudgetPoolModal()" style="font-size:11px;padding:4px 10px">+ Add Pool</button>
+                    <select id="bset-year" class="filter-input" aria-label="Year" onchange="renderBudgetSettings()"></select>
+                    <div class="filter-actions">
+                      <button class="btn-sm" onclick="downloadBudgetPoolTemplate()">⬇ Template</button>
+                      <label class="btn-sm" style="cursor:pointer">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Import Excel
+                        <input type="file" id="pool-excel-upload" accept=".xlsx" style="display:none" onchange="handlePoolBulkUpload(this)">
+                      </label>
+                      <button class="btn-primary" onclick="openBudgetPoolModal()">+ Add Pool</button>
+                    </div>
                   </div>
                 </div>
                 <div id="bset-budget-body" style="padding:14px 16px"></div>

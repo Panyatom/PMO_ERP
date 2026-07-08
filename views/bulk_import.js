@@ -397,7 +397,7 @@ function importDevices(rows) {
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // BUDGET HISTORICAL MEMO IMPORT
 // Template columns:
-// Memo No | Type | Project | Requester | Approver | Amount | Status | Date | Subject | Reason
+// Memo No | Type | Project | Requester | Reviewer | Approver | Amount | Status | Date | Subject | Reason
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function importBudgetMemos(rows) {
   const existing = loadMemos();
@@ -411,17 +411,17 @@ function importBudgetMemos(rows) {
   const TYPE_LABELS = { sl:'Software License', hw:'Hardware', int:'Team Activity', ent:'Client Expense', dep:'Deployment' };
 
   rows.forEach(row => {
-    const memoNo = strVal(row['Memo No'] || row['memo_no'] || row['à¹€à¸¥à¸‚ Memo']);
+    const memoNo = strVal(row['Memo No'] || row['memo_no'] || row['เลข Memo']);
     if(!memoNo) { skipped++; return; }
     if(existingNos.has(memoNo)) { dupes++; return; }
 
-    const typeRaw = strVal(row['Type'] || row['type'] || row['à¸›à¸£à¸°à¹€à¸ à¸—']).toLowerCase();
+    const typeRaw = strVal(row['Type'] || row['type'] || row['ประเภท']).toLowerCase();
     const type = typeMap[typeRaw] || 'sl';
 
     const statusRaw = strVal(row['Status'] || row['status'] || 'completed').toLowerCase();
-    const status = ['completed','rejected','pending'].includes(statusRaw) ? statusRaw : 'completed';
+    const status = ['completed','rejected','pending','cancelled'].includes(statusRaw) ? statusRaw : 'completed';
 
-    const dateStr = parseExcelDate(row['Date'] || row['date'] || row['à¸§à¸±à¸™à¸—à¸µà¹ˆ']);
+    const dateStr = parseExcelDate(row['Date'] || row['date'] || row['วันที่']);
     const dateISO = dateStr ? new Date(dateStr+'T00:00:00').toISOString() : now;
 
     const memo = {
@@ -429,14 +429,14 @@ function importBudgetMemos(rows) {
       type,
       typeLabel: TYPE_LABELS[type] || type.toUpperCase(),
       status,
-      project:       strVal(row['Project'] || row['project'] || row['à¹‚à¸„à¸£à¸‡à¸à¸²à¸£']),
-      requesterName: strVal(row['Requester'] || row['requester'] || row['à¸œà¸¹à¹‰à¸‚à¸­']),
-      reviewerName:  strVal(row['Requester'] || row['requester'] || row['à¸œà¸¹à¹‰à¸‚à¸­']),
-      approverName:  strVal(row['Approver'] || row['approver'] || row['à¸œà¸¹à¹‰à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´']),
-      approvedBy:    strVal(row['Approver'] || row['approver'] || row['à¸œà¸¹à¹‰à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´']),
-      total:         numVal(row['Amount'] || row['amount'] || row['à¸§à¸‡à¹€à¸‡à¸´à¸™']),
-      subject:       strVal(row['Subject'] || row['subject'] || row['à¸«à¸±à¸§à¸‚à¹‰à¸­']),
-      reason:        strVal(row['Reason'] || row['reason'] || row['à¹€à¸«à¸•à¸¸à¸œà¸¥']),
+      project:       strVal(row['Project'] || row['project'] || row['โครงการ']),
+      requesterName: strVal(row['Requester'] || row['requester'] || row['ผู้ขอ']),
+      reviewerName:  strVal(row['Reviewer'] || row['reviewer'] || '-'),
+      approverName:  strVal(row['Approver'] || row['approver'] || row['ผู้อนุมัติ']),
+      approvedBy:    strVal(row['Approver'] || row['approver'] || row['ผู้อนุมัติ']),
+      total:         numVal(row['Amount'] || row['amount'] || row['วงเงิน']),
+      subject:       strVal(row['Subject'] || row['subject'] || row['หัวข้อ']),
+      reason:        strVal(row['Reason'] || row['reason'] || row['เหตุผล']),
       date:          dateStr,
       createdAt:     dateISO,
       updatedAt:     dateISO,
@@ -452,9 +452,9 @@ function importBudgetMemos(rows) {
 
   storeMemos(existing);
   renderBudget();
-  let msg = `Budget memo import completed\nAdded: ${added}`;
-  if(dupes)   msg += `\nSkipped duplicate Memo No: ${dupes}`;
-  if(skipped) msg += `\nSkipped blank rows: ${skipped}`;
+  let msg = `✓ Import สำเร็จ\nเพิ่ม ${added} memo`;
+  if(dupes)   msg += `\nข้าม ${dupes} รายการที่ Memo No ซ้ำ`;
+  if(skipped) msg += `\nข้าม ${skipped} แถวว่าง`;
   alert(msg);
 }
 
@@ -479,9 +479,9 @@ function downloadTemplate(type) {
     },
     budget: {
       filename: 'budget_import_template.xlsx',
-      headers: ['Memo No','Type','Project','Requester','Approver','Amount','Status','Date','Subject','Reason'],
-      sample: [['ORB-2401-001','sl','AOA-MP','Chuen K.','Phi Wing',108000,'completed','2024-01-15','Software license approval','Daily work tool'],
-               ['ORB-2402-001','hw','TTB','Tom P.','Phi Wing',79000,'completed','2024-02-10','Laptop purchase approval','Support new team members']]
+      headers: ['Memo No','Type','Project','Requester','Reviewer','Approver','Amount','Status','Date','Subject','Reason'],
+      sample: [['ORB-2401-001','sl','AOA-MP','Chuen K.','Nina Review','Phi Wing',108000,'completed','2024-01-15','ขออนุมัติ Software License','เป็นโปรแกรมที่ใช้งานประจำ'],
+               ['ORB-2402-001','hw','TTB','Tom P.','Nina Review','Phi Wing',79000,'completed','2024-02-10','ขออนุมัติซื้อ Laptop','เพื่อรองรับทีมงานใหม่']]
     }
   };
 
