@@ -708,6 +708,14 @@ function canHaveOnboardDate(status) {
 function effectiveOnboardDate(r) {
   return canHaveOnboardDate(r?.status) ? (r?.onboardDate || '') : '';
 }
+function isPeriodActiveOn(startDate, endDate, asOf=todayISO) {
+  if(window.PMO_RESOURCE_FLOW?.isPeriodActiveOn) return window.PMO_RESOURCE_FLOW.isPeriodActiveOn(startDate, endDate, asOf);
+  const day = isoDay(asOf || todayISO);
+  const start = isoDay(startDate);
+  const end = isoDay(endDate);
+  if(!day || !start) return false;
+  return start <= day && (!end || end >= day);
+}
 function isActiveResource(r) {
   return r.status === 'filled';
 }
@@ -728,27 +736,15 @@ function transferSupervisor(r) {
 }
 function allocationRows(list, opts={}) {
   const includeInactive = !!opts.includeInactive;
+  const activeOnly = !!opts.activeOnly;
+  const asOf = opts.asOf || todayISO;
   return (list||[]).flatMap(r => {
     if(!includeInactive && !isActiveResource(r)) return [];
     if(includeInactive && !['filled','resolved','mitigated'].includes(r.status)) return [];
     const person = resourcePersonName(r);
     const active = isActiveResource(r);
-    const rows = [{
-      requestId: r.id,
-      person,
-      employeeCode: resourceEmployeeCode(r),
-      resourceTeam: r.resourceTeam,
-      level: r.level,
-      project: r.project,
-      code: primaryProjectCode(r),
-      allocation: primaryAllocation(r),
-      startDate: r.onboardDate || r.startDate,
-      endDate: active ? (r.endDate || '') : (r.offboardDate || r.resolvedDate || r.endDate || ''),
-      status: active ? 'active' : 'closed',
-      source: isTransfer(r) ? 'Transfer' : 'Primary',
-      note: r.remark || '',
-    }];
-    (r.projectCodes||[]).forEach(c => rows.push({
+    const baseEndDate = active ? (r.endDate || '') : (r.offboardDate || r.resolvedDate || r.endDate || '');
+    const codeRows = (r.projectCodes||[]).map(c => ({
       requestId: r.id,
       person,
       employeeCode: resourceEmployeeCode(r),
@@ -762,7 +758,24 @@ function allocationRows(list, opts={}) {
       status: active ? 'active' : 'closed',
       source: 'Project Code',
       note: c.note || '',
-    }));
+    })).filter(x => x.allocation > 0 && (!activeOnly || isPeriodActiveOn(x.startDate, x.endDate, asOf)));
+    const primaryAlloc = activeOnly ? Math.max(0, 100 - codeRows.reduce((sum, c) => sum + clampAlloc(c.allocation), 0)) : primaryAllocation(r);
+    const primaryRow = {
+      requestId: r.id,
+      person,
+      employeeCode: resourceEmployeeCode(r),
+      resourceTeam: r.resourceTeam,
+      level: r.level,
+      project: r.project,
+      code: primaryProjectCode(r),
+      allocation: primaryAlloc,
+      startDate: r.onboardDate || r.startDate,
+      endDate: baseEndDate,
+      status: active ? 'active' : 'closed',
+      source: isTransfer(r) ? 'Transfer' : 'Primary',
+      note: r.remark || '',
+    };
+    const rows = (!activeOnly || isPeriodActiveOn(primaryRow.startDate, primaryRow.endDate, asOf)) ? [primaryRow, ...codeRows] : codeRows;
     return rows.filter(x => x.allocation > 0);
   });
 }
@@ -958,6 +971,22 @@ function timelineItemOverlapsWindow(item, start, end) {
   const itemEnd = parseDay(item.endDate) || end;
   if(!itemStart) return false;
   return itemStart <= end && itemEnd >= start;
+}
+function assignTimelineLanes(items) {
+  if(window.PMO_RESOURCE_FLOW?.assignTimelineLanes) return window.PMO_RESOURCE_FLOW.assignTimelineLanes(items);
+  const lanes = [];
+  return (items||[]).map((item, index) => ({ ...item, _index:index }))
+    .sort((a,b) => String(a.startDate||'').localeCompare(String(b.startDate||'')) || String(a.endDate||'').localeCompare(String(b.endDate||'')))
+    .map(item => {
+      const start = isoDay(item.startDate);
+      const end = isoDay(item.endDate) || '9999-12-31';
+      let lane = lanes.findIndex(laneEnd => laneEnd < start);
+      if(lane < 0) { lane = lanes.length; lanes.push(end); }
+      else lanes[lane] = end;
+      return { ...item, lane, laneCount: lanes.length };
+    })
+    .sort((a,b) => a._index - b._index)
+    .map(({ _index, ...item }) => ({ ...item, laneCount: lanes.length }));
 }
 
 function shiftResourceTimelineYear(delta) {
@@ -1712,16 +1741,13 @@ function renderPeopleView(base) {
         (m.employeeCode && resourceEmployeeCode(r).toLowerCase() === m.employeeCode.toLowerCase()) ||
         (!m.employeeCode && employeeDirectoryName(r) && employeeDirectoryName(r).toLowerCase() === (m.resourceName || m.resourceNameTh || m.resourceNameEn || '').toLowerCase())
       );
-      const activeMatches = matches.filter(isActiveResource);
-      const related = activeMatches.length ? activeMatches : [resourceLikeFromMaster(m)];
+      const related = matches.length ? matches : [resourceLikeFromMaster(m)];
       return { master:m, related, requestId: matches[0]?.id || '' };
     })
     : base.filter(r => isActiveResource(r) && (employeeDirectoryName(r) || resourceEmployeeCode(r))).map(r => ({ master:resourceMasterFromRequest(r), related:[r], requestId:r.id }));
 
   const rows = masterRows.map(({ master, related, requestId }) => {
-    const allAllocs = allocationRows(related);
-    const codeAllocs = allAllocs.filter(a => a.source === 'Project Code');
-    const allocs = codeAllocs.length ? codeAllocs : allAllocs;
+    const allocs = allocationRows(related, { includeInactive:true, activeOnly:true, asOf:todayISO });
     const allocationByProject = [...allocs.reduce((map, a) => {
       const key = a.project || '-';
       map.set(key, (map.get(key) || 0) + clampAlloc(a.allocation));
@@ -1774,7 +1800,7 @@ function renderTimelineView(base) {
     });
   const { start, end } = timelineYearWindow(_resTimelineYear);
   const groups = filteredAllGroups
-    .map(g => ({ ...g, items: g.items.filter(item => timelineItemOverlapsWindow(item, start, end)) }))
+    .map(g => ({ ...g, items: assignTimelineLanes(g.items.filter(item => timelineItemOverlapsWindow(item, start, end))) }))
     .filter(g => g.items.length);
   const months = timelineMonths(start, end);
   const totalDays = Math.max(1, daysBetween(start, end));
@@ -1799,6 +1825,7 @@ function renderTimelineView(base) {
   const rows = groups.map(g => {
     const primaryType = g.hiringType;
     const meta = hiringMeta(primaryType);
+    const laneCount = Math.max(1, ...g.items.map(item => Number(item.lane || 0) + 1));
     const segments = g.items.map(item => {
       const period = { start: parseDay(item.startDate), end: parseDay(item.endDate) || end, hasPlannedEnd: !!item.endDate };
       if(!period.start) return '';
@@ -1808,8 +1835,9 @@ function renderTimelineView(base) {
       const width = Math.max(1.2, daysBetween(segStart, segEnd) / totalDays * 100);
       const color = projectAccentColor(item.project);
       const textColor = projectTextColor(color);
+      const top = 7 + (Number(item.lane || 0) * 26);
       const title = `${g.person} | ${item.project} | ${isoDay(item.startDate)} - ${item.endDate ? isoDay(item.endDate) : 'ongoing'} | ${item.source}`;
-      return `<button class="res-timeline-bar" onclick="event.stopPropagation();openResDetail('${item.requestId}')" title="${esc(title)}" style="left:${left}%;width:${width}%;background:${color};color:${textColor}">
+      return `<button class="res-timeline-bar" onclick="event.stopPropagation();openResDetail('${item.requestId}')" title="${esc(title)}" style="left:${left}%;width:${width}%;top:${top}px;background:${color};color:${textColor}">
         <span>${esc(item.project || '-')}</span>
         <small>${esc([item.code, `${item.allocation}%`, item.source].filter(Boolean).join(' / '))}</small>
       </button>`;
@@ -1820,7 +1848,7 @@ function renderTimelineView(base) {
         <div class="res-timeline-person-meta">${esc([g.employeeCode, g.level].filter(Boolean).join(' / ') || '-')}</div>
         <div class="res-timeline-person-badge"><span class="badge ${meta.cls}">${esc(meta.label)}</span></div>
       </div>
-      <div class="res-timeline-track" style="background-size:calc(100% / ${months.length}) 100%">
+      <div class="res-timeline-track" style="min-height:${Math.max(38, laneCount * 28 + 8)}px;background-size:calc(100% / ${months.length}) 100%">
         ${segments || '<span style="font-size:12px;color:var(--text-3);padding:12px;display:inline-block">No dated assignment</span>'}
       </div>
     </div>`;
@@ -2646,7 +2674,7 @@ function openResTransfer(id) {
     </p>
     <div class="form-grid res-form-grid-3" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
       <div class="fg"><label>Destination Project *</label><select id="rtf-project" class="ri"><option value="">- Select -</option>${projectOpts}</select></div>
-      <div class="fg"><label>New Start Date *</label><input id="rtf-start" class="ri" type="date" value="${todayISO}"></div>
+      <div class="fg"><label>New Start Date *</label><input id="rtf-start" class="ri" type="date" value=""></div>
       <div class="fg"><label>End Date</label><input id="rtf-end" class="ri" type="date" value="${r.endDate||''}"></div>
     </div>
     <div class="fg" style="margin-top:10px"><label>Transfer Reason *</label>
@@ -2701,7 +2729,7 @@ function openTransferEntry(editId='', sourceId='', mode='transfer', codeIndex=''
       <div class="fg"><label>From Project *</label><input id="rtf-from-project" class="ri" value="${esc(fromProject||'')}" placeholder="Current project"></div>
       <div class="fg"><label>To Project *</label><select id="rtf-project" class="ri" onchange="syncTransferProjectCodeChoices()"><option value="">Select project</option>${projectOpts}</select></div>
       <div class="fg" style="display:none"><label>Name - Surname *</label><input id="rtf-name" class="ri" value="${esc(resourcePersonName(editing||source||{})||'')}" placeholder="Employee name"></div>
-      <div class="fg"><label>First day at new project *</label><input id="rtf-start" class="ri" type="date" value="${editing?.onboardDate||editing?.startDate||todayISO}"></div>
+      <div class="fg"><label>First day at new project *</label><input id="rtf-start" class="ri" type="date" value="${editing?.onboardDate||editing?.startDate||editingCode?.startDate||''}"></div>
       <div class="fg"><label>Last day at new project *</label><input id="rtf-end" class="ri" type="date" value="${editing?.offboardDate||editing?.endDate||''}"></div>
       <div class="fg"><label>Project Code</label><select id="rtf-code" class="ri" onchange="applyTransferProjectCode()"><option value="">${selectedProject ? '- Select project code -' : 'Select Project first'}</option>${codeOptions}</select></div>
       <div class="fg"><label>Allocation %</label><input id="rtf-allocation" class="ri" type="number" min="1" max="100" value="${esc(String(editingCode?.allocation||100))}"></div>

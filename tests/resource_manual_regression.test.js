@@ -234,3 +234,66 @@ test('[PMO-RES-UAT-011] Timeline filters by project, role, and employee type', (
   assert.deepEqual(flow.applyTimelineFilters(groups, { type:'sec' }).map(group => group.employeeCode), ['SEC-200']);
   assert.deepEqual(flow.applyTimelineFilters(groups, { project:'AOA-MP', role:'sa', type:'subcon' }).map(group => group.employeeCode), ['SUB-200']);
 });
+
+test('[PMO-RES-UAT-012] Current allocation follows active dates instead of future transfer', () => {
+  const rows = [
+    {
+      id:'source',
+      status:'resolved',
+      project:'Current Project',
+      primaryProjectCode:'CUR-001',
+      allocationPercent:100,
+      resourceName:'Transfer Person',
+      employeeCode:'DHC-300',
+      onboardDate:'2026-01-01',
+      offboardDate:'2026-08-01',
+    },
+    {
+      id:'future-transfer',
+      status:'filled',
+      project:'Future Project',
+      primaryProjectCode:'FUT-001',
+      allocationPercent:100,
+      resourceName:'Transfer Person',
+      employeeCode:'DHC-300',
+      onboardDate:'2026-08-01',
+    },
+  ];
+
+  assert.deepEqual(flow.currentAllocationRows(rows, '2026-07-08').map(row => row.project), ['Current Project']);
+  assert.deepEqual(flow.currentAllocationRows(rows, '2026-08-15').map(row => row.project), ['Future Project']);
+});
+
+test('[PMO-RES-UAT-013] Current allocation shows every active project code', () => {
+  const rows = [{
+    id:'multi-code',
+    status:'filled',
+    project:'Primary Project',
+    primaryProjectCode:'PRI-050',
+    allocationPercent:50,
+    resourceName:'Multi Code Person',
+    employeeCode:'DHC-301',
+    onboardDate:'2026-01-01',
+    projectCodes:[
+      { project:'Project A', code:'A-025', allocation:25, startDate:'2026-01-01', endDate:'2026-12-31' },
+      { project:'Project B', code:'B-025', allocation:25, startDate:'2026-03-01', endDate:'2026-12-31' },
+      { project:'Future Project', code:'F-025', allocation:25, startDate:'2026-09-01', endDate:'2026-12-31' },
+    ],
+  }];
+
+  assert.deepEqual(
+    flow.currentAllocationRows(rows, '2026-07-08').map(row => `${row.project}:${row.allocation}:${row.source}`),
+    ['Primary Project:50:Primary', 'Project A:25:Project Code', 'Project B:25:Project Code']
+  );
+});
+
+test('[PMO-RES-UAT-014] Timeline overlapping projects are assigned parallel lanes', () => {
+  const lanes = flow.assignTimelineLanes([
+    { project:'Primary', startDate:'2026-07-01', endDate:'2026-12-31' },
+    { project:'Project A', startDate:'2026-08-01', endDate:'2026-10-31' },
+    { project:'Project B', startDate:'2026-11-01', endDate:'2026-12-31' },
+  ]);
+
+  assert.deepEqual(lanes.map(item => `${item.project}:${item.lane}`), ['Primary:0', 'Project A:1', 'Project B:1']);
+  assert(lanes.every(item => item.laneCount === 2));
+});

@@ -200,6 +200,18 @@
     return ({ dhc:'DHC', sec:'SEC', subcon:'Sub Con', other:'Other' })[key] || key || 'Other';
   }
 
+  function isoDay(value) {
+    return value ? String(value).slice(0, 10) : '';
+  }
+
+  function isPeriodActiveOn(startDate, endDate, asOf) {
+    const day = isoDay(asOf || new Date().toISOString());
+    const start = isoDay(startDate);
+    const end = isoDay(endDate);
+    if(!day || !start) return false;
+    return start <= day && (!end || end >= day);
+  }
+
   function personKey(record) {
     return resourceEmployeeCode(record) || resourcePersonName(record).toLowerCase() || record?.id || '';
   }
@@ -250,6 +262,57 @@
       groups.get(key).items.push(...items);
     });
     return [...groups.values()].sort((a,b)=>String(a.person).localeCompare(String(b.person)));
+  }
+
+  function currentAllocationRows(list, asOf) {
+    return (list || []).flatMap(record => {
+      if(!canHaveOnboardDate(record?.status)) return [];
+      const codeRows = (record.projectCodes || []).map(code => ({
+        requestId: record.id,
+        project: code.project,
+        code: code.code,
+        allocation: Number(code.allocation || 0),
+        startDate: code.startDate || code.at || effectiveOnboardDate(record) || record.startDate || '',
+        endDate: code.endDate || record.offboardDate || record.resolvedDate || record.endDate || '',
+        source: 'Project Code',
+      })).filter(row => row.allocation > 0 && isPeriodActiveOn(row.startDate, row.endDate, asOf));
+      const primaryStart = effectiveOnboardDate(record) || record.startDate || record.requestDate || '';
+      const primaryEnd = record.offboardDate || record.resolvedDate || record.endDate || '';
+      const primaryAllocationValue = Math.max(0, 100 - codeRows.reduce((sum, row) => sum + row.allocation, 0));
+      const rows = isPeriodActiveOn(primaryStart, primaryEnd, asOf) && primaryAllocationValue > 0
+        ? [{
+          requestId: record.id,
+          project: record.project,
+          code: primaryProjectCode(record),
+          allocation: primaryAllocationValue,
+          startDate: primaryStart,
+          endDate: primaryEnd,
+          source: record.transferFrom ? 'Transfer' : 'Primary',
+        }, ...codeRows]
+        : codeRows;
+      return rows;
+    });
+  }
+
+  function assignTimelineLanes(items) {
+    const lanes = [];
+    return (items || [])
+      .map((item, index) => ({ ...item, _index:index }))
+      .sort((a,b) => String(a.startDate || '').localeCompare(String(b.startDate || '')) || String(a.endDate || '').localeCompare(String(b.endDate || '')))
+      .map(item => {
+        const start = isoDay(item.startDate);
+        const end = isoDay(item.endDate) || '9999-12-31';
+        let lane = lanes.findIndex(laneEnd => laneEnd < start);
+        if(lane < 0) {
+          lane = lanes.length;
+          lanes.push(end);
+        } else {
+          lanes[lane] = end;
+        }
+        return { ...item, lane, laneCount: lanes.length };
+      })
+      .sort((a,b) => a._index - b._index)
+      .map(({ _index, ...item }) => ({ ...item, laneCount: lanes.length }));
   }
 
   function resolveProjectAccentColor(projectName, projectMaster=[]) {
@@ -308,7 +371,10 @@
     timelineRoleLabel,
     employeeTypeKey,
     employeeTypeLabel,
+    isPeriodActiveOn,
     timelineItemGroups,
+    currentAllocationRows,
+    assignTimelineLanes,
     applyTimelineFilters,
     resolveProjectAccentColor,
     projectTextColor,
