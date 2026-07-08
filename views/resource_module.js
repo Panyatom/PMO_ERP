@@ -1879,11 +1879,12 @@ function renderPeopleView(base) {
   const filterDefs = renderResourceDropdownFilters(rows);
   const filteredRows = applyResourceDropdownFilters(rows, filterDefs);
   renderResourceTable([
-    { label:'ชื่อ-นามสกุล / Name - Surname', th:'width:19%', cell:r=>`<strong>${esc(r.personTh||'(missing Thai name)')}</strong>${r.personEn?`<div style="font-size:11px;color:var(--text-3)">${esc(r.personEn)}</div>`:''}` },
-    { label:'Employee Code', th:'width:120px', cell:r=>`<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-2);font-weight:700">${esc(r.employeeCode||'-')}</span>` },
-    { label:'Position', th:'width:16%', cell:r=>esc(r.position||'-') },
-    { label:'Level', th:'width:90px', cell:r=>r.level ? `<span class="badge badge-gray" style="font-size:10px">${esc(r.level)}</span>` : '-' },
-    { label:'Current Allocation', th:'width:28%', cell:r=>r.projects.length ? r.projects.map(a=>projectPill(a.project, `${a.project}: ${a.allocation}%`)).join(' ') : '-' },
+    { label:'Employee Code', th:'width:118px', cell:r=>`<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-2);font-weight:700">${esc(r.employeeCode||'-')}</span>` },
+    { label:'ชื่อ-นามสกุล', th:'width:17%', cell:r=>`<strong>${esc(r.personTh||'-')}</strong>` },
+    { label:'Name - Surname', th:'width:17%', cell:r=>r.personEn ? esc(r.personEn) : '<span style="color:var(--text-3)">-</span>' },
+    { label:'Position', th:'width:14%', cell:r=>esc(r.position||'-') },
+    { label:'Level', th:'width:82px', cell:r=>r.level ? `<span class="badge badge-gray" style="font-size:10px">${esc(r.level)}</span>` : '-' },
+    { label:'Current Allocation', th:'width:24%', cell:r=>r.projects.length ? r.projects.map(a=>projectPill(a.project, `${a.project}: ${a.allocation}%`)).join(' ') : '-' },
     { label:'Start', th:'width:110px', cell:r=>`<span style="font-size:11px;white-space:nowrap">${r.startDate?shortDate(String(r.startDate).slice(0,10)):'-'}</span>` },
     { label:'Action', th:'width:230px;text-align:center', td:'text-align:center;white-space:nowrap', cell:r=>r.requestId ? `<span style="display:inline-flex;justify-content:center;gap:4px;white-space:nowrap">
       <button class="btn-sm" onclick="event.stopPropagation();openEmployeeEdit('${r.requestId}')">Edit</button>
