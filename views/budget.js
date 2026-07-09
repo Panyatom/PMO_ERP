@@ -31,27 +31,8 @@ const BGT_TYPE_LABELS = { sl:'Software License', hw:'Hardware', int:'Team Activi
 const BGT_PROJ_COLORS = ['#185FA5','#3B6D11','#854F0B','#3C3489','#A32D2D','#5F5E5A','#0F6E56','#8B4513'];
 const INFRA_KEY = 'orbit-pmo-infra-v1';
 const MANUAL_EXPENSE_KEY = 'orbit-pmo-manual-expenses-v1';
-const BUDGET_ASYNC_TIMEOUT_MS = 4500;
 
 let _manualExpenseCache = null;
-
-function budgetAsyncFallback(promise, fallback, label) {
-  let timer = null;
-  const timeout = new Promise(resolve => {
-    timer = setTimeout(() => {
-      console.warn(label + ' timed out, using local backup');
-      resolve(typeof fallback === 'function' ? fallback() : fallback);
-    }, BUDGET_ASYNC_TIMEOUT_MS);
-  });
-  return Promise.race([promise, timeout])
-    .catch(error => {
-      console.warn(label + ' failed, using local backup', error?.message || error);
-      return typeof fallback === 'function' ? fallback() : fallback;
-    })
-    .finally(() => {
-      if (timer) clearTimeout(timer);
-    });
-}
 
 function manualExpenseFromDb(r) {
   return {
@@ -127,8 +108,7 @@ function storeManualExpenses(rows) {
 }
 
 async function loadManualExpensesAsync() {
-  return budgetAsyncFallback((async () => {
-    if (!(await checkSupa())) return loadManualExpenses();
+  if (await checkSupa()) {
     try {
       const rows = await supaFetch('budget_manual_expenses', 'GET', null, '?order=created_at.desc');
       const localById = new Map(loadManualExpenses().map(expense => [expense.id, expense]));
@@ -139,8 +119,8 @@ async function loadManualExpensesAsync() {
       }));
       return _manualExpenseCache;
     } catch(e) { console.warn('Manual expenses load failed, using local backup', e.message); }
-    return loadManualExpenses();
-  })(), () => loadManualExpenses(), 'Manual expenses load');
+  }
+  return loadManualExpenses();
 }
 
 function isMissingVendorProgramColumnError(error) {
@@ -310,8 +290,7 @@ let _infraCache = null;
 
 // Load: returns array of entry objects
 async function loadInfraCostsAsync() {
-  return budgetAsyncFallback((async () => {
-    if (!(await checkSupa())) return loadInfraCosts();
+  if (await checkSupa()) {
     try {
       const rows = await supaFetch('infra_costs', 'GET', null, '?order=project.asc');
       _infraCache = (rows || []).map(r => ({
@@ -327,8 +306,8 @@ async function loadInfraCostsAsync() {
     } catch(e) {
       console.warn('Supabase infra_costs read failed, fallback', e.message);
     }
-    return loadInfraCosts();
-  })(), () => loadInfraCosts(), 'Infra costs load');
+  }
+  return loadInfraCosts();
 }
 
 // localStorage fallback — returns array
@@ -562,21 +541,28 @@ function actualSpendRecordInRange(record, fromMonth, toMonth) {
   return (!fromMonth || !end || end >= fromMonth) && (!toMonth || !start || start <= toMonth);
 }
 
+// Part 8 (UX consistency pass) — Project/Type/Budget Status are multi-select
+// filters. queryActualSpend() itself is left untouched (still single-value,
+// still the shared canonical filter used elsewhere per MASTER_SPEC "Shared
+// calculation functions only") — called here with no project/spendType/
+// budgetStatus so it's a pass-through, and the multi-select matching is
+// layered on as an additional .filter() step instead.
 function filteredActualSpendRecords(records = loadActualSpendRecords()) {
   const from = document.getElementById('as-from')?.value || '';
   const to = document.getElementById('as-to')?.value || '';
-  const project = document.getElementById('as-project')?.value || 'all';
-  const type = document.getElementById('as-type')?.value || 'all';
+  const project = msValues('as-project');
+  const type = msValues('as-type');
   const source = document.getElementById('as-source')?.value || 'all';
-  const budgetStatus = document.getElementById('as-budget-status')?.value || 'all';
+  const budgetStatus = msValues('as-budget-status');
   const year = document.getElementById('as-year')?.value || '';
   const sourceMap = { memo:ACTUAL_SPEND_SOURCES.APPROVED_MEMO, manual:ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE, infra:ACTUAL_SPEND_SOURCES.INFRA_COST };
+  const spendTypes = type.map(spendTypeFromMemoType);
   return queryActualSpend({
-    project: project === 'all' ? '' : project,
-    spendType: type === 'all' ? '' : spendTypeFromMemoType(type),
     source: source === 'all' ? '' : sourceMap[source],
-    budgetStatus: budgetStatus === 'all' ? '' : budgetStatus,
   }, records).filter(record =>
+    (!project.length || project.includes(record.project)) &&
+    (!spendTypes.length || spendTypes.includes(record.spendType)) &&
+    (!budgetStatus.length || budgetStatus.includes(record.budgetStatus)) &&
     actualSpendRecordInRange(record, from, to) && (!year || actualSpendRecordInYear(record, year))
   );
 }
@@ -1162,7 +1148,7 @@ function _ovRenderBvA() {
   }).filter(d => d.actual > 0 || d.hasBudget);
 
   if (!rows.length) {
-    container.innerHTML = `<div style="padding:20px;text-align:center;font-size:12px;color:var(--text-3)">ยังไม่มีข้อมูล — Approve SL Memo หรือตั้งงบประมาณก่อน</div>`;
+    container.innerHTML = `<div class="hist-empty">No records found — approve an SL memo or set a budget first.</div>`;
     return;
   }
 
@@ -1347,22 +1333,24 @@ function _renderForecastTable() {
   const forecast = calculateForecast(loadActualSpendRecords(), new Date());
   const allProjects = [...new Set(forecast.rows.map(row => row.project))].sort();
 
-  // Project dropdown
+  // Project dropdown — Part 8 (UX consistency pass): multi-select filter.
+  initMultiSelect('sl-forecast-proj', 'ทุกโปรเจค', 'Project');
   const projSel = document.getElementById('sl-forecast-proj');
   if(projSel) {
-    const selected = projSel.value || 'all';
-    projSel.innerHTML = '<option value="all">ทุกโปรเจค</option>';
+    const curSelected = msValues('sl-forecast-proj');
+    projSel.innerHTML = '';
     allProjects.forEach(p => {
       const opt = document.createElement('option');
       opt.value = opt.textContent = p;
       projSel.appendChild(opt);
     });
-    projSel.value = allProjects.includes(selected) ? selected : 'all';
+    Array.from(projSel.options).forEach(o => { if (curSelected.includes(o.value)) o.selected = true; });
+    refreshMultiSelectUI('sl-forecast-proj');
   }
-  const selProj = projSel?.value || 'all';
+  const selProj = msValues('sl-forecast-proj');
   _forecastView = {
     months: forecast.months,
-    rows: forecast.rows.filter(row => selProj === 'all' || row.project === selProj),
+    rows: forecast.rows.filter(row => !selProj.length || selProj.includes(row.project)),
   };
   const months = _forecastView.months;
   const monthDate = key => new Date(`${key}-01T00:00:00`);
@@ -1375,6 +1363,7 @@ function _renderForecastTable() {
   thead.innerHTML = `<tr>
     <th style="${thS};text-align:left;min-width:90px">Project</th>
     <th style="${thS};text-align:left;min-width:80px">Program</th>
+    <th style="${thS};text-align:left;min-width:70px">Plan</th>
     <th style="${thS};text-align:center;min-width:60px">Type</th>
     ${months.map(m => `<th style="${m.kind === 'forecast' ? thFS : thS}">${esc(monthLbl(m))}${m.kind === 'forecast' ? '<br><span style="font-size:9px;opacity:.7">F</span>' : ''}</th>`).join('')}
     <th style="${thS};color:var(--blue)">Total</th>
@@ -1401,6 +1390,7 @@ function _renderForecastTable() {
       rows += `<tr>
         <td style="${tdS};text-align:left;font-weight:500">${esc(proj)}</td>
         <td style="${tdS};text-align:left">${esc(row.program)}</td>
+        <td style="${tdS};text-align:left">${esc(row.plan || '—')}</td>
         <td style="${tdS};text-align:center"><span style="font-size:10px;background:${row.spendType === 'Infra' ? '#FAEEDA' : '#E6F1FB'};color:${row.spendType === 'Infra' ? '#633806' : '#0C447C'};padding:1px 6px;border-radius:3px">${esc(row.spendType)}</span></td>
         ${cells}
         <td style="${tdS};font-weight:600;color:var(--blue)">${money(Math.round(rowTotal))}</td>
@@ -1409,15 +1399,15 @@ function _renderForecastTable() {
 
     // Subtotal row
     rows += `<tr style="background:var(--bg)">
-      <td style="${subS};text-align:left" colspan="2">${esc(proj)} — Subtotal</td>
+      <td style="${subS};text-align:left" colspan="3">${esc(proj)} — Subtotal</td>
       <td style="${subS}"></td>
       ${projMonthTotals.map((v, mi) => `<td style="${months[mi].kind === 'forecast' ? subFS : subS}">${money(Math.round(v))}</td>`).join('')}
       <td style="${subS};color:var(--blue)">${money(Math.round(projTotal))}</td>
     </tr>
-    <tr style="height:6px"><td colspan="${months.length+4}" style="background:var(--color-background-tertiary,#F4F3EF)"></td></tr>`;
+    <tr style="height:6px"><td colspan="${months.length+5}" style="background:var(--color-background-tertiary,#F4F3EF)"></td></tr>`;
   });
 
-  body.innerHTML = rows || `<tr><td colspan="${months.length+4}" style="padding:24px;text-align:center;color:var(--text-3)">ยังไม่มีข้อมูล</td></tr>`;
+  body.innerHTML = rows || `<tr><td colspan="${months.length+5}" class="hist-empty">No records found. Try changing filters.</td></tr>`;
 }
 
 function exportForecastCSV() {
@@ -1494,7 +1484,7 @@ function showMemoBreakdown(proj, monthKey) {
   const total = items.reduce((s,i)=>s+i.monthly,0);
 
   tbody.innerHTML = !items.length
-    ? `<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--text-3)">ไม่มี SL memo ในเดือนนี้</td></tr>`
+    ? `<tr><td colspan="5" class="hist-empty">No SL memos found for this month.</td></tr>`
     : items.map(i => `<tr>
         <td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--blue);font-weight:500">${esc(i.memoNo)}</td>
         <td style="padding:7px 12px;border-bottom:1px solid var(--border)">${esc(i.name)}</td>
@@ -1608,7 +1598,7 @@ function _renderBudgetVsActual(allProjects, infraEntries, licByProj) {
 
   // Table rows
   if(!projData.length) {
-    body.innerHTML = `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--text-3)">ยังไม่มีข้อมูลเพียงพอสำหรับ Budget vs Actual</td></tr>`;
+    body.innerHTML = `<tr><td colspan="5" class="hist-empty">No records found for Budget vs Actual.</td></tr>`;
     return;
   }
 
@@ -1805,16 +1795,12 @@ function openManualExpenseModal(editId = null) {
   if (expense?.voidedAt) { alert('รายการที่ void แล้วแก้ไขไม่ได้'); return; }
   document.getElementById('manual-expense-modal')?.remove();
 
-  const settingsProjects = typeof loadSettings === 'function' ? (loadSettings()?.projects || []) : [];
-  const projects = [...new Set([
-    ...settingsProjects,
-    ...loadMemos().map(m => m.project),
-    ...loadBudgetPools().map(p => p.project),
-    ...loadManualExpenses().map(e => e.project),
-  ].filter(Boolean))].sort();
+  const g = (key, fallback = '') => expense?.[key] ?? fallback;
+  const projects = typeof getCanonicalProjectList === 'function'
+    ? getCanonicalProjectList()
+    : [g('project')].filter(Boolean);
   const pools = loadBudgetPools();
   const today = new Date().toISOString().slice(0, 10);
-  const g = (key, fallback = '') => expense?.[key] ?? fallback;
 
   const modal = document.createElement('div');
   modal.id = 'manual-expense-modal';
@@ -1836,7 +1822,9 @@ function openManualExpenseModal(editId = null) {
         <div class="fg"><label>Project *</label>
           <select id="me-project" class="ri">
             <option value="">— เลือก —</option>
-            ${projects.map(p=>`<option value="${esc(p)}" ${g('project')===p?'selected':''}>${esc(p)}</option>`).join('')}
+            ${typeof projectOptionsHtml === 'function'
+              ? projectOptionsHtml(projects, g('project'))
+              : projects.map(p=>`<option value="${esc(p)}" ${g('project')===p?'selected':''}>${esc(p)}</option>`).join('')}
           </select>
         </div>
         <div class="fg"><label>Budget Pool</label>
@@ -2004,12 +1992,12 @@ async function saveManualExpenseFromModal() {
 
 async function voidManualExpense(id) {
   if (!isPMO()) { alert('เฉพาะ PMO เท่านั้นที่ลบรายการได้'); return; }
-  if (!confirm('This will remove the record from reports but keep audit history. Continue?')) return;
+  if (!confirm('การดำเนินการนี้จะลบรายการออกจากรายงาน แต่ยังคงประวัติ audit ไว้\nต้องการดำเนินการต่อหรือไม่?')) return;
   try {
     await voidManualExpenseAsync(id, 'Deleted from Manual Entries');
     document.getElementById('actual-manual-panel')?.remove();
     await renderActualSpend();
-  } catch(e) { alert('Delete failed. No changes were made: ' + e.message); }
+  } catch(e) { alert('ลบไม่สำเร็จ ไม่มีการเปลี่ยนแปลงใดๆ: ' + e.message); }
 }
 
 function manualEntryViewModel(expense) {
@@ -2041,35 +2029,43 @@ function renderManualEntries() {
   if (!container) return;
   const value = id => document.getElementById(id)?.value || '';
   const search = value('as-manual-search').trim().toLowerCase();
-  const selectedProject = value('as-manual-project') || 'all';
-  const selectedType = value('as-manual-type') || 'all';
+  // Part 8 (UX consistency pass) — Project/Type/Budget Status are
+  // multi-select filters; initMultiSelect() is idempotent and must run
+  // before updateSelect() repopulates as-manual-project/-type's options.
+  initMultiSelect('as-manual-project', 'All projects', 'Project');
+  initMultiSelect('as-manual-type', 'All spend types', 'Type');
+  initMultiSelect('as-manual-budget-status', 'All budget statuses', 'Budget Status');
+  const selectedProject = msValues('as-manual-project');
+  const selectedType = msValues('as-manual-type');
   const frequency = value('as-manual-frequency') || 'all';
   const from = value('as-manual-from');
   const to = value('as-manual-to');
-  const budgetStatus = value('as-manual-budget-status') || 'all';
+  const budgetStatus = msValues('as-manual-budget-status');
   const active = activeManualExpenses();
-  const updateSelect = (id, values, label, selected) => {
+  const updateSelect = (id, values, selected) => {
     const select = document.getElementById(id);
     if (!select) return;
-    select.innerHTML = `<option value="all">${label}</option>` + values.map(item => `<option value="${esc(item)}">${esc(item)}</option>`).join('');
-    select.value = values.includes(selected) ? selected : 'all';
+    select.innerHTML = values.map(item => `<option value="${esc(item)}">${esc(item)}</option>`).join('');
+    Array.from(select.options).forEach(o => { if (selected.includes(o.value)) o.selected = true; });
+    refreshMultiSelectUI(id);
   };
-  updateSelect('as-manual-project', [...new Set(active.map(item => item.project).filter(Boolean))].sort(), 'All projects', selectedProject);
-  updateSelect('as-manual-type', [...new Set(active.map(item => manualExpenseToActualSpend(item).spendType))].sort(), 'All spend types', selectedType);
+  updateSelect('as-manual-project', [...new Set(active.map(item => item.project).filter(Boolean))].sort(), selectedProject);
+  updateSelect('as-manual-type', [...new Set(active.map(item => manualExpenseToActualSpend(item).spendType))].sort(), selectedType);
   const rows = active.map(manualEntryViewModel).filter(({ expense, record }) => {
     const haystack = [expense.referenceNo, expense.description, expense.vendorProgram, expense.program, expense.notes].filter(Boolean).join(' ').toLowerCase();
     const start = String(expense.frequency === 'monthly' ? expense.startMonth : expense.expenseDate || '').slice(0, 7);
     const end = String(expense.frequency === 'monthly' ? expense.endMonth : expense.expenseDate || '').slice(0, 7);
     return (!search || haystack.includes(search))
-      && (selectedProject === 'all' || expense.project === selectedProject)
-      && (selectedType === 'all' || record.spendType === selectedType)
+      && (!selectedProject.length || selectedProject.includes(expense.project))
+      && (!selectedType.length || selectedType.includes(record.spendType))
       && (frequency === 'all' || expense.frequency === frequency)
       && (!from || !end || end >= from) && (!to || !start || start <= to)
-      && (budgetStatus === 'all' || record.budgetStatus === budgetStatus);
+      && (!budgetStatus.length || budgetStatus.includes(record.budgetStatus));
   }).sort((a, b) => String(b.expense.updatedAt || b.expense.createdAt || '').localeCompare(String(a.expense.updatedAt || a.expense.createdAt || '')));
   if (!rows.length) { container.innerHTML = '<div class="card" style="padding:32px;text-align:center;color:var(--text-3)">No manual entries found</div>'; return; }
-  const cell = 'padding:8px 10px;border-bottom:1px solid var(--border);font-size:11px;vertical-align:top';
-  container.innerHTML = `<div class="card" style="padding:0;overflow:auto"><table class="hist-table"><thead><tr><th>Reference No</th><th>Project</th><th>Spend Type</th><th>Description</th><th style="text-align:right">Amount</th><th>Expense / Coverage Date</th><th>Budget Status</th><th>Updated At</th><th>Actions</th></tr></thead><tbody>${rows.map(({ expense, record, referenceNo, schedule }) => `<tr><td style="${cell};font-weight:600">${esc(referenceNo)}</td><td style="${cell}">${esc(expense.project)}</td><td style="${cell}">${esc(record.spendType)}</td><td style="${cell}">${esc(expense.description)}</td><td style="${cell};text-align:right;font-weight:600">${money(record.amount)}</td><td style="${cell}">${esc(schedule)}</td><td style="${cell}">${esc(record.budgetStatus)}</td><td style="${cell}">${esc(formatActualSpendDateTime(expense.updatedAt))}</td><td style="${cell};white-space:nowrap"><button class="btn-sm" onclick="showManualEntryDetail('${esc(expense.id)}')">View Detail</button>${isPMO() ? ` <button class="btn-sm" onclick="openManualExpenseModal('${esc(expense.id)}')">Edit</button> <button class="btn-sm" style="color:var(--red)" onclick="voidManualExpense('${esc(expense.id)}')">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+  // Updated At is intentionally not shown here (available via View Detail) to keep this dense
+  // table scannable; Description is truncated with an ellipsis (full text via the `title` attr).
+  container.innerHTML = `<div class="card" style="padding:0;overflow:auto"><table class="hist-table"><thead><tr><th style="width:10%">Reference No</th><th style="width:9%">Project</th><th style="width:8%">Spend Type</th><th style="width:20%">Description</th><th style="width:9%;text-align:right">Amount</th><th style="width:11%">Expense / Coverage Date</th><th style="width:9%">Budget Status</th><th style="width:24%;text-align:center">Actions</th></tr></thead><tbody>${rows.map(({ expense, record, referenceNo, schedule }) => `<tr><td style="font-weight:600">${esc(referenceNo)}</td><td>${esc(expense.project)}</td><td>${esc(record.spendType)}</td><td class="hist-cell-clip" title="${esc(expense.description)}">${esc(expense.description)}</td><td style="text-align:right;font-weight:600">${money(record.amount)}</td><td>${esc(schedule)}</td><td>${esc(record.budgetStatus)}</td><td style="text-align:center;white-space:nowrap"><button class="btn-sm" onclick="showManualEntryDetail('${esc(expense.id)}')">View Detail</button>${isPMO() ? ` <button class="btn-sm" onclick="openManualExpenseModal('${esc(expense.id)}')">Edit</button> <button class="btn-sm" style="color:var(--red)" onclick="voidManualExpense('${esc(expense.id)}')">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
 // Follows the same header (reference + subject + badges) / grouped-section style as the All Memo
@@ -2242,13 +2238,18 @@ async function renderActualSpend() {
     yearSel.value = years.includes(current) ? current : years[0];
   }
 
+  // Part 8 (UX consistency pass): Project is a multi-select filter.
+  initMultiSelect('as-project', 'ทุกโปรเจค', 'Project');
+  initMultiSelect('as-type', 'ทุกประเภท', 'Type');
+  initMultiSelect('as-budget-status', 'ทุก Budget Status', 'Budget Status');
   const projSel = document.getElementById('as-project');
   if (projSel) {
-    const current = projSel.value;
+    const curSelected = msValues('as-project');
     const projs = [...new Set(canonical.map(record => record.project).filter(Boolean))].sort();
-    projSel.innerHTML = '<option value="all">ทุกโปรเจค</option>';
+    projSel.innerHTML = '';
     projs.forEach(p => { const o = document.createElement('option'); o.value = o.textContent = p; projSel.appendChild(o); });
-    projSel.value = projs.includes(current) ? current : 'all';
+    Array.from(projSel.options).forEach(o => { if (curSelected.includes(o.value)) o.selected = true; });
+    refreshMultiSelectUI('as-project');
   }
 
   // Display-only (Phase 7A-9B): every use below is a label, never a filter value, so it's safe to
@@ -2259,7 +2260,7 @@ async function renderActualSpend() {
 
   const records = filteredActualSpendRecords(canonical);
   if (!records.length) {
-    container.innerHTML = `<div class="card" style="padding:32px;text-align:center;color:var(--text-3)">ยังไม่มีข้อมูลในช่วงที่เลือก</div>`;
+    container.innerHTML = `<div class="card hist-empty">No records found for the selected period.</div>`;
     return;
   }
 
@@ -2294,7 +2295,7 @@ async function renderActualSpend() {
       const projectTotal = Object.values(groups).reduce((sum, group) => sum + group.amount, 0);
       return `<div class="card" style="padding:0;overflow:auto;margin-bottom:10px">
         <div style="padding:10px 14px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;justify-content:space-between"><strong>${esc(project)}</strong><strong style="color:var(--blue)">${money(Math.round(projectTotal))}</strong></div>
-        <table class="hist-table"><thead><tr><th style="${tdS};text-align:left">Type</th><th style="${tdS};text-align:left">Source</th><th style="${tdS};text-align:right">Amount</th><th style="${tdS};text-align:right">รายการ</th><th style="${tdS};text-align:right">% ของ Project</th></tr></thead>
+        <table class="hist-table"><thead><tr><th>Type</th><th>Source</th><th style="text-align:right">Amount</th><th style="text-align:right">รายการ</th><th style="text-align:right">% ของ Project</th></tr></thead>
         <tbody>${Object.values(groups).sort((a,b)=>b.amount-a.amount).map(group => `<tr style="cursor:pointer" onclick="showActualSpendGroup('${encodeURIComponent(project)}','${encodeURIComponent(group.spendType)}','${encodeURIComponent(group.source)}')">
           <td style="${tdS}"><span style="padding:2px 8px;border-radius:4px;background:var(--bg)">${esc(group.spendType)}</span></td><td style="${tdS}"><span class="badge ${actualSpendSourceBadgeClass(group.source)}">${actualSpendSourceShortLabel(group.source)}</span></td>
           <td style="${tdS};text-align:right;font-weight:600">${money(Math.round(group.amount))}</td><td style="${tdS};text-align:right;color:var(--blue)">${group.records.length} <span style="color:var(--text-3)">รายการ →</span></td><td style="${tdS};text-align:right">${percentLabel(group.amount, projectTotal)}</td></tr>`).join('')}</tbody></table></div>`;
@@ -2354,10 +2355,10 @@ function showActualMemos(proj, type, memoNosStr) {
       </div>
       <table class="hist-table">
         <thead><tr>
-          <th style="${tdS};text-align:left">Memo No.</th>
-          <th style="${tdS};text-align:left">วันที่</th>
-          <th style="${tdS};text-align:left">รายการ</th>
-          <th style="${tdS};text-align:right">Amount</th>
+          <th>Memo No.</th>
+          <th>วันที่</th>
+          <th>รายการ</th>
+          <th style="text-align:right">Amount</th>
         </tr></thead>
         <tbody>
           ${memos.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(m => {
@@ -2400,11 +2401,11 @@ function showManualExpenses(proj, type) {
       </div>
       <table class="hist-table">
         <thead><tr>
-          <th style="${tdS};text-align:left">Reference</th>
-          <th style="${tdS};text-align:left">รายการ</th>
-          <th style="${tdS};text-align:left">ช่วงเวลา</th>
-          <th style="${tdS};text-align:right">Amount</th>
-          <th style="${tdS};text-align:center">Actions</th>
+          <th>Reference</th>
+          <th>รายการ</th>
+          <th>ช่วงเวลา</th>
+          <th style="text-align:right">Amount</th>
+          <th style="text-align:center">Actions</th>
         </tr></thead>
         <tbody>
           ${rows.map(e => {
@@ -2433,24 +2434,30 @@ function showManualExpenses(proj, type) {
 const BGT_POOLS_KEY = 'orbit-pmo-budget-pools-v1';
 let _poolCache = null;
 
-function loadBudgetPools() {
+function isActiveBudgetPool(pool) {
+  return (pool?.status || 'active') === 'active';
+}
+function loadBudgetPoolsRaw() {
   if (_poolCache) return _poolCache;
   try { _poolCache = JSON.parse(localStorage.getItem(BGT_POOLS_KEY) || '[]'); } catch(e) { _poolCache = []; }
   return _poolCache;
+}
+function loadBudgetPools() {
+  return loadBudgetPoolsRaw().filter(isActiveBudgetPool);
 }
 function storeBudgetPools(arr) {
   _poolCache = arr;
   try { localStorage.setItem(BGT_POOLS_KEY, JSON.stringify(arr)); } catch(e) {}
 }
 async function loadBudgetPoolsAsync() {
-  return budgetAsyncFallback((async () => {
-    if (!(await checkSupa())) return loadBudgetPools();
+  if (await checkSupa()) {
     try {
       const rows = await supaFetch('budget_pools', 'GET', null, '?order=project.asc,name.asc');
       _poolCache = (rows || []).map(r => ({
         id:         r.id,
         project:    r.project,
         name:       r.name,
+        status:     r.status || 'active',
         budget:     Number(r.budget) || 0,
         year:       r.year,
         startMonth: r.start_month || null,
@@ -2458,17 +2465,17 @@ async function loadBudgetPoolsAsync() {
         memoTypes:  r.memo_types  || [],
       }));
       try { localStorage.setItem(BGT_POOLS_KEY, JSON.stringify(_poolCache)); } catch(e) {}
-      return _poolCache;
+      return loadBudgetPools();
     } catch(e) { console.warn('Budget pools load failed', e.message); }
-    return loadBudgetPools();
-  })(), () => loadBudgetPools(), 'Budget pools load');
+  }
+  return loadBudgetPools();
 }
 async function savePoolAsync(rawPool, opts = {}) {
   // Phase 7A-9A: savePoolAsync() is the single Budget Pool write path (manual save and bulk
   // import both call it) — canonicalize here so startMonth/endMonth/year can never be persisted
   // out of sync with each other, regardless of what the caller computed.
-  const pool = createBudgetPoolRecord(rawPool);
-  const all = loadBudgetPools();
+  const pool = { ...createBudgetPoolRecord(rawPool), status: rawPool.status || 'active' };
+  const all = loadBudgetPoolsRaw();
   const idx = all.findIndex(p => p.id === pool.id);
   if (idx >= 0) all[idx] = pool; else all.push(pool);
   storeBudgetPools(all);
@@ -2476,6 +2483,7 @@ async function savePoolAsync(rawPool, opts = {}) {
     try {
       await supaFetch('budget_pools', 'POST', {
         id: pool.id, project: pool.project, name: pool.name,
+        status: pool.status,
         budget: pool.budget, year: pool.year,
         start_month: pool.startMonth || null,
         end_month:   pool.endMonth   || null,
@@ -2497,10 +2505,19 @@ async function savePoolAsync(rawPool, opts = {}) {
   if (!opts.skipRemap) remapActualSpendForBudgetPools();
 }
 async function deletePoolAsync(id) {
-  storeBudgetPools(loadBudgetPools().filter(p => p.id !== id));
-  _poolCache = null;
+  const now = new Date().toISOString();
+  const all = loadBudgetPoolsRaw();
+  const idx = all.findIndex(p => p.id === id);
+  if (idx >= 0) {
+    all[idx] = { ...all[idx], status: 'inactive', updatedBy: currentUser(), updatedAt: now };
+    storeBudgetPools(all);
+  }
   if (await checkSupa()) {
-    try { await supaFetch('budget_pools', 'DELETE', null, '?id=eq.' + encodeURIComponent(id)); } catch(e) {}
+    await supaFetch('budget_pools', 'PATCH', {
+      status: 'inactive',
+      updated_by: currentUser(),
+      updated_at: now,
+    }, '?id=eq.' + encodeURIComponent(id));
   }
   remapActualSpendForBudgetPools();
 }
@@ -2647,15 +2664,13 @@ function _renderBvaWith(pools) {
     const filtersActive = projVal !== 'all' || typeVal !== 'all' || !!searchVal.trim();
     container.innerHTML = (hasPoolsForYear && filtersActive) ? `
       <div class="card" style="padding:32px;text-align:center">
-        <div style="font-size:32px;margin-bottom:12px">🔍</div>
-        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</div>
-        <div style="font-size:12px;color:var(--text-3)">ลองล้างตัวกรอง Project / ประเภท / คำค้นหาด้านบน</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px">No records found. Try changing filters.</div>
+        <div style="font-size:12px;color:var(--text-3)">Try clearing the Project, Type, or search filters above.</div>
       </div>` : `
       <div class="card" style="padding:32px;text-align:center">
-        <div style="font-size:32px;margin-bottom:12px">📋</div>
-        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px">ยังไม่มี Budget Pool สำหรับปี ${yearVal}</div>
-        <div style="font-size:12px;color:var(--text-3);margin-bottom:16px">ไปที่ Settings → Budget Pools เพื่อตั้งงบประมาณก่อน</div>
-        <button class="btn-primary" onclick="switchBudgetTab('bgt-settings')" style="font-size:12px">ไปที่ Settings →</button>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px">No budget pools found for ${yearVal}.</div>
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:16px">Go to Settings → Budget Pools to set a budget first.</div>
+        <button class="btn-primary" onclick="switchBudgetTab('bgt-settings')" style="font-size:12px">Go to Settings →</button>
       </div>`;
     return;
   }
@@ -2766,7 +2781,7 @@ function showBvaRecordDetail(recordId) {
 // every record on exactly one line and never needs horizontal scroll, regardless of how long a
 // Reference/Project value is (the full value is still available via the `title` tooltip).
 function actualSpendRowsTable(records) {
-  if (!records.length) return `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:12px">ยังไม่มี Actual Spend</div>`;
+  if (!records.length) return `<div class="hist-empty">No records found.</div>`;
   const referenceCell = record => {
     const ref = esc(record.referenceNo || '—');
     if (record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO && record.referenceNo) {
@@ -2861,7 +2876,7 @@ function assignBudgetPoolFromWorkspace(recordId) {
 }
 
 function budgetAssignmentRowsTable(records) {
-  if (!records.length) return `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:12px">ไม่มีรายการที่ต้อง assign</div>`;
+  if (!records.length) return `<div class="hist-empty">No records need assignment.</div>`;
   const referenceCell = record => {
     const ref = esc(record.referenceNo || '—');
     if (record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO && record.referenceNo) {
@@ -2929,9 +2944,8 @@ function renderBudgetAssignmentWorkspace(dataset) {
     ${section('Unbudgeted', unbudgeted, dataset.totals.unbudgetedActual)}
     ${section('Needs PMO Review', needsReview, dataset.totals.needsReviewActual)}
     ${!unbudgeted.length && !needsReview.length ? `
-      <div class="card" style="padding:32px;text-align:center;color:var(--text-3)">
-        <div style="font-size:32px;margin-bottom:12px">✅</div>
-        <div style="font-size:13px;font-weight:600;color:var(--text)">Nothing needs assignment right now</div>
+      <div class="card hist-empty">
+        <div style="font-size:13px;font-weight:600;color:var(--text)">Nothing needs assignment right now.</div>
       </div>` : ''}`;
 }
 
@@ -3160,11 +3174,11 @@ function _showPoolImportErrors(rowResults) {
       '<div style="overflow:auto;flex:1">' +
         '<table class="hist-table" style="min-width:740px">' +
           '<thead><tr>' +
-            '<th style="' + tdS + '">Row</th>' +
-            '<th style="' + tdS + '">Pool ID</th>' +
-            '<th style="' + tdS + '">Project</th>' +
-            '<th style="' + tdS + '">Pool Name</th>' +
-            '<th style="' + tdS + '">ปัญหา</th>' +
+            '<th>Row</th>' +
+            '<th>Pool ID</th>' +
+            '<th>Project</th>' +
+            '<th>Pool Name</th>' +
+            '<th>ปัญหา</th>' +
           '</tr></thead>' +
           '<tbody>' + rows + '</tbody>' +
         '</table>' +
@@ -3229,14 +3243,14 @@ function _showPoolImportPreview(rowResults) {
       '<div style="overflow:auto;flex:1">' +
         '<table class="hist-table" style="min-width:760px">' +
           '<thead><tr>' +
-            '<th style="' + tdS + '">Pool ID</th>' +
-            '<th style="' + tdS + '">Project</th>' +
-            '<th style="' + tdS + '">Pool Name</th>' +
-            '<th style="' + tdS + ';text-align:right">Budget</th>' +
-            '<th style="' + tdS + '">ปี</th>' +
-            '<th style="' + tdS + '">ช่วงเวลา</th>' +
-            '<th style="' + tdS + '">Spend Types</th>' +
-            '<th style="' + tdS + '">การดำเนินการ</th>' +
+            '<th>Pool ID</th>' +
+            '<th>Project</th>' +
+            '<th>Pool Name</th>' +
+            '<th style="text-align:right">Budget</th>' +
+            '<th>ปี</th>' +
+            '<th>ช่วงเวลา</th>' +
+            '<th>Spend Types</th>' +
+            '<th>การดำเนินการ</th>' +
           '</tr></thead>' +
           '<tbody>' + rows + '</tbody>' +
         '</table>' +
@@ -3302,7 +3316,7 @@ async function renderBudgetSettings() {
   const pools = visibleBudgetSettingsPools();
 
   if (!pools.length) {
-    body.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:12px">ยังไม่มี Budget Pool สำหรับปี ${year} — กด "+ Add Pool" เพื่อเริ่ม</div>`;
+    body.innerHTML = `<div class="hist-empty">No budget pools found for ${year} — click "+ Add Pool" to get started.</div>`;
     return;
   }
 
@@ -3314,12 +3328,12 @@ async function renderBudgetSettings() {
   body.innerHTML = Object.entries(byProj).map(([proj, projPools]) => `
     <div style="margin-bottom:16px">
       <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">${esc(proj)}</div>
-      <table class="hist-table">
+      <table class="hist-table bpool-table">
         <thead><tr>
-          <th style="${tdS};text-align:left">Pool Name</th>
-          <th style="${tdS};text-align:left">ช่วงเวลา</th>
-          <th style="${tdS};text-align:right">Budget (฿)</th>
-          <th style="${tdS};text-align:center">Actions</th>
+          <th>Pool Name</th>
+          <th>ช่วงเวลา</th>
+          <th style="text-align:right">Budget (฿)</th>
+          <th style="text-align:center">Actions</th>
         </tr></thead>
         <tbody>
           ${projPools.map(p => `<tr>
@@ -3327,8 +3341,8 @@ async function renderBudgetSettings() {
             <td style="${tdS};font-size:11px;color:var(--text-3)">${formatMonthBE(p.startMonth) || '—'} → ${formatMonthBE(p.endMonth) || '—'}</td>
             <td style="${tdS};text-align:right;font-weight:600">${money(p.budget || 0)}</td>
             <td style="${tdS};text-align:center">
-              <button class="btn-sm" style="font-size:11px;padding:2px 7px" onclick="openBudgetPoolModal('${p.id}')">✎</button>
-              <button class="btn-sm" style="font-size:11px;padding:2px 7px;color:var(--red)" onclick="deleteBudgetPool('${p.id}')">✕</button>
+              <button class="btn-sm" style="font-size:11px;padding:2px 7px" onclick="openBudgetPoolModal('${p.id}')" title="แก้ไข">✎</button>
+              <button class="btn-sm" style="font-size:11px;padding:2px 7px;color:var(--red)" onclick="deleteBudgetPool('${p.id}')" title="ลบ">✕</button>
             </td>
           </tr>`).join('')}
         </tbody>
@@ -3361,7 +3375,6 @@ function _onBpoolStartMonthChange() {
 }
 
 function openBudgetPoolModal(editId) {
-  const projects = getCanonicalProjectList();
   const pool    = editId ? loadBudgetPools().find(p => p.id === editId) : null;
   // Phase 7A-9A: createBudgetPoolRecord() is now the single Gregorian-safe canonicalizer, so the
   // date/year fields are sourced from it rather than re-normalizing ad hoc here. Other fields
@@ -3372,7 +3385,10 @@ function openBudgetPoolModal(editId) {
   const year    = document.getElementById('bset-year')?.value || getCurrentBuddhistYear();
 
   const g = (f, def = '') => pool ? (pool[f] ?? def) : def;
-  const projOpts = projects.map(p => `<option value="${esc(p)}" ${g('project') === p ? 'selected' : ''}>${esc(p)}</option>`).join('');
+  const projects = getCanonicalProjectList();
+  const projOpts = typeof projectOptionsHtml === 'function'
+    ? projectOptionsHtml(projects, g('project'))
+    : projects.map(p => `<option value="${esc(p)}" ${g('project') === p ? 'selected' : ''}>${esc(p)}</option>`).join('');
   const initialStart = canonicalPool?.startMonth || '';
   const initialEnd   = canonicalPool?.endMonth || '';
   const initialYear  = canonicalPool?.year || g('year', year);
@@ -3508,5 +3524,8 @@ function deleteBudgetPool(id) {
   if (!confirm(`ลบ Budget Pool "${poolLabel}" นี้?`)) return;
   deletePoolAsync(id)
     .then(() => renderBudgetSettings())
-    .catch(e => console.warn('Pool delete error:', e));
+    .catch(e => {
+      console.warn('Pool delete error:', e);
+      alert('ไม่สามารถลบ Budget Pool ได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่');
+    });
 }

@@ -271,18 +271,31 @@ function importProjectCodes(rows) {
   alert(`Project Code import completed\nAdded: ${added}\nUpdated: ${updated}\nSkipped: ${skipped}`);
 }
 
-function importLicenses(rows) {
+async function importLicenses(rows) {
   const existing = loadManualLicenses();
   const now = new Date().toISOString();
-  let added = 0, skipped = 0;
+  let added = 0, skipped = 0, updated = 0;
+  const changed = [];
+
+  const licenseDateKey = value => {
+    const raw = String(value || '').trim();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const date = new Date(raw);
+    if(Number.isNaN(date.getTime())) return raw;
+    return [date.getFullYear(), String(date.getMonth()+1).padStart(2,'0'), String(date.getDate()).padStart(2,'0')].join('-');
+  };
+  const licenseKey = l => [
+    l.memoNo, l.name, l.plan, l.project, licenseDateKey(l.purchaseDate), licenseDateKey(l.expiry),
+  ].map(v => String(v || '').trim().toLowerCase()).join('||');
 
   rows.forEach(row => {
     const name = strVal(row['Name'] || row['name'] || row['Software Name'] || row['software_name'] || row['à¸Šà¸·à¹ˆà¸­ Software']);
     if(!name) { skipped++; return; }
 
     const license = {
-      id: Date.now() + added, // unique enough
+      id: crypto.randomUUID(),
       name,
+      plan:          strVal(row['Plan'] || row['plan'] || row['Tier'] || row['tier']),
       vendor:        strVal(row['Vendor'] || row['vendor'] || row['à¸œà¸¹à¹‰à¸‚à¸²à¸¢']),
       seats:         numVal(row['Seats'] || row['seats'] || row['à¸ˆà¸³à¸™à¸§à¸™']) || 1,
       pricePerMonth: numVal(row['Price/Month'] || row['price_per_month'] || row['à¸£à¸²à¸„à¸²/à¹€à¸”à¸·à¸­à¸™']),
@@ -306,70 +319,101 @@ function importLicenses(rows) {
       createdAt:     now,
       updatedAt:     now,
     };
-    existing.push(license);
-    added++;
+    const matchIdx = existing.findIndex(item => licenseKey(item) === licenseKey(license));
+    if(matchIdx >= 0) {
+      const refreshed = {
+        ...existing[matchIdx],
+        ...license,
+        id: existing[matchIdx].id,
+        createdAt: existing[matchIdx].createdAt || now,
+      };
+      existing[matchIdx] = refreshed;
+      changed.push(refreshed);
+      updated++;
+    } else {
+      existing.push(license);
+      changed.push(license);
+      added++;
+    }
   });
 
   storeManualLicenses(existing);
+  await Promise.all(changed.map(license => saveLicenseAsync(license)));
   renderLicense();
-  alert(`License import completed\nAdded: ${added}${skipped ? `\nSkipped blank rows: ${skipped}` : ''}`);
+  alert(`License import completed\nAdded: ${added}\nUpdated: ${updated}${skipped ? `\nSkipped blank rows: ${skipped}` : ''}`);
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // DEVICE IMPORT
 // Template columns:
-// Name | Type | Serial No | Asset Tag | Owner | Assigned Date | Project |
-// Return Date | Warranty Expiry | Condition | Status | Memo Ref | Note
+// PBX Number | OS | Type | Brand / Model | Asset ACC | Serial | Assignee |
+// Position | Project | Received date | QA Owner | Remark | OS version
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-function importDevices(rows) {
+async function importDevices(rows) {
   const existing = loadDevices();
   const now = new Date().toISOString();
-  let added = 0, skipped = 0;
+  let added = 0, skipped = 0, updated = 0;
+  const changed = [];
 
   rows.forEach(row => {
-    const name = strVal(row['Name'] || row['name'] || row['Device Name'] || row['à¸Šà¸·à¹ˆà¸­à¸­à¸¸à¸›à¸à¸£à¸“à¹Œ']);
+    const name = strVal(row['Brand / Model'] || row['Name'] || row['name'] || row['Device Name']);
     if(!name) { skipped++; return; }
 
-    const typeRaw = strVal(row['Type'] || row['type'] || row['à¸›à¸£à¸°à¹€à¸ à¸—']).toLowerCase();
-    const typeMap = { 'mobile phone':'mobile', 'mobile':'mobile', 'laptop':'laptop', 'tablet':'tablet', 'other':'other' };
+    const typeRaw = strVal(row['Type'] || row['type']).toLowerCase();
+    const typeMap = { 'mobile':'mobile', 'mobile phone':'mobile', 'laptop':'laptop', 'tablet':'tablet', 'other':'other' };
     const type = typeMap[typeRaw] || 'other';
 
-    const condRaw = strVal(row['Condition'] || row['condition'] || row['à¸ªà¸ à¸²à¸ž']).toLowerCase();
-    const condMap = { 'new':'new', 'good':'good', 'fair':'fair', 'poor':'poor' };
-    const condition = condMap[condRaw] || 'good';
-
-    const statusRaw = strVal(row['Status'] || row['status'] || row['à¸ªà¸–à¸²à¸™à¸°']).toLowerCase().replace(' ','-');
-    const statusMap = { 'in-use':'in-use', 'in use':'in-use', 'available':'available', 'maintenance':'maintenance', 'retired':'retired' };
-    const status = statusMap[statusRaw] || 'in-use';
+    const osRaw = strVal(row['OS'] || row['os'] || '').toLowerCase();
+    const platMap = { 'ios':'ios', 'android':'android', 'huawei':'huawei', 'windows':'windows' };
+    const platform = platMap[osRaw] || 'other';
 
     const device = {
-      id: nextDeviceId() + added,
-      name, type, condition, status,
-      serial:       strVal(row['Serial No'] || row['serial_no'] || row['Serial Number'] || row['Serial'] || row['à¹€à¸¥à¸‚ Serial']),
-      assetTag:     strVal(row['Asset Tag'] || row['asset_tag'] || row['à¸£à¸«à¸±à¸ªà¸—à¸£à¸±à¸žà¸¢à¹Œà¸ªà¸´à¸™']),
-      owner:        strVal(row['Owner'] || row['owner'] || row['à¸œà¸¹à¹‰à¸–à¸·à¸­à¸„à¸£à¸­à¸‡']),
-      assignedDate: parseExcelDate(row['Assigned Date'] || row['assigned_date'] || row['à¸§à¸±à¸™à¸—à¸µà¹ˆà¸£à¸±à¸š']),
-      project:      strVal(row['Project'] || row['project'] || row['à¹‚à¸„à¸£à¸‡à¸à¸²à¸£']),
-      returnDate:   parseExcelDate(row['Return Date'] || row['return_date'] || row['à¸§à¸±à¸™à¸„à¸·à¸™']),
-      warranty:     parseExcelDate(row['Warranty Expiry'] || row['warranty'] || row['Warranty'] || row['à¸›à¸£à¸°à¸à¸±à¸™']),
-      memoRef:      strVal(row['Memo Ref'] || row['memo_ref'] || row['à¹€à¸¥à¸‚ Memo']),
-      note:         strVal(row['Note'] || row['note'] || row['à¸«à¸¡à¸²à¸¢à¹€à¸«à¸•à¸¸']),
-      createdAt:    now,
+      id: crypto.randomUUID(),
+      name, type, platform,
+      brand:        strVal(row['Brand / Model'] || ''),
+      pbxNumber:    strVal(row['PBX Number'] || row['pbx_number'] || ''),
+      assetTag:     strVal(row['Asset ACC'] || row['Asset IT'] || row['Asset Tag'] || ''),
+      serial:       strVal(row['Serial'] || row['Serial No'] || ''),
+      owner:        strVal(row['Assignee'] || row['Owner'] || ''),
+      position:     strVal(row['Position'] || ''),
+      project:      strVal(row['Project'] || ''),
+      assignedDate: parseExcelDate(row['Received date'] || row['Assigned Date'] || ''),
+      qaOwner:      strVal(row['QA Owner'] || ''),
       updatedAt:    now,
+      note:         strVal(row['Remark'] || row['Note'] || ''),
+      osVersion:    strVal(row['OS version'] || row['OS Version'] || ''),
+      status:       'not_identified',
+      createdAt:    now,
     };
-    existing.push(device);
-    added++;
+    const dupIdx = typeof findExistingDevice === 'function'
+      ? findExistingDevice(existing, device)
+      : existing.findIndex(d => {
+          if(device.assetTag && d.assetTag && device.assetTag === d.assetTag) return true;
+          if(device.serial && d.serial && device.serial === d.serial) return true;
+          return false;
+        });
+
+    if(dupIdx >= 0) {
+      existing[dupIdx] = { ...existing[dupIdx], ...device, id: existing[dupIdx].id, createdAt: existing[dupIdx].createdAt };
+      changed.push(existing[dupIdx]);
+      updated++;
+    } else {
+      existing.push(device);
+      changed.push(device);
+      added++;
+    }
   });
 
   storeDevices(existing);
+  await Promise.all(changed.map(device => saveDeviceAsync(device)));
   renderDevice();
-  alert(`Device import completed\nAdded: ${added}${skipped ? `\nSkipped blank rows: ${skipped}` : ''}`);
+  alert(`✓ Import สำเร็จ\nเพิ่มใหม่ ${added}${updated ? ` · อัปเดตเดิม ${updated}` : ''}${skipped ? `\nข้ามแถวว่าง ${skipped}` : ''} รายการ`);
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // BUDGET HISTORICAL MEMO IMPORT
 // Template columns:
-// Memo No | Type | Project | Requester | Approver | Amount | Status | Date | Subject | Reason
+// Memo No | Type | Project | Requester | Reviewer | Approver | Amount | Status | Date | Subject | Reason
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function importBudgetMemos(rows) {
   const existing = loadMemos();
@@ -383,17 +427,17 @@ function importBudgetMemos(rows) {
   const TYPE_LABELS = { sl:'Software License', hw:'Hardware', int:'Team Activity', ent:'Client Expense', dep:'Deployment' };
 
   rows.forEach(row => {
-    const memoNo = strVal(row['Memo No'] || row['memo_no'] || row['à¹€à¸¥à¸‚ Memo']);
+    const memoNo = strVal(row['Memo No'] || row['memo_no'] || row['เลข Memo']);
     if(!memoNo) { skipped++; return; }
     if(existingNos.has(memoNo)) { dupes++; return; }
 
-    const typeRaw = strVal(row['Type'] || row['type'] || row['à¸›à¸£à¸°à¹€à¸ à¸—']).toLowerCase();
+    const typeRaw = strVal(row['Type'] || row['type'] || row['ประเภท']).toLowerCase();
     const type = typeMap[typeRaw] || 'sl';
 
     const statusRaw = strVal(row['Status'] || row['status'] || 'completed').toLowerCase();
-    const status = ['completed','rejected','pending'].includes(statusRaw) ? statusRaw : 'completed';
+    const status = ['completed','rejected','pending','cancelled'].includes(statusRaw) ? statusRaw : 'completed';
 
-    const dateStr = parseExcelDate(row['Date'] || row['date'] || row['à¸§à¸±à¸™à¸—à¸µà¹ˆ']);
+    const dateStr = parseExcelDate(row['Date'] || row['date'] || row['วันที่']);
     const dateISO = dateStr ? new Date(dateStr+'T00:00:00').toISOString() : now;
 
     const memo = {
@@ -401,14 +445,14 @@ function importBudgetMemos(rows) {
       type,
       typeLabel: TYPE_LABELS[type] || type.toUpperCase(),
       status,
-      project:       strVal(row['Project'] || row['project'] || row['à¹‚à¸„à¸£à¸‡à¸à¸²à¸£']),
-      requesterName: strVal(row['Requester'] || row['requester'] || row['à¸œà¸¹à¹‰à¸‚à¸­']),
-      reviewerName:  strVal(row['Requester'] || row['requester'] || row['à¸œà¸¹à¹‰à¸‚à¸­']),
-      approverName:  strVal(row['Approver'] || row['approver'] || row['à¸œà¸¹à¹‰à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´']),
-      approvedBy:    strVal(row['Approver'] || row['approver'] || row['à¸œà¸¹à¹‰à¸­à¸™à¸¸à¸¡à¸±à¸•à¸´']),
-      total:         numVal(row['Amount'] || row['amount'] || row['à¸§à¸‡à¹€à¸‡à¸´à¸™']),
-      subject:       strVal(row['Subject'] || row['subject'] || row['à¸«à¸±à¸§à¸‚à¹‰à¸­']),
-      reason:        strVal(row['Reason'] || row['reason'] || row['à¹€à¸«à¸•à¸¸à¸œà¸¥']),
+      project:       strVal(row['Project'] || row['project'] || row['โครงการ']),
+      requesterName: strVal(row['Requester'] || row['requester'] || row['ผู้ขอ']),
+      reviewerName:  strVal(row['Reviewer'] || row['reviewer'] || '-'),
+      approverName:  strVal(row['Approver'] || row['approver'] || row['ผู้อนุมัติ']),
+      approvedBy:    strVal(row['Approver'] || row['approver'] || row['ผู้อนุมัติ']),
+      total:         numVal(row['Amount'] || row['amount'] || row['วงเงิน']),
+      subject:       strVal(row['Subject'] || row['subject'] || row['หัวข้อ']),
+      reason:        strVal(row['Reason'] || row['reason'] || row['เหตุผล']),
       date:          dateStr,
       createdAt:     dateISO,
       updatedAt:     dateISO,
@@ -424,9 +468,9 @@ function importBudgetMemos(rows) {
 
   storeMemos(existing);
   renderBudget();
-  let msg = `Budget memo import completed\nAdded: ${added}`;
-  if(dupes)   msg += `\nSkipped duplicate Memo No: ${dupes}`;
-  if(skipped) msg += `\nSkipped blank rows: ${skipped}`;
+  let msg = `✓ Import สำเร็จ\nเพิ่ม ${added} memo`;
+  if(dupes)   msg += `\nข้าม ${dupes} รายการที่ Memo No ซ้ำ`;
+  if(skipped) msg += `\nข้าม ${skipped} แถวว่าง`;
   alert(msg);
 }
 
@@ -439,21 +483,21 @@ function downloadTemplate(type) {
   const templates = {
     license: {
       filename: 'license_import_template.xlsx',
-      headers: ['Name','Vendor','Seats','Price/Month','Owner','Department','Project','License Type','Purchase Date','Expiry Date','Billing Freq','Status','Memo Ref','Note'],
-      sample: [['GitHub Copilot','GitHub',15,600,'Chuen K.','PMO','AOA-MP','subscription','2025-01-01','2026-01-01','annual','','ORB-2501-001',''],
-               ['Figma','Figma Inc',5,900,'Design Lead','Design','Release 3','subscription','2025-03-01','2026-03-01','annual','','','']]
+      headers: ['Name','Plan','Vendor','Seats','Price/Month','Owner','Department','Project','License Type','Purchase Date','Expiry Date','Billing Freq','Status','Memo Ref','Note'],
+      sample: [['GitHub Copilot','Business','GitHub',15,600,'Chuen K.','PMO','AOA-MP','subscription','2025-01-01','2026-01-01','annual','','ORB-2501-001',''],
+               ['Figma','Professional','Figma Inc',5,900,'Design Lead','Design','Release 3','subscription','2025-03-01','2026-03-01','annual','','','']]
     },
     device: {
       filename: 'device_import_template.xlsx',
-      headers: ['Name','Type','Serial No','Asset Tag','Owner','Assigned Date','Project','Return Date','Warranty Expiry','Condition','Status','Memo Ref','Note'],
-      sample: [['MacBook Pro 14','laptop','SN12345','OD-001','Chuen K.','2025-01-15','AOA-MP','','2027-01-15','good','in-use','ORB-2501-002',''],
-               ['iPhone 15 Pro','mobile','IMEI67890','OD-002','Tom P.','2025-02-01','TTB','','2027-02-01','new','in-use','','']]
+      headers: ['PBX Number','OS','Type','Brand / Model','Asset ACC','Serial','Assignee','Position','Project','Received date','QA Owner','Remark','OS version'],
+      sample: [['PBX-001','iOS','Mobile','Apple iPhone 15','ACC-001','SN12345','Chuen K.','PMO','AOA-MP','2025-01-15','Best IT','','iOS 17.4.1'],
+               ['PBX-002','Windows','Laptop','Dell Latitude 5540','ACC-002','SN67890','Tom P.','Developer','TTB','2025-02-01','Best IT','','Windows 11']]
     },
     budget: {
       filename: 'budget_import_template.xlsx',
-      headers: ['Memo No','Type','Project','Requester','Approver','Amount','Status','Date','Subject','Reason'],
-      sample: [['ORB-2401-001','sl','AOA-MP','Chuen K.','Phi Wing',108000,'completed','2024-01-15','Software license approval','Daily work tool'],
-               ['ORB-2402-001','hw','TTB','Tom P.','Phi Wing',79000,'completed','2024-02-10','Laptop purchase approval','Support new team members']]
+      headers: ['Memo No','Type','Project','Requester','Reviewer','Approver','Amount','Status','Date','Subject','Reason'],
+      sample: [['ORB-2401-001','sl','AOA-MP','Chuen K.','Nina Review','Phi Wing',108000,'completed','2024-01-15','ขออนุมัติ Software License','เป็นโปรแกรมที่ใช้งานประจำ'],
+               ['ORB-2402-001','hw','TTB','Tom P.','Nina Review','Phi Wing',79000,'completed','2024-02-10','ขออนุมัติซื้อ Laptop','เพื่อรองรับทีมงานใหม่']]
     }
   };
 
