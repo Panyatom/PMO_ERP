@@ -4,7 +4,13 @@
 
 - Create Memo = Create/Edit Draft
 - Pending Approval = Action Workspace
-- History / All Memo = Audit/View Workspace
+- History / All Memo = Audit/View Workspace for non-pending statuses only
+
+Pending-family memos belong only in Pending Approval and are not listed in History / All Memo:
+
+- pending
+- pending_a2
+- pending_a3
 
 ## Identity
 
@@ -29,6 +35,14 @@ PMO Override requires:
 - Evidence
 
 PMO requester self-override is allowed.
+
+PMO Override is stage-based. Approve / Advance override resolves the current approval stage only:
+
+- pending advances to pending_a2 when A2 exists
+- pending_a2 advances to pending_a3 when A3 exists
+- final stage advances to completed
+
+Reject or cancel override outcomes remain terminal when supported by the UI.
 
 Override may complete, reject, or cancel the memo internally, but the UI action is called only:
 
