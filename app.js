@@ -1231,7 +1231,6 @@ function canCurrentUserViewPendingMemo(memo) {
   return isPMO() || isMemoRequester(memo) || isMemoCurrentApprover(memo);
 }
 function canCurrentUserViewMemoHistory(memo) {
-  if (isPendingFamilyMemo(memo)) return false;
   return canCurrentUserViewMemo(memo);
 }
 function isMemoCurrentApprover(memo) {

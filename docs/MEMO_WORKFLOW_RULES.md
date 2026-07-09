@@ -3,14 +3,18 @@
 ## Workspace
 
 - Create Memo = Create/Edit Draft
-- Pending Approval = Action Workspace
-- History / All Memo = Audit/View Workspace for non-pending statuses only
+- Pending Approval = Work Queue
+- History / All Memo = Related Memo Tracker + Audit/View Workspace
 
-Pending-family memos belong only in Pending Approval and are not listed in History / All Memo:
+History / All Memo may include pending-family memos when the user is related to the memo:
 
 - pending
 - pending_a2
 - pending_a3
+
+Pending-family memos opened from History / All Memo are view-only for approval actions. Approve, Reject, Cancel, and PMO Override are not shown there.
+
+Pending Approval remains the action workspace for pending-family memos.
 
 ## Identity
 

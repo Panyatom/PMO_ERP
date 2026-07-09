@@ -98,20 +98,13 @@ function histMatchesAmount(memo, preset, minVal, maxVal) {
 // ── All-memo tab state ──
 let _histTab = 'all';
 
-function ensureHistoryPendingFilterRemoved() {
-  document.querySelectorAll('.hist-tab-btn[data-status="pending"]').forEach(btn => btn.remove());
-  document.querySelectorAll('#hist-status option[value="pending"], #hist-status option[value="pending_a1"], #hist-status option[value="pending_a2"], #hist-status option[value="pending_a3"]').forEach(opt => opt.remove());
-  const sel = document.getElementById('hist-status');
-  if (sel && (sel.value === 'pending' || sel.value === 'pending_a1' || sel.value === 'pending_a2' || sel.value === 'pending_a3')) {
-    sel.value = 'all';
-    _histTab = 'all';
-  }
+function ensureHistoryPendingFilterAvailable() {
+  // History is a related-memo tracker, so pending-family memos stay visible here.
 }
 
 function switchHistTab(status, btn) {
-  if (status === 'pending' || status === 'pending_a1' || status === 'pending_a2' || status === 'pending_a3') status = 'all';
   _histTab = status;
-  ensureHistoryPendingFilterRemoved();
+  ensureHistoryPendingFilterAvailable();
   document.querySelectorAll('.hist-tab-btn').forEach(b => {
     const active = b.dataset.status === status;
     b.classList.toggle('active', active);
@@ -139,6 +132,7 @@ function populateHistTabCounts() {
   const counts = {
     all:       all.length,
     draft:     all.filter(m => m.status === 'draft').length,
+    pending:   all.filter(m => isPendingFamilyMemo(m)).length,
     completed: all.filter(m => m.status === 'completed').length,
     rejected:  all.filter(m => m.status === 'rejected').length,
     cancelled: all.filter(m => m.status === 'cancelled').length,
@@ -169,8 +163,8 @@ function filteredHistoryMemos() {
 
   let memos = getHistoryMemos().filter(memo => {
     const sk = memoStatusKey(memo);
-    if (sk === 'pending' || sk === 'pending_a1' || sk === 'pending_a2' || sk === 'pending_a3') return false;
-    if (status !== 'all' && sk !== status) return false;
+    if (status === 'pending' && !isPendingFamilyMemo(memo)) return false;
+    if (status !== 'all' && status !== 'pending' && sk !== status) return false;
     if (type.length && !type.includes(memo.type)) return false;
     if (project.length && !project.includes(memo.project)) return false;
     if (!useCustomDates && !histInPresetRange(memo, range)) return false;
@@ -1064,7 +1058,7 @@ function handleHistoryTableClick(e) {
 if (typeof window._histVisible === 'undefined') window._histVisible = 20;
 
 function renderHistoryMemos() {
-  ensureHistoryPendingFilterRemoved();
+  ensureHistoryPendingFilterAvailable();
   // Part 8 (UX consistency pass) — Type/Project are multi-select filters.
   // initMultiSelect() is idempotent, and must run before
   // populateHistFilterOptions() populates hist-project's options.
