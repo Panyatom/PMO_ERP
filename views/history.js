@@ -803,18 +803,10 @@ function openHistoryDetail(memoNo) {
   const isDraft     = _st === 'draft';
   const isVoided    = _st === 'voided'; // Milestone 1B
   const isOwn       = typeof isMemoRequester === 'function' ? isMemoRequester(memo) : false;
-  const canApprove  = isPending && typeof canCurrentUserActOnMemo === 'function' && canCurrentUserActOnMemo(memo);
-  const canCancel   = isPending && isOwn;
   const isPMOUser   = typeof isPMO === 'function' && isPMO();
+  const canDuplicate = !isDraft && (isCompleted || isCancelled || isPending || isVoided) && (isOwn || isPMOUser);
 
   acts.innerHTML = `
-    ${canApprove ? `
-      <button class="btn-primary" type="button" onclick="closeDetailModal();openApproveModal('${_no}')">✓ Approve</button>
-      <button class="btn-reject"  type="button" onclick="closeDetailModal();openRejectModal('${_no}')">✕ Reject</button>
-    ` : ''}
-    ${canCancel ? `
-      <button class="btn-sm" type="button" style="color:var(--red)" onclick="closeDetailModal();cancelMemo('${_no}')">✕ Cancel</button>
-    ` : ''}
     ${!isDraft ? `
       <button class="btn-sm" type="button" onclick="if(typeof downloadMemoPdf==='function'){downloadMemoPdf(loadMemos().find(m=>m.memoNo==='${_no}'))}" style="color:var(--blue)">⬇ Download PDF</button>
     ` : ''}
@@ -822,7 +814,7 @@ function openHistoryDetail(memoNo) {
     ${isRejected ? `
       <button class="btn-sm" type="button" onclick="closeDetailModal();reeditRejectedMemo('${_no}')">✎ Re-edit as New Draft</button>
     ` : ''}
-    ${(isCompleted||isCancelled||isPending||isVoided) && !isDraft ? `
+    ${canDuplicate ? `
       <button class="btn-sm" type="button" onclick="closeDetailModal();duplicateMemo('${_no}')">⊕ Duplicate</button>
     ` : ''}
     ${isDraft ? `
@@ -1163,6 +1155,12 @@ function _auditMemoDuplicated(memoNo, action) {
 function duplicateMemo(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
   if (!memo) return;
+  const isRequester = typeof isMemoRequester === 'function' && isMemoRequester(memo);
+  const isPmoUser = typeof isPMO === 'function' && isPMO();
+  if (!isRequester && !isPmoUser) {
+    alert('Duplicate ใช้ได้เฉพาะ Requester หรือ PMO เท่านั้น');
+    return;
+  }
   if (!confirm(`Duplicate "${memoNo}" เป็น Draft ใหม่?`)) return;
   try {
     localStorage.setItem('orbit-pmo-edit-draft', JSON.stringify(draftFromMemo(memo)));

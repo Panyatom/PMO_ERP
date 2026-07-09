@@ -1,0 +1,78 @@
+# Memo Workflow Rules
+
+## Workspace
+
+- Create Memo = Create/Edit Draft
+- Pending Approval = Action Workspace
+- History / All Memo = Audit/View Workspace
+
+## Identity
+
+- Requester: the user who creates and submits the memo.
+- Reviewer: A1, the first reviewer in the approval chain.
+- Approver: A2/A3, the approval stages after A1.
+- PMO: an additional privilege, not an approval stage.
+
+## Normal Approve / Reject
+
+Only the current assigned reviewer or approver may use normal Approve / Reject.
+
+PMO may also use normal Approve / Reject only when PMO is the current assigned reviewer or approver.
+
+## PMO Override
+
+PMO Override is a separate authority.
+
+PMO Override requires:
+
+- Reason
+- Evidence
+
+PMO requester self-override is allowed.
+
+Override may complete, reject, or cancel the memo internally, but the UI action is called only:
+
+"PMO Override"
+
+## Cancel
+
+Requester may cancel own pending memo.
+
+PMO who is not requester must use PMO Override instead.
+
+PMO requester may cancel as requester.
+
+## Duplicate
+
+Duplicate is allowed only for:
+
+- Requester
+- PMO
+
+## Self Review
+
+Requester = Reviewer A1 auto bypass.
+
+Requester must not be selectable as:
+
+- A2
+- A3
+
+A2/A3 auto-bypass is not implemented.
+
+## Download
+
+Anyone who can legitimately view the memo may download it.
+
+## Single Action Principle
+
+For each user, each screen exposes only the primary action or actions for that user's authority.
+
+Exception:
+
+PMO who is also the current assigned approver may see both:
+
+- Approve / Reject
+- PMO Override
+
+because they represent different authorities.

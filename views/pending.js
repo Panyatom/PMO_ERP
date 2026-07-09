@@ -218,6 +218,7 @@ function renderPendingContent() {
     if(btn.dataset.action==='approve')     openApproveModal(no);
     else if(btn.dataset.action==='reject') openRejectModal(no);
     else if(btn.dataset.action==='cancel') cancelMemo(no);
+    else if(btn.dataset.action==='pmo-override') openPmoOverrideModal(no);
     else if(btn.dataset.action==='detail') openDetailModal(no);
   };
 }
@@ -233,6 +234,7 @@ function buildPendingRow(memo) {
   const amt     = Number(memo.total)||0;
   const isOwn   = isMemoRequester(memo);
   const canAct  = canCurrentUserActOnMemo(memo);
+  const isPmoUser = typeof isPMO === 'function' && isPMO();
   const accent  = TYPE_COLOR_PENDING[memo.type] || '#888780';
   const typeLbl = TYPE_LABEL_PENDING[memo.type] || (memo.type||'').toUpperCase();
   const typeBg  = TYPE_BG_PENDING[memo.type]    || '#F1EFE8';
@@ -247,19 +249,21 @@ function buildPendingRow(memo) {
   const isOwner    = isOwn;
 
   // Row action buttons — different per role
-  let actionBtns = '';
+  const actionParts = [];
   if (canAct) {
     // Current assigned reviewer/approver — row click opens detail.
-    actionBtns = `
+    actionParts.push(`
       <button class="btn-approve" data-action="approve" data-memo="${esc(memo.memoNo)}" style="font-size:10px;padding:2px 8px" title="Approve">✓</button>
-      <button class="btn-reject"  data-action="reject"  data-memo="${esc(memo.memoNo)}" style="font-size:10px;padding:2px 8px;margin-left:2px" title="Reject">✕</button>`;
-  } else if (isOwner && isPending) {
-    // Requester (own memo) — Cancel stays available; row click opens detail.
-    actionBtns = `<button class="btn-sm" data-action="cancel" data-memo="${esc(memo.memoNo)}" style="font-size:10px;padding:2px 8px;color:var(--red)" title="ยกเลิก">✕ Cancel</button>`;
-  } else {
-    // Default users open detail by clicking the row.
-    actionBtns = '';
+      <button class="btn-reject"  data-action="reject"  data-memo="${esc(memo.memoNo)}" style="font-size:10px;padding:2px 8px;margin-left:2px" title="Reject">✕</button>`);
   }
+  if (isOwner && isPending) {
+    // Requester (own memo) — Cancel stays available; row click opens detail.
+    actionParts.push(`<button class="btn-sm" data-action="cancel" data-memo="${esc(memo.memoNo)}" style="font-size:10px;padding:2px 8px;color:var(--red)" title="ยกเลิก">✕ Cancel</button>`);
+  }
+  if (isPmoUser && isPending) {
+    actionParts.push(`<button class="btn-sm" data-action="pmo-override" data-memo="${esc(memo.memoNo)}" style="font-size:10px;padding:2px 8px;color:var(--red)" title="PMO Override">PMO Override</button>`);
+  }
+  const actionBtns = actionParts.join(' ');
 
   const reqDate = memo.createdAt ? shortDate(memo.createdAt) : '—';
   const reqTime = memo.createdAt ? new Date(memo.createdAt).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Bangkok'}) : '';
@@ -510,7 +514,7 @@ function openDetailModal(memoNo) {
 
   // Normal approval is only for the current assigned reviewer/approver.
   const canApprove = isPending && canCurrentUserActOnMemo(memo);
-  const canCancel  = isPending && (isMemoRequester(memo) || _isPMO);
+  const canCancel  = isPending && isMemoRequester(memo);
 
   const acts = document.getElementById('detail-actions');
   acts.innerHTML = `
@@ -534,7 +538,7 @@ function openDetailModal(memoNo) {
       </button>
     ` : ''}
     ${_isPMO && isPending ? `
-      <button class="btn-sm" style="color:var(--red)"  onclick="closeDetailModal();openPmoOverrideModal('${_no}')">⚠ Override</button>
+      <button class="btn-sm" style="color:var(--red)"  onclick="closeDetailModal();openPmoOverrideModal('${_no}')">⚠ PMO Override</button>
     ` : ''}
     <button class="btn-ghost" onclick="closeDetailModal()">ปิด</button>
   `;
@@ -618,7 +622,7 @@ function openPmoOverrideModal(memoNo) {
       </div>
       <div style="display:flex;justify-content:flex-end;gap:10px">
         <button class="btn-ghost" onclick="document.getElementById('pmo-override-modal').remove()">Cancel</button>
-        <button class="btn-primary" style="background:var(--red);border-color:var(--red)" onclick="confirmPmoOverride('${esc(memoNo)}')">⚠ Confirm Override</button>
+        <button class="btn-primary" style="background:var(--red);border-color:var(--red)" onclick="confirmPmoOverride('${esc(memoNo)}')">⚠ Confirm PMO Override</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -914,14 +918,13 @@ function saveBudgetSettings() {
   });
 }
 
-// ── Cancel Memo (requester or PMO) ──
+// ── Cancel Memo (requester only; PMO non-requesters must use PMO Override) ──
 function cancelMemo(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
   if(!memo) return;
   const isRequester = isMemoRequester(memo);
-  const isPmoUser = typeof isPMO === 'function' && isPMO();
-  if ((!isRequester && !isPmoUser) || !['pending','pending_a2','pending_a3'].includes(memo.status)) {
-    alert('ยกเลิกได้เฉพาะผู้ขอหรือ PMO และ Memo ต้องอยู่ระหว่างอนุมัติ');
+  if (!isRequester || !['pending','pending_a2','pending_a3'].includes(memo.status)) {
+    alert('ยกเลิกได้เฉพาะผู้ขอ และ Memo ต้องอยู่ระหว่างอนุมัติ');
     return;
   }
   const reason = prompt(`เหตุผลที่ยกเลิก Memo "${memoNo}":`);
@@ -929,7 +932,7 @@ function cancelMemo(memoNo) {
   if(!confirm(`ยืนยันยกเลิก Memo "${memoNo}"?\nหลังจากยกเลิกแล้วจะไม่สามารถกู้คืนได้`)) return;
   const user = currentUser();
   const memos = loadMemos();
-  const actorType = isPmoUser && !isRequester ? 'PMO' : 'Requester';
+  const actorType = 'Requester';
   appendAuditLog(memos, memoNo, `Cancelled by ${user} (${actorType})`, reason.trim(), {
     statusBefore: memo.status,
     statusAfter:  'cancelled',

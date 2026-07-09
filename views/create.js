@@ -1002,12 +1002,24 @@ function toggleReviewerTitleOther() {
 }
 // ── Dynamic Approver Rows — fetch from user_profiles ──
 // Build name options from _userProfilesCache (loaded at init from Supabase)
+function _isCurrentRequesterApproverOption(user, name) {
+  const currentProfileId = typeof currentUserProfileId === 'function' ? currentUserProfileId() : null;
+  if (user?.id != null && currentProfileId != null) return Number(user.id) === Number(currentProfileId);
+  const currentName = typeof currentUser === 'function' ? currentUser() : '';
+  return !!name && !!currentName && String(name).trim() === String(currentName).trim();
+}
 function _approverNameOpts(selected = '', stage = 'approve') {
   const approvers = typeof getApprovers === 'function' ? getApprovers(stage) : [];
+  const selectableApprovers = stage === 'review'
+    ? approvers
+    : approvers.filter(u => !_isCurrentRequesterApproverOption(u, u.full_name));
   const opts = approvers.length
-    ? approvers.map(u => `<option value="${esc(u.full_name)}" data-profile-id="${u.id || ''}" data-title="${esc(u.title)}" ${u.full_name===selected?'selected':''}>${esc(u.full_name)}</option>`).join('')
-    : `<option value="นาย นวพล งามวรโรจน์สกุล" ${selected==='นาย นวพล งามวรโรจน์สกุล'?'selected':''}>นาย นวพล งามวรโรจน์สกุล</option>
-       <option value="นาย ปกรณ์ เจียมสกุลทิพย์" ${selected==='นาย ปกรณ์ เจียมสกุลทิพย์'?'selected':''}>นาย ปกรณ์ เจียมสกุลทิพย์</option>`;
+    ? selectableApprovers.map(u => `<option value="${esc(u.full_name)}" data-profile-id="${u.id || ''}" data-title="${esc(u.title)}" ${u.full_name===selected?'selected':''}>${esc(u.full_name)}</option>`).join('')
+    : [
+        'นาย นวพล งามวรโรจน์สกุล',
+        'นาย ปกรณ์ เจียมสกุลทิพย์',
+      ].filter(name => stage === 'review' || !_isCurrentRequesterApproverOption(null, name))
+       .map(name => `<option value="${esc(name)}" ${selected===name?'selected':''}>${esc(name)}</option>`).join('');
   return `<option value="">— เลือกชื่อ Approver —</option>` + opts;
 }
 function _approverTitleOpts(selected = '', stage = 'approve') {
