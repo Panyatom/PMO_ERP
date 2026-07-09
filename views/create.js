@@ -761,10 +761,41 @@ const MEMO_NO_BLOCKING_STATUSES = new Set(['draft', 'pending', 'pending_a2', 'pe
 // Shared by Submit and Save Draft — MEMO_LIFECYCLE.md §5: Memo Number must be
 // unique app-wide, with no stated exception for Draft. Returns the conflicting
 // row ({memo_no,status,deleted}) or null.
+function localMemoNoConflict(memoNo) {
+  const normalized = String(memoNo || '').trim();
+  if(!normalized || typeof loadMemos !== 'function') return null;
+  return loadMemos().find(m => String(m.memoNo || '').trim() === normalized) || null;
+}
+
 async function checkMemoNoConflict(memoNo) {
-  const conflicts = await supaFetch('memos', 'GET', null,
-    `?memo_no=eq.${encodeURIComponent(memoNo)}&select=memo_no,status,deleted&limit=1`);
-  return conflicts?.[0] || null;
+  const normalized = String(memoNo || '').trim();
+  if(!normalized) return null;
+  if(typeof checkSupa === 'function' && await checkSupa()) {
+    try {
+      const conflicts = await supaFetch('memos', 'GET', null,
+        `?memo_no=eq.${encodeURIComponent(normalized)}&select=memo_no,status,deleted&limit=1`);
+      return conflicts?.[0] || null;
+    } catch(e) {
+      try {
+        const conflicts = await supaFetch('memos', 'GET', null,
+          `?memo_no=eq.${encodeURIComponent(normalized)}&select=memo_no,status&limit=1`);
+        return conflicts?.[0] || null;
+      } catch(fallbackError) {
+        console.warn('Remote memo number check failed; using local cache', fallbackError.message);
+      }
+    }
+  }
+  return localMemoNoConflict(normalized);
+}
+
+async function hasBlockingMemoNoConflict(data) {
+  const conflict = await checkMemoNoConflict(data.memoNo);
+  const editingSameDraft = conflict?.status === 'draft' && _editingDraftMemoNo === data.memoNo;
+  if(conflict && conflict.deleted !== true && MEMO_NO_BLOCKING_STATUSES.has(conflict.status || 'pending') && !editingSameDraft) {
+    alert(`à¹€à¸¥à¸‚ Memo ${data.memoNo} à¸–à¸¹à¸à¹ƒà¸Šà¹‰à¸‡à¸²à¸™à¹à¸¥à¹‰à¸§ (à¸ªà¸–à¸²à¸™à¸°: ${conflict.status || '-'}) à¸à¸£à¸¸à¸“à¸²à¹ƒà¸Šà¹‰à¹€à¸¥à¸‚à¸­à¸·à¹ˆà¸™`);
+    return true;
+  }
+  return false;
 }
 
 // ── Save as Draft ──
