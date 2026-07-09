@@ -2342,6 +2342,7 @@ function saveMemo(data) {
   if (!_memCache) _memCache = [];
   const ci = _memCache.findIndex(m => m.memoNo === saved.memoNo);
   if (ci >= 0) _memCache[ci] = saved; else _memCache.unshift(saved);
+  storeMemos(_memCache);
   // Async push to Supabase in background
   saveMemoAsync(saved).catch(e => console.warn('Background Supabase save failed', e));
   return saved;
