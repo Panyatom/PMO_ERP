@@ -79,6 +79,7 @@ const FINANCIAL_STORAGE_KEYS = Object.freeze({
   actualSpend: 'orbit-pmo-actual-spend-v1',
   budgetPools: 'orbit-pmo-budget-pools-v1',
 });
+const SUPPORTED_CURRENCIES = Object.freeze(['THB']);
 const BUDGET_STATUSES = Object.freeze({
   MANUAL_OVERRIDE: 'Manual Override',
   MAPPED: 'Mapped',
@@ -2401,6 +2402,10 @@ function updateMemoStatus(memoNo, status, extra={}) {
 
 // ── Navigation ──
 function swView(id, el, title) {
+  if(id === 'cost') {
+    swView('budget', document.querySelector('.sb-item[onclick*="budget"]'), 'Budget & Spend');
+    return;
+  }
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.sb-sub-item').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.sb-item').forEach(s => s.classList.remove('active'));
@@ -2616,6 +2621,10 @@ function closeNotifications() {
 
 // ── Navigation ──
 function swView(id, el, title) {
+  if(id === 'cost') {
+    swView('budget', document.querySelector('.sb-item[onclick*="budget"]'), 'Budget & Spend');
+    return;
+  }
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.sb-sub-item').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.sb-item').forEach(s => s.classList.remove('active'));
@@ -2639,6 +2648,63 @@ function toggleMemoSub(el) {
 }
 
 // ── PDF ──
+const _sigCache = {};
+
+function _signaturePdfKey(name) {
+  return 'sig-' + String(name || (typeof currentUser === 'function' ? currentUser() : '') || '').trim();
+}
+
+async function loadUserSignatureForPdfAsync(name) {
+  const key = _signaturePdfKey(name);
+  if(!key || key === 'sig-') return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if(raw) {
+      const parsed = JSON.parse(raw);
+      if(parsed?.signatureDataUrl) return parsed.signatureDataUrl;
+    }
+  } catch(e) {}
+  if(typeof checkSupa === 'function' && await checkSupa()) {
+    try {
+      const rows = await supaFetch('settings', 'GET', null, `?id=eq.${encodeURIComponent(key)}`);
+      const dataUrl = rows?.[0]?.data?.signatureDataUrl || null;
+      if(dataUrl) {
+        try { localStorage.setItem(key, JSON.stringify({ signatureDataUrl: dataUrl })); } catch(e) {}
+      }
+      return dataUrl;
+    } catch(e) {}
+  }
+  return null;
+}
+
+async function _preloadSignatures(approvers) {
+  if(typeof loadUserProfilesAsync === 'function') {
+    try { await loadUserProfilesAsync(); } catch(e) {}
+  }
+  const byName = new Map();
+  (approvers || []).forEach(a => { if(a?.name && !byName.has(a.name)) byName.set(a.name, a); });
+
+  await Promise.all([...byName.entries()].map(async ([name, approver]) => {
+    if(_sigCache[name] !== undefined) return;
+    let sig = await loadUserSignatureForPdfAsync(name);
+    if(!sig) {
+      const profile = approver.profileId != null && typeof _userProfilesCache !== 'undefined' && _userProfilesCache
+        ? _userProfilesCache.find(u => Number(u.id) === Number(approver.profileId))
+        : (typeof findUserByName === 'function' ? findUserByName(name) : null);
+      const candidates = profile ? [profile.full_name, ...(profile.name_aliases || [])].filter(n => n && n !== name) : [];
+      for(const candidate of candidates) {
+        sig = await loadUserSignatureForPdfAsync(candidate);
+        if(sig) break;
+      }
+    }
+    _sigCache[name] = sig || null;
+  }));
+}
+
+function getSignatureFromCache(name) {
+  return _sigCache[name] || null;
+}
+
 function renderMemoPdf(data) {
   // Use server CSS classes (.mp-*) — injected by PDF server with THSarabun font
   function fmtDate(v) {
