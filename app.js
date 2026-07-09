@@ -2602,7 +2602,8 @@ function swView(id, el, title) {
   if(id === 'budget') renderBudget();
   if(id === 'license') renderLicense();
   if(id === 'device') renderDevice();
-  if(id === 'history') renderHistoryMemos();
+  if(id === 'history') { renderHistoryMemos(); if(typeof populateHistTabCounts==='function') populateHistTabCounts(); }
+  if(id === 'pending') renderPendingMemos();
   if(id === 'log') { if(typeof renderTransactionLog==='function') renderTransactionLog(); }
   if(id === 'settings') { if(typeof renderSettings==='function') renderSettings(); }
   if(id === 'resource') { if(typeof renderResource==='function') renderResource(); }
