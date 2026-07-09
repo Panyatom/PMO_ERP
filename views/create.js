@@ -476,7 +476,8 @@ function collectMemoData() {
                   titleSel?.value ? titleSel.value :
                   (titleOth?.value.trim() || titleSel?.dataset?.autofill || '');
     const profile = typeof findUserByName === 'function' ? findUserByName(name) : null;
-    return { profileId: profile?.id || null, name, title, status: 'pending', approvedAt: null, approvedBy: null };
+    const selectedProfileId = Number(nameSel?.selectedOptions?.[0]?.dataset?.profileId);
+    return { profileId: profile?.id || (Number.isFinite(selectedProfileId) && selectedProfileId > 0 ? selectedProfileId : null), name, title, status: 'pending', approvedAt: null, approvedBy: null };
   }).filter(a => a.name);
 
   // Backward compat aliases
@@ -485,9 +486,8 @@ function collectMemoData() {
   const apprName  = approversArr[1]?.name  || '';
   const apprTitle = approversArr[1]?.title || '';
 
-  // Get current logged-in user from sidebar
-  const requesterName  = document.querySelector('.sb-uname')?.textContent?.trim() || 'User';
-  const requesterTitle = document.querySelector('.sb-urole')?.textContent?.trim() || '';
+  const requesterName = (typeof currentUser === 'function' ? currentUser() : '') || 'User';
+  const requesterTitle = (typeof currentUserProfile === 'function' ? currentUserProfile()?.title : '') || '';
 
   const data = {
     type: selectedType, typeLabel: TYPE_LABELS[selectedType]||'-',
@@ -1386,6 +1386,23 @@ async function applyDraftEdit() {
       const signDate = document.getElementById('f-signdate');
       if(signDate && memo.reviewerDate) signDate.value = thaiDateToISO(memo.reviewerDate);
 
+      const ensureSavedOption = (select, value, dataset = {}) => {
+        const text = String(value || '').trim();
+        if (!select || !text) return false;
+        let opt = [...select.options].find(o => o.value === text);
+        if (!opt) {
+          opt = document.createElement('option');
+          opt.value = text;
+          opt.textContent = text;
+          Object.entries(dataset).forEach(([key, val]) => {
+            if (val != null && val !== '') opt.dataset[key] = String(val);
+          });
+          select.appendChild(opt);
+        }
+        select.value = text;
+        return true;
+      };
+
       // Fill dynamic approver rows from approvers[]
       const savedApprovers = memo.approvers || [];
       const { container: apprContainer } = await waitForApproverRows(0);
@@ -1404,9 +1421,9 @@ async function applyDraftEdit() {
           if (nameOpt) {
             nameSel.value = a.name;
           } else if (nameSel) {
-            nameSel.value = '';
+            ensureSavedOption(nameSel, a.name, { profileId: a.profileId || '' });
             if(nameWarning) {
-              nameWarning.textContent = `ไม่พบชื่อผู้อนุมัติเดิม ('${a.name || '-'}') ในรายชื่อปัจจุบัน กรุณาเลือกผู้อนุมัติใหม่`;
+              nameWarning.textContent = `ชื่อผู้อนุมัติเดิม ('${a.name || '-'}') ไม่อยู่ในรายชื่อปัจจุบัน แต่ถูกคืนค่าจาก Draft แล้ว`;
               nameWarning.style.display = '';
             }
           }
@@ -1414,9 +1431,9 @@ async function applyDraftEdit() {
           if (titleOpt) {
             titleSel.value = a.title;
           } else if (titleSel) {
-            titleSel.value = '';
+            ensureSavedOption(titleSel, a.title);
             if(titleWarning) {
-              titleWarning.textContent = `ไม่พบตำแหน่งเดิม ('${a.title || '-'}') ในรายชื่อปัจจุบัน กรุณาเลือกตำแหน่งใหม่`;
+              titleWarning.textContent = `ตำแหน่งเดิม ('${a.title || '-'}') ไม่อยู่ในรายชื่อปัจจุบัน แต่ถูกคืนค่าจาก Draft แล้ว`;
               titleWarning.style.display = '';
             }
           }

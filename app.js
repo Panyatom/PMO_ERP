@@ -1125,6 +1125,41 @@ function findUserByName(name) {
   const n = name.trim();
   return _userProfilesCache.find(u=>u.full_name===n||(u.name_aliases||[]).some(a=>a.toLowerCase()===n.toLowerCase()))||null;
 }
+function normalizeIdentityEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+function currentAuthSession() {
+  return typeof pmoCurrentSession === 'function' ? pmoCurrentSession() : null;
+}
+function currentAuthUserName() {
+  return String(currentAuthSession()?.user?.name || '').trim();
+}
+function currentAuthUserEmail() {
+  return normalizeIdentityEmail(currentAuthSession()?.user?.email);
+}
+function legacyCurrentUserName() {
+  return document.getElementById('sb-uname')?.textContent?.trim() || document.querySelector('.sb-uname')?.textContent?.trim() || '';
+}
+function legacyCurrentUserProfileId() {
+  const raw = document.getElementById('sb-user-btn')?.dataset?.profileId;
+  const id = Number(raw);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+function resolvedCurrentUserProfile() {
+  const profiles = _userProfilesCache || [];
+  const email = currentAuthUserEmail();
+  if(email) {
+    const byEmail = profiles.find(u => normalizeIdentityEmail(u.email) === email);
+    if(byEmail) return byEmail;
+  }
+  const legacyId = legacyCurrentUserProfileId();
+  if(legacyId != null) {
+    const byLegacyId = profiles.find(u => Number(u.id) === legacyId);
+    if(byLegacyId) return byLegacyId;
+  }
+  const legacyName = legacyCurrentUserName();
+  return legacyName && typeof findUserByName === 'function' ? findUserByName(legacyName) : null;
+}
 function getAuthorityLimit(title, memoType) {
   if(_authorityCache){
     const r = _authorityCache.find(r=>r.title===title&&r.memo_type===memoType);
@@ -1143,25 +1178,20 @@ function getAuthorityLimit(title, memoType) {
 
 // isPMO — single source of truth (moved from budget.js)
 function currentUserProfileId() {
-  const raw = document.getElementById('sb-user-btn')?.dataset?.profileId;
-  const id = Number(raw);
-  return Number.isFinite(id) && id > 0 ? id : null;
+  const profile = resolvedCurrentUserProfile();
+  return profile?.id != null ? profile.id : null;
 }
 function currentUserProfile() {
-  const id = currentUserProfileId();
-  if (id == null) return null;
-  return (_userProfilesCache || []).find(u => Number(u.id) === id) || null;
+  return resolvedCurrentUserProfile();
 }
 function isPMO() {
-  const simulated = document.getElementById('sb-user-btn')?.dataset?.isPmo;
-  if (simulated === 'true' || simulated === 'false') return simulated === 'true';
   const profile = currentUserProfile();
-  if (profile) return profile.is_pmo === true;
-  return (document.getElementById('sb-urole')?.textContent?.trim()||'') === 'PMO';
+  return profile?.is_pmo === true;
 }
 // currentUser — single source of truth (moved from pending.js)
 function currentUser() {
-  return document.getElementById('sb-uname')?.textContent?.trim()||'';
+  const profile = currentUserProfile();
+  return String(profile?.full_name || currentAuthUserName() || legacyCurrentUserName() || '').trim();
 }
 
 function profileMatches(profileId, name, targetProfileId = currentUserProfileId(), targetName = currentUser()) {
