@@ -3,6 +3,7 @@
 const SETTINGS_KEY = 'orbit-pmo-settings-v1';
 let SETTINGS_ACTIVE_TAB = 'general';
 let SETTINGS_DIRTY_BASELINE = '';
+let SETTINGS_SIGNATURE_PENDING_DATA_URL = null;
 
 const DEFAULT_PROJECTS = ['AOA-MP', 'TTB', 'Geo9', 'Release 2.1', 'Release 3'];
 const DEFAULT_PROJECT_MASTER = DEFAULT_PROJECTS.map((name, index) => ({
@@ -33,6 +34,33 @@ const DEFAULT_TITLES = [
   'Department Head',
   'Managing Director',
 ];
+const MEMO_APPROVAL_TYPES = [
+  ['sl', 'SL', 'Software License'],
+  ['hw', 'HW', 'Hardware'],
+  ['int', 'INT', 'Team Activity'],
+  ['ent', 'ENT', 'Client Expense'],
+  ['dep', 'DEP', 'Deployment'],
+];
+const MEMO_TYPE_CFG_FALLBACK = {
+  sl:  { to:'ประธานเจ้าหน้าที่บริหาร', apprTitle:'ประธานเจ้าหน้าที่บริหาร',
+         reasons:['เป็นโปรแกรมที่ได้รับการอนุมัติและใช้งานอยู่เดิม เพื่อให้การดำเนินโครงการเป็นไปอย่างต่อเนื่องและมีประสิทธิภาพ','เป็นโปรแกรมใหม่ที่จำเป็นต้องใช้เพื่อพัฒนาโครงการ','เพื่ออัปเกรดการใช้งานโปรแกรมให้รองรับการทำงานของทีมที่เพิ่มขึ้น'] },
+  hw:  { to:'ประธานเจ้าหน้าที่บริหาร', apprTitle:'ประธานเจ้าหน้าที่บริหาร',
+         reasons:['เพื่อใช้ในการพัฒนาและทดสอบระบบของโครงการ','เพื่อทดแทนอุปกรณ์เดิมที่เสื่อมสภาพและไม่สามารถใช้งานได้','เพื่อรองรับการขยายทีมและเพิ่มประสิทธิภาพการทำงาน'] },
+  int: { to:'Project director โครงการ', apprTitle:'ผู้อำนวยการโครงการ',
+         reasons:['เพื่อเสริมสร้างกำลังใจในการปฏิบัติงาน และส่งเสริมการทำงานเป็นทีม','เพื่อเสริมสร้างความสัมพันธ์ในทีมและพัฒนาการทำงานร่วมกัน'] },
+  ent: { to:'ประธานเจ้าหน้าที่บริหาร', apprTitle:'ประธานเจ้าหน้าที่บริหาร',
+         reasons:['เพื่อขอบคุณลูกค้าในโครงการ','เพื่อเสริมสร้างความสัมพันธ์กับลูกค้า'] },
+  dep: { to:'ผู้อำนวยการโครงการ', apprTitle:'ผู้อำนวยการโครงการ',
+         reasons:['เพื่อความละเอียดในการเบิกแยก Online / Onsite','เพื่อสนับสนุนการ Deployment ให้เป็นไปอย่างราบรื่นและมีประสิทธิภาพ'] },
+};
+const AUTHORITY_FALLBACK_LIMITS = {
+  'ประธานเจ้าหน้าที่บริหาร':          {sl:2000000,hw:2000000,int:0,ent:150000,dep:2000000},
+  'ประธานเจ้าหน้าที่สายการเงิน (CFO)':{sl:1000000,hw:500000, int:0,ent:50000, dep:500000},
+  'ผู้อำนวยการ (Team Director)':       {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
+  'ผู้อำนวยการโครงการ':                {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
+  'Senior Manager / Manager':          {sl:50000,  hw:50000,  int:0,ent:10000, dep:50000},
+  'Team Leader':                       {sl:30000,  hw:30000,  int:0,ent:5000,  dep:30000},
+};
 
 const SETTINGS_PERMISSIONS = [
   ['createRequest', 'Create request', 'Open new Resource requests.'],
@@ -543,6 +571,7 @@ function settingsProjectScopeOptions(projects, selected=[]) {
 function renderSettingsIcon(name) {
   const icons = {
     general: '<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h10"/>',
+    memo: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>',
     members: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/>',
     roles: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="M9 12l2 2 4-5"/>',
     resource: '<path d="M4 5h16v14H4z"/><path d="M8 9h8"/><path d="M8 13h5"/>',
@@ -599,6 +628,166 @@ function removeSettingsProjectRow(button) {
   const row = button?.closest?.('[data-project-row]');
   if(row) row.remove();
   markSettingsDirty();
+}
+
+function addMemoReasonRow(type, value='') {
+  const list = document.querySelector(`[data-memo-reasons="${CSS.escape(type)}"]`);
+  if(!list) return;
+  list.insertAdjacentHTML('beforeend', renderMemoReasonRow(type, value));
+  markSettingsDirty();
+}
+
+function removeMemoReasonRow(button) {
+  const row = button?.closest?.('[data-memo-reason-row]');
+  if(row) row.remove();
+  markSettingsDirty();
+}
+
+function renderMemoReasonRow(type, value='') {
+  return `
+    <div class="settings-memo-reason-row" data-memo-reason-row>
+      <input class="ri" data-typecfg-reason="${esc(type)}" value="${esc(value)}" placeholder="Reason text">
+      <button class="btn-sm settings-icon-btn" type="button" title="Remove reason" onclick="removeMemoReasonRow(this)">x</button>
+    </div>`;
+}
+
+function memoApprovalTitleRows(s) {
+  const set = new Set([
+    ...(s.titles || []),
+    ...Object.keys(AUTHORITY_FALLBACK_LIMITS),
+    ...Object.values(s.typeCfg || {}).map(cfg => cfg?.apprTitle).filter(Boolean),
+    s.defaultReviewer?.title,
+    s.defaultApprover?.title,
+  ].filter(Boolean));
+  return [...set];
+}
+
+function authorityLimitInputValue(title, type) {
+  if(typeof getAuthorityLimit === 'function') return getAuthorityLimit(title, type);
+  return AUTHORITY_FALLBACK_LIMITS[title]?.[type] ?? 0;
+}
+
+function renderDefaultMemoRoute(s) {
+  return `
+    <section class="settings-card">
+      <div class="settings-panel-head">
+        <div><h3>Default Memo Route</h3><p>Uses the existing defaultReviewer and defaultApprover keys for Create Memo.</p></div>
+      </div>
+      <div class="settings-route-grid">
+        <div class="fg"><label>Reviewer name</label><select id="set-reviewer-name" class="ri">${settingsOptionList(s.people, s.defaultReviewer.name)}</select></div>
+        <div class="fg"><label>Reviewer title</label><select id="set-reviewer-title" class="ri">${settingsOptionList(s.titles, s.defaultReviewer.title)}</select></div>
+        <div class="fg"><label>Approver name</label><select id="set-approver-name" class="ri">${settingsOptionList(s.people, s.defaultApprover.name)}</select></div>
+        <div class="fg"><label>Approver title</label><select id="set-approver-title" class="ri">${settingsOptionList(s.titles, s.defaultApprover.title)}</select></div>
+      </div>
+    </section>`;
+}
+
+function renderAuthorityLimitsPanel(s) {
+  const titles = memoApprovalTitleRows(s);
+  return `
+    <section class="settings-card">
+      <div class="settings-panel-head">
+        <div><h3>Authority Limits</h3><p>Advisory THB limits by exact approver title and memo type.</p></div>
+      </div>
+      <div class="settings-memo-table-wrap">
+        <table class="settings-memo-table">
+          <thead><tr><th>Title</th>${MEMO_APPROVAL_TYPES.map(([, label]) => `<th>${esc(label)}</th>`).join('')}</tr></thead>
+          <tbody>
+            ${titles.map(title => `
+              <tr data-authority-title="${esc(title)}">
+                <td><strong>${esc(title)}</strong></td>
+                ${MEMO_APPROVAL_TYPES.map(([type]) => `
+                  <td><input class="ri settings-limit-input" type="number" min="0" step="1" data-authority-type="${esc(type)}" value="${esc(authorityLimitInputValue(title, type))}"></td>
+                `).join('')}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+function renderTypeRoutingPanel(s) {
+  return `
+    <section class="settings-card">
+      <div class="settings-panel-head">
+        <div><h3>Per-Type Routing & Reasons</h3><p>Blank fields continue to use the Create Memo fallback configuration.</p></div>
+      </div>
+      <div class="settings-type-grid">
+        ${MEMO_APPROVAL_TYPES.map(([type, label, name]) => {
+          const saved = s.typeCfg?.[type] || {};
+          const fallback = MEMO_TYPE_CFG_FALLBACK[type] || {};
+          const reasons = Array.isArray(saved.reasons) ? saved.reasons : [];
+          return `
+            <section class="settings-type-card" data-typecfg-card="${esc(type)}">
+              <div class="settings-type-head"><strong>${esc(label)}</strong><span>${esc(name)}</span></div>
+              <div class="settings-grid settings-grid-tight">
+                <div class="fg"><label>Recipient title</label><input class="ri" data-typecfg-field="to" data-typecfg-type="${esc(type)}" value="${esc(saved.to || '')}" placeholder="${esc(fallback.to || 'Fallback')}"></div>
+                <div class="fg"><label>Default approver title</label><input class="ri" data-typecfg-field="apprTitle" data-typecfg-type="${esc(type)}" value="${esc(saved.apprTitle || '')}" placeholder="${esc(fallback.apprTitle || 'Fallback')}"></div>
+              </div>
+              <div class="settings-mini-label">Reasons</div>
+              <div class="settings-memo-reasons" data-memo-reasons="${esc(type)}">
+                ${reasons.map(reason => renderMemoReasonRow(type, reason)).join('')}
+              </div>
+              <button class="btn-sm" type="button" onclick="addMemoReasonRow('${esc(type)}')">Add reason</button>
+            </section>`;
+        }).join('')}
+      </div>
+    </section>`;
+}
+
+function signatureStorageKey(name) {
+  return 'sig-' + String(name || '').trim();
+}
+
+function renderSignaturePanel(s) {
+  const owner = s.defaultApprover?.name || s.defaultReviewer?.name || '';
+  return `
+    <section class="settings-card">
+      <div class="settings-panel-head">
+        <div><h3>Signature Management</h3><p>Stores legacy-compatible signature data for PDF output.</p></div>
+      </div>
+      <div class="settings-signature-grid">
+        <div class="fg">
+          <label>Signature owner name</label>
+          <input id="set-signature-owner" class="ri" list="settings-people-list" value="${esc(owner)}" placeholder="Name used in PDF approval">
+          <datalist id="settings-people-list">${(s.people || []).map(name => `<option value="${esc(name)}"></option>`).join('')}</datalist>
+        </div>
+        <div class="fg">
+          <label>Upload image</label>
+          <input id="set-signature-file" class="ri" type="file" accept="image/*" onchange="handleSignatureFileSelect(this)">
+        </div>
+        <div class="settings-signature-actions">
+          <button class="btn-sm" type="button" onclick="refreshSignaturePreview()">Preview</button>
+          <button class="btn-sm" type="button" onclick="clearSignatureForOwner()">Clear signature</button>
+        </div>
+        <div class="settings-signature-preview" id="settings-signature-preview">No signature loaded.</div>
+      </div>
+    </section>`;
+}
+
+function renderHealthPanel() {
+  return `
+    <section class="settings-card">
+      <div class="settings-panel-head">
+        <div><h3>Approver Health Check</h3><p>Read-only diagnostics from settings, user_profiles, and authority titles.</p></div>
+      </div>
+      <div id="settings-health-check" class="settings-health-list">Loading diagnostics...</div>
+    </section>`;
+}
+
+function renderMemoApprovalPanel(s) {
+  return `
+    <div class="settings-summary-row settings-summary-row-3">
+      <div class="settings-summary"><div class="settings-summary-mark">${Object.keys(s.typeCfg || {}).length}</div><div><strong>${Object.keys(s.typeCfg || {}).length}</strong><span>Edited memo types</span></div></div>
+      <div class="settings-summary"><div class="settings-summary-mark">${memoApprovalTitleRows(s).length}</div><div><strong>${memoApprovalTitleRows(s).length}</strong><span>Authority titles</span></div></div>
+      <div class="settings-summary"><div class="settings-summary-mark">RO</div><div><strong>Read only</strong><span>Health diagnostics</span></div></div>
+    </div>
+    ${renderDefaultMemoRoute(s)}
+    ${renderAuthorityLimitsPanel(s)}
+    ${renderTypeRoutingPanel(s)}
+    ${renderSignaturePanel(s)}
+    ${renderHealthPanel()}`;
 }
 
 function renderMemberRow(member, projects, index) {
@@ -798,15 +987,6 @@ function renderGeneralPanel(s) {
       <div class="settings-grid">
         <div class="fg"><label>People</label><textarea id="set-people" class="ri settings-list">${esc(s.people.join('\n'))}</textarea></div>
         <div class="fg"><label>Titles</label><textarea id="set-titles" class="ri settings-list">${esc(s.titles.join('\n'))}</textarea></div>
-        <div class="fg">
-          <label>Default Memo Route</label>
-          <div class="settings-route-grid">
-            <select id="set-reviewer-name" class="ri">${settingsOptionList(s.people, s.defaultReviewer.name)}</select>
-            <select id="set-reviewer-title" class="ri">${settingsOptionList(s.titles, s.defaultReviewer.title)}</select>
-            <select id="set-approver-name" class="ri">${settingsOptionList(s.people, s.defaultApprover.name)}</select>
-            <select id="set-approver-title" class="ri">${settingsOptionList(s.titles, s.defaultApprover.title)}</select>
-          </div>
-        </div>
       </div>
     </section>`;
 }
@@ -943,6 +1123,7 @@ function renderLaterPanel(s) {
 function activeTabTitle(tab) {
   return ({
     general: 'General',
+    memo: 'Memo & Approval',
     members: 'Members & Access',
     roles: 'Roles & Permissions',
     resource: 'Resource',
@@ -951,6 +1132,7 @@ function activeTabTitle(tab) {
 }
 
 function renderSettingsPanel(tab, s) {
+  if(tab === 'memo') return renderMemoApprovalPanel(s);
   if(tab === 'members') return renderMembersPanel(s);
   if(tab === 'roles') return renderPermissionMatrix(s);
   if(tab === 'resource') return renderResourcePanel(s);
@@ -996,11 +1178,12 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
       .settings-role-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.settings-role-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;animation:settings-card-in .22s cubic-bezier(.22,1,.36,1) both}.settings-tabs-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.settings-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);min-height:34px;border:1px solid var(--border);background:var(--surface-2);border-radius:8px;padding:7px 10px;cursor:pointer;transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s cubic-bezier(.22,1,.36,1),box-shadow .16s ease}.settings-check:hover{border-color:var(--blue-100);color:var(--text);background:color-mix(in srgb,var(--surface-2) 76%,var(--blue-50));box-shadow:0 8px 18px color-mix(in srgb,var(--blue) 6%,transparent)}.settings-check:active{transform:scale(.975)}.settings-check:has(.settings-check-input:checked){border-color:var(--blue-100);background:var(--blue-50);color:var(--blue-800)}.settings-mini-label{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.08em;margin:14px 0 0}.settings-scope{width:200px;min-width:200px}
       .settings-transition-grid{display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px;align-items:center;margin-top:8px}.settings-transition-grid label{font-size:11px;font-weight:700;color:var(--text-2)}
       .settings-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.settings-preview{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-preview-title{font-size:13px;font-weight:800;color:var(--text);margin-bottom:8px}.settings-preview-line{display:grid;grid-template-columns:58px 1fr;gap:8px;font-size:11px;padding:5px 0;border-top:1px solid var(--border)}.settings-preview-line strong{color:var(--text-3)}.settings-preview-line span{color:var(--text-2);line-height:1.4}
+      .settings-memo-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.settings-memo-table{width:100%;min-width:720px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}.settings-memo-table th,.settings-memo-table td{border-bottom:1px solid var(--border);padding:9px;text-align:right}.settings-memo-table th:first-child,.settings-memo-table td:first-child{text-align:left;width:260px;background:var(--surface)}.settings-memo-table tr:last-child td{border-bottom:0}.settings-limit-input{width:100%;min-width:88px;text-align:right}.settings-type-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.settings-type-card{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-type-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}.settings-type-head strong{font-size:14px;color:var(--text)}.settings-type-head span{font-size:11px;color:var(--text-3)}.settings-memo-reasons{display:grid;gap:8px;margin:8px 0}.settings-memo-reason-row{display:grid;grid-template-columns:minmax(0,1fr) 30px;gap:8px}.settings-signature-grid{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;gap:12px;align-items:end}.settings-signature-actions{display:flex;gap:8px;align-items:center}.settings-signature-preview{grid-column:1/-1;min-height:86px;border:1px dashed var(--border-md);border-radius:8px;background:var(--surface-2);display:grid;place-items:center;padding:12px;color:var(--text-3);font-size:12px;text-align:center}.settings-signature-preview img{max-width:260px;max-height:76px;object-fit:contain}.settings-health-list{display:grid;gap:8px}.settings-health-row{display:grid;grid-template-columns:190px minmax(0,1fr) 92px;gap:10px;align-items:center;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:10px;font-size:12px}.settings-health-row strong{color:var(--text)}.settings-health-row span{color:var(--text-3)}.settings-health-badge{justify-self:end;font-size:10px;font-weight:800;text-transform:uppercase;border-radius:999px;padding:4px 8px;border:1px solid var(--border-md);color:var(--text-2);background:var(--surface)}.settings-health-badge.ok{color:var(--green);border-color:var(--green-200)}.settings-health-badge.warn{color:var(--amber);border-color:var(--amber-200)}.settings-health-badge.error{color:var(--red);border-color:var(--red-200)}
       .settings-placeholder-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.settings-placeholder-grid div{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:14px}.settings-placeholder-grid strong{display:block;color:var(--text);font-size:13px}.settings-placeholder-grid span{display:block;color:var(--text-3);font-size:11px;margin-top:4px;line-height:1.45}
       .settings-actions{display:flex;justify-content:flex-end;gap:8px;position:sticky;bottom:0;margin:18px -22px -78px;padding:12px 22px;background:color-mix(in srgb,var(--surface) 92%,transparent);border-top:1px solid var(--border);backdrop-filter:blur(18px)}.settings-icon-btn{width:30px;height:30px;justify-content:center;padding:0}.settings-toast{position:fixed;right:22px;bottom:22px;z-index:1500;background:var(--surface);color:var(--text);border:1px solid var(--border-md);box-shadow:var(--shadow);border-radius:8px;padding:10px 12px;font-size:12px;font-weight:700;opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;transition:opacity .18s,transform .18s cubic-bezier(.22,1,.36,1)}.settings-toast.is-open{opacity:1;transform:translateY(0) scale(1)}.settings-toast-error{border-color:var(--red-200);color:var(--red)}.settings-toast-ok{border-color:var(--green-200);color:var(--green)}
       .settings-pop{animation:settings-control-pop .2s cubic-bezier(.22,1,.36,1)}@keyframes settings-card-in{from{opacity:0;transform:translateY(7px) scale(.995)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes settings-check-pop{0%{transform:scale(.82)}62%{transform:scale(1.13)}100%{transform:scale(1)}}@keyframes settings-control-pop{0%{transform:scale(.985)}65%{transform:scale(1.018)}100%{transform:scale(1)}}@keyframes settings-dirty-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.settings-card,.settings-summary,.settings-role-card,.settings-check-input:checked,.settings-pop,.settings-dirty.is-visible{animation:none!important}.settings-nav-item,.settings-check,.settings-member-row,.settings-card{transition-duration:.01ms!important}}
-      @media(max-width:1080px){.settings-shell{grid-template-columns:188px minmax(0,1fr)}.settings-summary-row,.settings-summary-row-3{grid-template-columns:repeat(2,minmax(0,1fr))}.settings-grid{grid-template-columns:1fr}.settings-grid-tight{grid-template-columns:1fr}.settings-member-head,.settings-project-head{display:none}.settings-member-row,.settings-project-row{grid-template-columns:1fr 1fr}.settings-member-status{grid-column:1/-1}}
-      @media(max-width:760px){.settings-shell{display:block;min-height:0}.settings-rail{border-right:0;border-bottom:1px solid var(--border)}.settings-main{padding:16px 14px 76px}.settings-top,.settings-panel-head{display:block}.settings-top-actions{justify-content:flex-start;margin-top:12px}.settings-summary-row,.settings-summary-row-3{grid-template-columns:1fr}.settings-route-grid,.settings-placeholder-grid,.settings-inline-fields,.settings-code-format-grid{grid-template-columns:1fr}.settings-member-row,.settings-project-row{grid-template-columns:1fr}.settings-scope{width:100%;min-width:0;margin-top:10px}.settings-actions{margin-left:-14px;margin-right:-14px;padding-left:14px;padding-right:14px}}
+      @media(max-width:1080px){.settings-shell{grid-template-columns:188px minmax(0,1fr)}.settings-summary-row,.settings-summary-row-3{grid-template-columns:repeat(2,minmax(0,1fr))}.settings-grid{grid-template-columns:1fr}.settings-grid-tight{grid-template-columns:1fr}.settings-member-head,.settings-project-head{display:none}.settings-member-row,.settings-project-row{grid-template-columns:1fr 1fr}.settings-member-status{grid-column:1/-1}.settings-signature-grid{grid-template-columns:1fr 1fr}}
+      @media(max-width:760px){.settings-shell{display:block;min-height:0}.settings-rail{border-right:0;border-bottom:1px solid var(--border)}.settings-main{padding:16px 14px 76px}.settings-top,.settings-panel-head{display:block}.settings-top-actions{justify-content:flex-start;margin-top:12px}.settings-summary-row,.settings-summary-row-3{grid-template-columns:1fr}.settings-route-grid,.settings-placeholder-grid,.settings-inline-fields,.settings-code-format-grid,.settings-signature-grid{grid-template-columns:1fr}.settings-member-row,.settings-project-row,.settings-health-row{grid-template-columns:1fr}.settings-health-badge{justify-self:start}.settings-scope{width:100%;min-width:0;margin-top:10px}.settings-actions{margin-left:-14px;margin-right:-14px;padding-left:14px;padding-right:14px}}
     </style>
     <div class="settings-shell">
       <aside class="settings-rail" aria-label="Settings navigation">
@@ -1015,6 +1198,7 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
           <div class="settings-nav-label">Workspace</div>
           ${[
             ['general', 'General', 'general'],
+            ['memo', 'Memo & Approval', 'memo'],
             ['members', 'Members & Access', 'members'],
             ['roles', 'Roles & Permissions', 'roles'],
             ['resource', 'Resource', 'resource'],
@@ -1048,6 +1232,7 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
     markSettingsDirty();
     if(event.target?.id === 'set-resource-row-no-format' || event.target?.id === 'set-resource-row-no-start') updateResourceNoPreview();
     if(event.target?.id?.startsWith('set-resource-emp-')) updateEmployeeCodePreviews();
+    if(event.target?.id === 'set-signature-owner') refreshSignaturePreview();
   };
   root.onchange = event => {
     markSettingsDirty();
@@ -1058,6 +1243,7 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
     if(toggleHost && root.contains(toggleHost)) toggleSettingsCheckbox(event, toggleHost);
     animateSettingsControl(event);
   };
+  if(SETTINGS_ACTIVE_TAB === 'memo') hydrateMemoApprovalPanel();
   markSettingsDirty();
 }
 
@@ -1089,6 +1275,248 @@ function readProjectMasterFromDom() {
       note: get('note'),
     }, index);
   }).filter(project => project.name || project.code);
+}
+
+function readTypeCfgFromDom(currentTypeCfg={}) {
+  const cards = [...document.querySelectorAll('[data-typecfg-card]')];
+  if(!cards.length) return currentTypeCfg || {};
+  const next = {};
+  MEMO_APPROVAL_TYPES.forEach(([type]) => {
+    const card = cards.find(el => el.dataset.typecfgCard === type);
+    if(!card) {
+      if(currentTypeCfg?.[type]) next[type] = currentTypeCfg[type];
+      return;
+    }
+    const prev = currentTypeCfg?.[type] || {};
+    const to = card.querySelector(`[data-typecfg-field="to"][data-typecfg-type="${type}"]`)?.value?.trim() || '';
+    const apprTitle = card.querySelector(`[data-typecfg-field="apprTitle"][data-typecfg-type="${type}"]`)?.value?.trim() || '';
+    const reasons = [...card.querySelectorAll(`[data-typecfg-reason="${type}"]`)].map(input => input.value.trim()).filter(Boolean);
+    if(to || apprTitle || reasons.length) {
+      const cfg = { ...prev, to, apprTitle };
+      if(reasons.length) cfg.reasons = reasons;
+      else delete cfg.reasons;
+      next[type] = cfg;
+    }
+  });
+  return next;
+}
+
+function readAuthorityLimitsFromDom() {
+  return [...document.querySelectorAll('[data-authority-title]')].flatMap(row => {
+    const title = row.dataset.authorityTitle || '';
+    return MEMO_APPROVAL_TYPES.map(([type]) => {
+      const input = row.querySelector(`[data-authority-type="${type}"]`);
+      const n = Number(input?.value || 0);
+      return {
+        title,
+        memo_type: type,
+        limit_thb: Number.isFinite(n) && n >= 0 ? n : -1,
+      };
+    });
+  });
+}
+
+function validateMemoApprovalDraft() {
+  const errors = [];
+  readAuthorityLimitsFromDom().forEach(row => {
+    if(row.limit_thb < 0) errors.push(`Authority limit for ${row.title} must be non-negative.`);
+  });
+  return [...new Set(errors)];
+}
+
+async function saveAuthorityLimitsFromDom() {
+  const rows = readAuthorityLimitsFromDom();
+  if(!rows.length) return;
+  if(rows.some(row => row.limit_thb < 0)) throw new Error('Authority limits must be non-negative numbers.');
+  if(typeof checkSupa === 'function' && !(await checkSupa())) throw new Error('Supabase is not configured, so authority limits were not saved.');
+  const payload = rows.map(row => ({
+    title: row.title,
+    memo_type: row.memo_type,
+    limit_thb: row.limit_thb,
+  }));
+  await supaFetch('authority_limits', 'POST', payload, '?on_conflict=title,memo_type');
+  if(typeof loadAuthorityAsync === 'function') {
+    window._authorityCache = payload;
+  }
+  if(typeof _authorityCache !== 'undefined') _authorityCache = payload;
+}
+
+async function readSignatureDataUrl(owner) {
+  const key = signatureStorageKey(owner);
+  if(!key || key === 'sig-') return null;
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if(parsed?.signatureDataUrl) return parsed.signatureDataUrl;
+  } catch(e) {}
+  if(typeof checkSupa === 'function' && await checkSupa()) {
+    try {
+      const rows = await supaFetch('settings', 'GET', null, `?id=eq.${encodeURIComponent(key)}`);
+      const dataUrl = rows?.[0]?.data?.signatureDataUrl || null;
+      if(dataUrl) localStorage.setItem(key, JSON.stringify({ signatureDataUrl: dataUrl }));
+      return dataUrl;
+    } catch(e) {}
+  }
+  return null;
+}
+
+async function refreshSignaturePreview() {
+  const box = document.getElementById('settings-signature-preview');
+  const owner = document.getElementById('set-signature-owner')?.value?.trim() || '';
+  if(!box) return;
+  if(SETTINGS_SIGNATURE_PENDING_DATA_URL) {
+    box.innerHTML = `<img src="${SETTINGS_SIGNATURE_PENDING_DATA_URL}" alt="Selected signature preview">`;
+    return;
+  }
+  if(!owner) {
+    box.textContent = 'Enter an owner name to preview a signature.';
+    return;
+  }
+  box.textContent = 'Loading signature...';
+  const dataUrl = await readSignatureDataUrl(owner);
+  box.innerHTML = dataUrl ? `<img src="${dataUrl}" alt="Current signature preview">` : 'No signature loaded.';
+}
+
+function handleSignatureFileSelect(input) {
+  const file = input?.files?.[0];
+  SETTINGS_SIGNATURE_PENDING_DATA_URL = null;
+  if(!file) {
+    refreshSignaturePreview();
+    return;
+  }
+  if(!file.type?.startsWith('image/')) {
+    input.value = '';
+    showSettingsToast('Signature file must be an image.', 'error');
+    return;
+  }
+  if(file.size > 500 * 1024) {
+    input.value = '';
+    showSettingsToast('Signature image must be 500 KB or smaller.', 'error');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    SETTINGS_SIGNATURE_PENDING_DATA_URL = String(reader.result || '');
+    refreshSignaturePreview();
+    markSettingsDirty();
+  };
+  reader.onerror = () => showSettingsToast('Could not read signature image.', 'error');
+  reader.readAsDataURL(file);
+}
+
+async function saveSignatureFromDom() {
+  if(!SETTINGS_SIGNATURE_PENDING_DATA_URL) return;
+  const owner = document.getElementById('set-signature-owner')?.value?.trim() || '';
+  if(!owner) throw new Error('Enter a signature owner name before saving.');
+  const key = signatureStorageKey(owner);
+  const data = { signatureDataUrl: SETTINGS_SIGNATURE_PENDING_DATA_URL };
+  localStorage.setItem(key, JSON.stringify(data));
+  if(typeof checkSupa === 'function' && await checkSupa()) {
+    await supaFetch('settings', 'POST', { id: key, data }, '?on_conflict=id');
+  }
+  SETTINGS_SIGNATURE_PENDING_DATA_URL = null;
+}
+
+async function clearSignatureForOwner() {
+  const owner = document.getElementById('set-signature-owner')?.value?.trim() || '';
+  if(!owner) {
+    showSettingsToast('Enter a signature owner name first.', 'error');
+    return;
+  }
+  const key = signatureStorageKey(owner);
+  SETTINGS_SIGNATURE_PENDING_DATA_URL = null;
+  try { localStorage.removeItem(key); } catch(e) {}
+  let warning = '';
+  if(typeof checkSupa === 'function' && await checkSupa()) {
+    try {
+      await supaFetch('settings', 'DELETE', null, `?id=eq.${encodeURIComponent(key)}`);
+    } catch(e) {
+      warning = ' Local copy cleared; Supabase row could not be removed.';
+    }
+  }
+  document.getElementById('set-signature-file') && (document.getElementById('set-signature-file').value = '');
+  await refreshSignaturePreview();
+  markSettingsDirty();
+  showSettingsToast(warning || 'Signature cleared.', warning ? 'error' : 'ok');
+}
+
+function healthBadge(ok, warn=false) {
+  if(ok) return '<span class="settings-health-badge ok">OK</span>';
+  return `<span class="settings-health-badge ${warn ? 'warn' : 'error'}">${warn ? 'Check' : 'Missing'}</span>`;
+}
+
+function findProfileForSettingsPerson(profiles, person) {
+  const name = String(person?.name || '').trim();
+  const title = String(person?.title || '').trim();
+  if(!name && !title) return null;
+  return profiles.find(profile => {
+    const full = String(profile.full_name || '').trim();
+    const aliases = Array.isArray(profile.name_aliases) ? profile.name_aliases.map(String) : [];
+    return (name && (full === name || aliases.some(alias => alias.toLowerCase() === name.toLowerCase()))) ||
+      (!name && title && profile.title === title);
+  }) || null;
+}
+
+async function renderApproverHealthCheck() {
+  const host = document.getElementById('settings-health-check');
+  if(!host) return;
+  const s = loadSettings();
+  let profiles = [];
+  try {
+    profiles = typeof loadUserProfilesAsync === 'function' ? await loadUserProfilesAsync() : [];
+  } catch(e) {
+    host.innerHTML = '<div class="settings-health-row"><strong>user_profiles</strong><span>Could not load diagnostics.</span><span class="settings-health-badge warn">Check</span></div>';
+    return;
+  }
+  const reviewer = findProfileForSettingsPerson(profiles, s.defaultReviewer);
+  const approver = findProfileForSettingsPerson(profiles, s.defaultApprover);
+  const titleSet = new Set(profiles.map(p => p.title).filter(Boolean));
+  const typeTitles = MEMO_APPROVAL_TYPES.map(([type, label]) => {
+    const title = s.typeCfg?.[type]?.apprTitle || MEMO_TYPE_CFG_FALLBACK[type]?.apprTitle || '';
+    return { label, title, ok: !title || titleSet.has(title) };
+  });
+  const authorityTitles = memoApprovalTitleRows(s).filter(title => title && !titleSet.has(title));
+  const rows = [
+    ['Default reviewer exists', s.defaultReviewer?.name || s.defaultReviewer?.title || '-', !!reviewer],
+    ['Reviewer active', reviewer ? reviewer.full_name : '-', reviewer ? reviewer.is_active !== false : false],
+    ['Reviewer can review', reviewer ? reviewer.full_name : '-', reviewer ? !!(reviewer.can_review ?? reviewer.is_approver) : false],
+    ['Default approver exists', s.defaultApprover?.name || s.defaultApprover?.title || '-', !s.defaultApprover?.name && !s.defaultApprover?.title ? true : !!approver],
+    ['Approver active', approver ? approver.full_name : '-', !s.defaultApprover?.name && !s.defaultApprover?.title ? true : approver ? approver.is_active !== false : false],
+    ['Approver can approve', approver ? approver.full_name : '-', !s.defaultApprover?.name && !s.defaultApprover?.title ? true : approver ? !!(approver.can_approve ?? approver.is_approver) : false],
+    ...typeTitles.map(item => [`${item.label} approver title`, item.title || 'Fallback blank', item.ok]),
+    ['Authority titles known', authorityTitles.length ? authorityTitles.join(', ') : 'All authority titles match known profile titles', authorityTitles.length === 0],
+  ];
+  host.innerHTML = rows.map(([label, detail, ok]) => `
+    <div class="settings-health-row">
+      <strong>${esc(label)}</strong>
+      <span>${esc(detail)}</span>
+      ${healthBadge(ok, !ok && label.includes('title'))}
+    </div>`).join('');
+}
+
+async function hydrateAuthorityLimitsPanel() {
+  if(typeof loadAuthorityAsync !== 'function') return;
+  try {
+    await loadAuthorityAsync();
+    document.querySelectorAll('[data-authority-title]').forEach(row => {
+      const title = row.dataset.authorityTitle;
+      MEMO_APPROVAL_TYPES.forEach(([type]) => {
+        const input = row.querySelector(`[data-authority-type="${type}"]`);
+        if(input) input.value = authorityLimitInputValue(title, type);
+      });
+    });
+  } catch(e) {}
+}
+
+async function hydrateMemoApprovalPanel() {
+  SETTINGS_SIGNATURE_PENDING_DATA_URL = null;
+  await Promise.all([
+    hydrateAuthorityLimitsPanel(),
+    refreshSignaturePreview(),
+    renderApproverHealthCheck(),
+  ]);
+  SETTINGS_DIRTY_BASELINE = settingsSnapshot();
+  markSettingsDirty();
 }
 
 function readTransitions(roleKey) {
@@ -1133,6 +1561,7 @@ function collectSettingsFromDom() {
       name: document.getElementById('set-approver-name')?.value || current.defaultApprover.name || '',
       title: document.getElementById('set-approver-title')?.value || current.defaultApprover.title || '',
     },
+    typeCfg: readTypeCfgFromDom(current.typeCfg),
     resource: {
       ...current.resource,
       showRequestId: document.getElementById('set-resource-show-id') ? !!document.getElementById('set-resource-show-id').checked : current.resource.showRequestId,
@@ -1197,15 +1626,25 @@ function validateSettingsDraft(draft) {
       errors.push(`${role.label || key} is project-scoped but has no active project-scoped member.`);
     }
   });
+  errors.push(...validateMemoApprovalDraft());
   return [...new Set(errors)];
 }
 
-function saveSettings() {
+async function saveSettings() {
   const draft = normalizeSettings(collectSettingsFromDom());
   const errors = validateSettingsDraft(draft);
   if(errors.length) {
     showSettingsToast(errors[0], 'error');
     return null;
+  }
+  if(SETTINGS_ACTIVE_TAB === 'memo') {
+    try {
+      await saveAuthorityLimitsFromDom();
+      await saveSignatureFromDom();
+    } catch(e) {
+      showSettingsToast(e?.message || 'Memo & Approval settings could not be saved.', 'error');
+      return null;
+    }
   }
   const next = storeSettings(draft);
   refreshSettingsConsumers();
