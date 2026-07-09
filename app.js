@@ -1225,8 +1225,7 @@ function isMemoVisibleInPending(memo) {
 }
 function canCurrentUserActOnMemo(memo) {
   if (!memo || !['pending','pending_a2','pending_a3'].includes(memo.status)) return false;
-  if (isMemoRequester(memo)) return false;
-  return isMemoCurrentApprover(memo) || isPMO();
+  return isMemoCurrentApprover(memo);
 }
 
 // Milestone 1A Task 1.3 — an approver step is "resolved" (locked, no longer the

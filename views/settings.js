@@ -1457,6 +1457,129 @@ function findProfileForSettingsPerson(profiles, person) {
   }) || null;
 }
 
+function settingsNormalizedEmail(value) {
+  return typeof normalizeIdentityEmail === 'function'
+    ? normalizeIdentityEmail(value)
+    : String(value || '').trim().toLowerCase();
+}
+
+function settingsProfileDisplay(profile) {
+  if(!profile) return '-';
+  return profile.full_name || profile.email || `Profile #${profile.id}`;
+}
+
+function settingsCompactList(items, emptyText, limit=4) {
+  const list = [...new Set((items || []).filter(Boolean))];
+  if(!list.length) return emptyText;
+  const shown = list.slice(0, limit).join(', ');
+  return list.length > limit ? `${shown} (+${list.length - limit} more)` : shown;
+}
+
+function settingsHealthRow(label, detail, ok, warn=true) {
+  return `
+    <div class="settings-health-row">
+      <strong>${esc(label)}</strong>
+      <span>${esc(detail)}</span>
+      ${healthBadge(ok, warn)}
+    </div>`;
+}
+
+function settingsCurrentSessionLabel() {
+  const session = typeof currentAuthSession === 'function' ? currentAuthSession() : null;
+  const name = String(session?.user?.name || '').trim();
+  const email = settingsNormalizedEmail(session?.user?.email);
+  return { name, email, label: [name, email].filter(Boolean).join(' / ') || 'No signed-in auth session detected' };
+}
+
+function settingsProfileNameMap(profiles) {
+  const map = new Map();
+  (profiles || []).forEach(profile => {
+    const names = [profile.full_name, ...(Array.isArray(profile.name_aliases) ? profile.name_aliases : [])]
+      .map(name => String(name || '').trim())
+      .filter(Boolean);
+    names.forEach(name => {
+      const key = name.toLowerCase();
+      if(!map.has(key)) map.set(key, profile);
+    });
+  });
+  return map;
+}
+
+function settingsProfileByMemoPerson(profiles, byName, profileId, name) {
+  if(profileId != null) {
+    const byId = profiles.find(profile => Number(profile.id) === Number(profileId));
+    if(byId) return byId;
+  }
+  const normalizedName = String(name || '').trim().toLowerCase();
+  return normalizedName ? byName.get(normalizedName) || null : null;
+}
+
+async function settingsLoadDiagnosticMemos() {
+  try {
+    if(typeof loadMemosAsync === 'function') return await loadMemosAsync();
+    if(typeof loadMemos === 'function') return loadMemos();
+  } catch(e) {
+    console.warn('memo diagnostics load failed', e);
+  }
+  return [];
+}
+
+function buildMemoIdentityDiagnosticRows(s, profiles, memos) {
+  const normalizedMemberEmails = new Set((s.members || []).map(member => settingsNormalizedEmail(member.email)).filter(Boolean));
+  const normalizedProfileEmails = new Set((profiles || []).map(profile => settingsNormalizedEmail(profile.email)).filter(Boolean));
+  const membersWithoutProfiles = (s.members || [])
+    .filter(member => {
+      const email = settingsNormalizedEmail(member.email);
+      return email && !normalizedProfileEmails.has(email);
+    })
+    .map(member => `${member.name || member.email} <${settingsNormalizedEmail(member.email)}>`);
+  const profilesWithoutMembers = (profiles || [])
+    .filter(profile => {
+      const email = settingsNormalizedEmail(profile.email);
+      return email && !normalizedMemberEmails.has(email);
+    })
+    .map(profile => `${settingsProfileDisplay(profile)} <${settingsNormalizedEmail(profile.email)}>`);
+  const session = settingsCurrentSessionLabel();
+  const currentProfile = typeof currentUserProfile === 'function' ? currentUserProfile() : null;
+  const hasAuthIdentity = !!(session.name || session.email);
+  const pendingMemos = (memos || []).filter(memo => ['pending','pending_a2','pending_a3'].includes(memo?.status));
+  const inactiveProfiles = new Map((profiles || [])
+    .filter(profile => profile.is_active === false)
+    .map(profile => [Number(profile.id), profile]));
+  const byName = settingsProfileNameMap(profiles);
+  const inactiveAssignments = [];
+  pendingMemos.forEach(memo => {
+    const checks = [
+      ['requester', memo.requesterProfileId, memo.requesterName],
+      ['reviewer', memo.reviewerProfileId, memo.reviewerName],
+      ['approver', memo.approverProfileId, memo.approverName],
+      ...((memo.approvers || []).map((approver, index) => [`A${index + 1}`, approver.profileId, approver.name])),
+    ];
+    checks.forEach(([role, profileId, name]) => {
+      const profile = settingsProfileByMemoPerson(profiles, byName, profileId, name);
+      if(profile && inactiveProfiles.has(Number(profile.id))) {
+        inactiveAssignments.push(`${memo.memoNo || 'Memo'} ${role}: ${settingsProfileDisplay(profile)}`);
+      }
+    });
+  });
+  const missingApproverProfiles = (memos || []).flatMap(memo =>
+    (memo.approvers || []).map((approver, index) => ({ memo, approver, index }))
+      .filter(item => item.approver.profileId == null || item.approver.profileId === '')
+      .map(item => `${item.memo.memoNo || 'Memo'} A${item.index + 1}: ${item.approver.name || 'Unnamed approver'}`)
+  );
+
+  return [
+    ['Settings Members mapped to user_profiles', settingsCompactList(membersWithoutProfiles, 'All Settings Members with email match user_profiles'), membersWithoutProfiles.length === 0],
+    ['user_profiles mapped to Settings Members', settingsCompactList(profilesWithoutMembers, 'All user_profiles with email match Settings Members'), profilesWithoutMembers.length === 0],
+    ['Current login Memo profile', hasAuthIdentity
+      ? (currentProfile ? `${session.label} resolves to ${settingsProfileDisplay(currentProfile)}` : `${session.label} does not resolve to user_profiles; Memo approval depends on user_profiles`)
+      : `${session.label}; Memo approval depends on user_profiles`,
+      !hasAuthIdentity || !!currentProfile],
+    ['Pending memo inactive profile risks', settingsCompactList(inactiveAssignments, 'No pending memo requester/reviewer/approver resolves to an inactive user_profile'), inactiveAssignments.length === 0],
+    ['Memo approver profile references', settingsCompactList(missingApproverProfiles, 'No memo approver row has a missing profileId'), missingApproverProfiles.length === 0],
+  ];
+}
+
 async function renderApproverHealthCheck() {
   const host = document.getElementById('settings-health-check');
   if(!host) return;
@@ -1468,6 +1591,7 @@ async function renderApproverHealthCheck() {
     host.innerHTML = '<div class="settings-health-row"><strong>user_profiles</strong><span>Could not load diagnostics.</span><span class="settings-health-badge warn">Check</span></div>';
     return;
   }
+  const memos = await settingsLoadDiagnosticMemos();
   const reviewer = findProfileForSettingsPerson(profiles, s.defaultReviewer);
   const approver = findProfileForSettingsPerson(profiles, s.defaultApprover);
   const titleSet = new Set(profiles.map(p => p.title).filter(Boolean));
@@ -1485,13 +1609,9 @@ async function renderApproverHealthCheck() {
     ['Approver can approve', approver ? approver.full_name : '-', !s.defaultApprover?.name && !s.defaultApprover?.title ? true : approver ? !!(approver.can_approve ?? approver.is_approver) : false],
     ...typeTitles.map(item => [`${item.label} approver title`, item.title || 'Fallback blank', item.ok]),
     ['Authority titles known', authorityTitles.length ? authorityTitles.join(', ') : 'All authority titles match known profile titles', authorityTitles.length === 0],
+    ...buildMemoIdentityDiagnosticRows(s, profiles, memos),
   ];
-  host.innerHTML = rows.map(([label, detail, ok]) => `
-    <div class="settings-health-row">
-      <strong>${esc(label)}</strong>
-      <span>${esc(detail)}</span>
-      ${healthBadge(ok, !ok && label.includes('title'))}
-    </div>`).join('');
+  host.innerHTML = rows.map(([label, detail, ok]) => settingsHealthRow(label, detail, ok, !ok && !label.includes('exists'))).join('');
 }
 
 async function hydrateAuthorityLimitsPanel() {

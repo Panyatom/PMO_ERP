@@ -232,12 +232,7 @@ function buildPendingRow(memo) {
   const days    = pendingAge(memo);
   const amt     = Number(memo.total)||0;
   const isOwn   = isMemoRequester(memo);
-  const _isPMOUser = typeof isPMO === 'function' && isPMO();
-  const _stage  = memo.status === 'pending_a2' ? 1 : memo.status === 'pending_a3' ? 2 : 0;
-  const _stageApprover = (memo.approvers||[])[_stage];
-  const canAct  = canCurrentUserActOnMemo(memo) && !_isPMOUser;
-  // PMO override: can approve any memo that is NOT their own
-  const canActAsPMO = !isOwn && _isPMOUser;
+  const canAct  = canCurrentUserActOnMemo(memo);
   const accent  = TYPE_COLOR_PENDING[memo.type] || '#888780';
   const typeLbl = TYPE_LABEL_PENDING[memo.type] || (memo.type||'').toUpperCase();
   const typeBg  = TYPE_BG_PENDING[memo.type]    || '#F1EFE8';
@@ -250,18 +245,11 @@ function buildPendingRow(memo) {
 
   const isPending  = ['pending','pending_a2','pending_a3'].includes(memo.status);
   const isOwner    = isOwn;
-  const _pmo       = typeof isPMO === 'function' && isPMO();
 
   // Row action buttons — different per role
   let actionBtns = '';
-  if (canActAsPMO) {
-    // PMO sees decision actions (and the existing override cancel) — row click opens detail.
-    actionBtns = `
-      <button class="btn-approve" data-action="approve" data-memo="${esc(memo.memoNo)}" style="font-size:10px;padding:2px 8px" title="Approve">✓</button>
-      <button class="btn-reject"  data-action="reject"  data-memo="${esc(memo.memoNo)}" style="font-size:10px;padding:2px 8px;margin-left:2px" title="Reject">✕</button>
-      <button class="btn-sm"      data-action="cancel"  data-memo="${esc(memo.memoNo)}" style="font-size:10px;padding:2px 8px;margin-left:2px;color:var(--red)" title="ยกเลิก">✕ Cancel</button>`;
-  } else if (!isOwner && canAct) {
-    // Approver (not own memo, their turn) — row click opens detail.
+  if (canAct) {
+    // Current assigned reviewer/approver — row click opens detail.
     actionBtns = `
       <button class="btn-approve" data-action="approve" data-memo="${esc(memo.memoNo)}" style="font-size:10px;padding:2px 8px" title="Approve">✓</button>
       <button class="btn-reject"  data-action="reject"  data-memo="${esc(memo.memoNo)}" style="font-size:10px;padding:2px 8px;margin-left:2px" title="Reject">✕</button>`;
@@ -518,21 +506,15 @@ function openDetailModal(memoNo) {
   const _st       = memo.status || '';
   const isPending = _st === 'pending' || _st === 'pending_a2' || _st === 'pending_a3';
   const isDraft   = _st === 'draft';
-  const isOwn     = isMemoRequester(memo);
   const _isPMO    = typeof isPMO === 'function' && isPMO();
 
-  // canApprove: pending AND current user matches current stage's approver
-  const _dUser    = currentUser();
-  const _dStage   = _st==='pending_a2' ? 1 : _st==='pending_a3' ? 2 : 0;
-  const _dApprover = (memo.approvers||[])[_dStage];
-  const canApprove = isPending && canCurrentUserActOnMemo(memo) && !_isPMO;
-  // PMO can always approve as override
-  const canApproveAsPMO = isPending && _isPMO && !isOwn;  // PMO cannot approve own memo
-  const canCancel  = isPending && (isOwn || _isPMO);
+  // Normal approval is only for the current assigned reviewer/approver.
+  const canApprove = isPending && canCurrentUserActOnMemo(memo);
+  const canCancel  = isPending && (isMemoRequester(memo) || _isPMO);
 
   const acts = document.getElementById('detail-actions');
   acts.innerHTML = `
-    ${(canApprove || canApproveAsPMO) ? `
+    ${canApprove ? `
       <button class="btn-primary" onclick="closeDetailModal();openApproveModal('${_no}')">✓ Approve</button>
       <button class="btn-reject"  onclick="closeDetailModal();openRejectModal('${_no}')">✕ Reject</button>
     ` : ''}
