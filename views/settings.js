@@ -776,6 +776,47 @@ function renderHealthPanel() {
     </section>`;
 }
 
+function renderMemoProfilesPanel() {
+  return `
+    <section class="settings-card">
+      <div class="settings-panel-head">
+        <div>
+          <h3>Memo Profiles</h3>
+          <p>Edit the user_profiles records used by Memo approval identity.</p>
+        </div>
+        <button class="btn-sm" type="button" onclick="refreshMemoProfilesPanel()">Refresh</button>
+      </div>
+      <div class="settings-profile-help">
+        <div>Login email must match <strong>user_profiles.email</strong>.</div>
+        <div>Reviewer dropdown uses <strong>can_review</strong>; approver dropdown uses <strong>can_approve</strong>.</div>
+        <div>PMO Override, Budget Pool, and Memo Tag use <strong>is_pmo</strong>.</div>
+        <div>Inactive profiles should not be assigned to new memos.</div>
+      </div>
+      <div id="settings-memo-profiles-status" class="settings-inline-status">Loading Memo Profiles...</div>
+      <div class="settings-profile-table-wrap">
+        <table class="settings-profile-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Full name</th>
+              <th>Title</th>
+              <th>Email</th>
+              <th>Aliases</th>
+              <th>Review</th>
+              <th>Approve</th>
+              <th>PMO</th>
+              <th>Active</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="settings-memo-profiles-body">
+            <tr><td colspan="10">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
 function renderMemoApprovalPanel(s) {
   return `
     <div class="settings-summary-row settings-summary-row-3">
@@ -783,6 +824,7 @@ function renderMemoApprovalPanel(s) {
       <div class="settings-summary"><div class="settings-summary-mark">${memoApprovalTitleRows(s).length}</div><div><strong>${memoApprovalTitleRows(s).length}</strong><span>Authority titles</span></div></div>
       <div class="settings-summary"><div class="settings-summary-mark">RO</div><div><strong>Read only</strong><span>Health diagnostics</span></div></div>
     </div>
+    ${renderMemoProfilesPanel()}
     ${renderDefaultMemoRoute(s)}
     ${renderAuthorityLimitsPanel(s)}
     ${renderTypeRoutingPanel(s)}
@@ -1178,12 +1220,12 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
       .settings-role-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.settings-role-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;animation:settings-card-in .22s cubic-bezier(.22,1,.36,1) both}.settings-tabs-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.settings-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);min-height:34px;border:1px solid var(--border);background:var(--surface-2);border-radius:8px;padding:7px 10px;cursor:pointer;transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s cubic-bezier(.22,1,.36,1),box-shadow .16s ease}.settings-check:hover{border-color:var(--blue-100);color:var(--text);background:color-mix(in srgb,var(--surface-2) 76%,var(--blue-50));box-shadow:0 8px 18px color-mix(in srgb,var(--blue) 6%,transparent)}.settings-check:active{transform:scale(.975)}.settings-check:has(.settings-check-input:checked){border-color:var(--blue-100);background:var(--blue-50);color:var(--blue-800)}.settings-mini-label{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.08em;margin:14px 0 0}.settings-scope{width:200px;min-width:200px}
       .settings-transition-grid{display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px;align-items:center;margin-top:8px}.settings-transition-grid label{font-size:11px;font-weight:700;color:var(--text-2)}
       .settings-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.settings-preview{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-preview-title{font-size:13px;font-weight:800;color:var(--text);margin-bottom:8px}.settings-preview-line{display:grid;grid-template-columns:58px 1fr;gap:8px;font-size:11px;padding:5px 0;border-top:1px solid var(--border)}.settings-preview-line strong{color:var(--text-3)}.settings-preview-line span{color:var(--text-2);line-height:1.4}
-      .settings-memo-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.settings-memo-table{width:100%;min-width:720px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}.settings-memo-table th,.settings-memo-table td{border-bottom:1px solid var(--border);padding:9px;text-align:right}.settings-memo-table th:first-child,.settings-memo-table td:first-child{text-align:left;width:260px;background:var(--surface)}.settings-memo-table tr:last-child td{border-bottom:0}.settings-limit-input{width:100%;min-width:88px;text-align:right}.settings-type-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.settings-type-card{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-type-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}.settings-type-head strong{font-size:14px;color:var(--text)}.settings-type-head span{font-size:11px;color:var(--text-3)}.settings-memo-reasons{display:grid;gap:8px;margin:8px 0}.settings-memo-reason-row{display:grid;grid-template-columns:minmax(0,1fr) 30px;gap:8px}.settings-signature-grid{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;gap:12px;align-items:end}.settings-signature-actions{display:flex;gap:8px;align-items:center}.settings-signature-preview{grid-column:1/-1;min-height:86px;border:1px dashed var(--border-md);border-radius:8px;background:var(--surface-2);display:grid;place-items:center;padding:12px;color:var(--text-3);font-size:12px;text-align:center}.settings-signature-preview img{max-width:260px;max-height:76px;object-fit:contain}.settings-health-list{display:grid;gap:8px}.settings-health-row{display:grid;grid-template-columns:190px minmax(0,1fr) 92px;gap:10px;align-items:center;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:10px;font-size:12px}.settings-health-row strong{color:var(--text)}.settings-health-row span{color:var(--text-3)}.settings-health-badge{justify-self:end;font-size:10px;font-weight:800;text-transform:uppercase;border-radius:999px;padding:4px 8px;border:1px solid var(--border-md);color:var(--text-2);background:var(--surface)}.settings-health-badge.ok{color:var(--green);border-color:var(--green-200)}.settings-health-badge.warn{color:var(--amber);border-color:var(--amber-200)}.settings-health-badge.error{color:var(--red);border-color:var(--red-200)}
+      .settings-memo-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.settings-memo-table{width:100%;min-width:720px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}.settings-memo-table th,.settings-memo-table td{border-bottom:1px solid var(--border);padding:9px;text-align:right}.settings-memo-table th:first-child,.settings-memo-table td:first-child{text-align:left;width:260px;background:var(--surface)}.settings-memo-table tr:last-child td{border-bottom:0}.settings-limit-input{width:100%;min-width:88px;text-align:right}.settings-profile-help{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px}.settings-profile-help div{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:9px 10px;font-size:11px;color:var(--text-2);line-height:1.45}.settings-inline-status{font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:8px}.settings-inline-status.ok{color:var(--green)}.settings-inline-status.error{color:var(--red)}.settings-profile-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.settings-profile-table{width:100%;min-width:1080px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}.settings-profile-table th,.settings-profile-table td{border-bottom:1px solid var(--border);padding:8px;vertical-align:top;text-align:left}.settings-profile-table th{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;background:var(--surface-2)}.settings-profile-table th:nth-child(1),.settings-profile-table td:nth-child(1){width:58px}.settings-profile-table th:nth-child(6),.settings-profile-table th:nth-child(7),.settings-profile-table th:nth-child(8),.settings-profile-table th:nth-child(9),.settings-profile-table td:nth-child(6),.settings-profile-table td:nth-child(7),.settings-profile-table td:nth-child(8),.settings-profile-table td:nth-child(9){width:74px;text-align:center}.settings-profile-table th:last-child,.settings-profile-table td:last-child{width:76px;text-align:right}.settings-profile-table tr:last-child td{border-bottom:0}.settings-profile-id{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3);font-weight:700}.settings-profile-aliases{min-height:38px;resize:vertical}.settings-profile-check{min-height:34px;display:inline-flex;align-items:center;justify-content:center}.settings-type-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.settings-type-card{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-type-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}.settings-type-head strong{font-size:14px;color:var(--text)}.settings-type-head span{font-size:11px;color:var(--text-3)}.settings-memo-reasons{display:grid;gap:8px;margin:8px 0}.settings-memo-reason-row{display:grid;grid-template-columns:minmax(0,1fr) 30px;gap:8px}.settings-signature-grid{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;gap:12px;align-items:end}.settings-signature-actions{display:flex;gap:8px;align-items:center}.settings-signature-preview{grid-column:1/-1;min-height:86px;border:1px dashed var(--border-md);border-radius:8px;background:var(--surface-2);display:grid;place-items:center;padding:12px;color:var(--text-3);font-size:12px;text-align:center}.settings-signature-preview img{max-width:260px;max-height:76px;object-fit:contain}.settings-health-list{display:grid;gap:8px}.settings-health-row{display:grid;grid-template-columns:190px minmax(0,1fr) 92px;gap:10px;align-items:center;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:10px;font-size:12px}.settings-health-row strong{color:var(--text)}.settings-health-row span{color:var(--text-3)}.settings-health-badge{justify-self:end;font-size:10px;font-weight:800;text-transform:uppercase;border-radius:999px;padding:4px 8px;border:1px solid var(--border-md);color:var(--text-2);background:var(--surface)}.settings-health-badge.ok{color:var(--green);border-color:var(--green-200)}.settings-health-badge.warn{color:var(--amber);border-color:var(--amber-200)}.settings-health-badge.error{color:var(--red);border-color:var(--red-200)}
       .settings-placeholder-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.settings-placeholder-grid div{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:14px}.settings-placeholder-grid strong{display:block;color:var(--text);font-size:13px}.settings-placeholder-grid span{display:block;color:var(--text-3);font-size:11px;margin-top:4px;line-height:1.45}
       .settings-actions{display:flex;justify-content:flex-end;gap:8px;position:sticky;bottom:0;margin:18px -22px -78px;padding:12px 22px;background:color-mix(in srgb,var(--surface) 92%,transparent);border-top:1px solid var(--border);backdrop-filter:blur(18px)}.settings-icon-btn{width:30px;height:30px;justify-content:center;padding:0}.settings-toast{position:fixed;right:22px;bottom:22px;z-index:1500;background:var(--surface);color:var(--text);border:1px solid var(--border-md);box-shadow:var(--shadow);border-radius:8px;padding:10px 12px;font-size:12px;font-weight:700;opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;transition:opacity .18s,transform .18s cubic-bezier(.22,1,.36,1)}.settings-toast.is-open{opacity:1;transform:translateY(0) scale(1)}.settings-toast-error{border-color:var(--red-200);color:var(--red)}.settings-toast-ok{border-color:var(--green-200);color:var(--green)}
       .settings-pop{animation:settings-control-pop .2s cubic-bezier(.22,1,.36,1)}@keyframes settings-card-in{from{opacity:0;transform:translateY(7px) scale(.995)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes settings-check-pop{0%{transform:scale(.82)}62%{transform:scale(1.13)}100%{transform:scale(1)}}@keyframes settings-control-pop{0%{transform:scale(.985)}65%{transform:scale(1.018)}100%{transform:scale(1)}}@keyframes settings-dirty-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.settings-card,.settings-summary,.settings-role-card,.settings-check-input:checked,.settings-pop,.settings-dirty.is-visible{animation:none!important}.settings-nav-item,.settings-check,.settings-member-row,.settings-card{transition-duration:.01ms!important}}
       @media(max-width:1080px){.settings-shell{grid-template-columns:188px minmax(0,1fr)}.settings-summary-row,.settings-summary-row-3{grid-template-columns:repeat(2,minmax(0,1fr))}.settings-grid{grid-template-columns:1fr}.settings-grid-tight{grid-template-columns:1fr}.settings-member-head,.settings-project-head{display:none}.settings-member-row,.settings-project-row{grid-template-columns:1fr 1fr}.settings-member-status{grid-column:1/-1}.settings-signature-grid{grid-template-columns:1fr 1fr}}
-      @media(max-width:760px){.settings-shell{display:block;min-height:0}.settings-rail{border-right:0;border-bottom:1px solid var(--border)}.settings-main{padding:16px 14px 76px}.settings-top,.settings-panel-head{display:block}.settings-top-actions{justify-content:flex-start;margin-top:12px}.settings-summary-row,.settings-summary-row-3{grid-template-columns:1fr}.settings-route-grid,.settings-placeholder-grid,.settings-inline-fields,.settings-code-format-grid,.settings-signature-grid{grid-template-columns:1fr}.settings-member-row,.settings-project-row,.settings-health-row{grid-template-columns:1fr}.settings-health-badge{justify-self:start}.settings-scope{width:100%;min-width:0;margin-top:10px}.settings-actions{margin-left:-14px;margin-right:-14px;padding-left:14px;padding-right:14px}}
+      @media(max-width:760px){.settings-shell{display:block;min-height:0}.settings-rail{border-right:0;border-bottom:1px solid var(--border)}.settings-main{padding:16px 14px 76px}.settings-top,.settings-panel-head{display:block}.settings-top-actions{justify-content:flex-start;margin-top:12px}.settings-summary-row,.settings-summary-row-3{grid-template-columns:1fr}.settings-route-grid,.settings-placeholder-grid,.settings-inline-fields,.settings-code-format-grid,.settings-signature-grid,.settings-profile-help{grid-template-columns:1fr}.settings-member-row,.settings-project-row,.settings-health-row{grid-template-columns:1fr}.settings-health-badge{justify-self:start}.settings-scope{width:100%;min-width:0;margin-top:10px}.settings-actions{margin-left:-14px;margin-right:-14px;padding-left:14px;padding-right:14px}}
     </style>
     <div class="settings-shell">
       <aside class="settings-rail" aria-label="Settings navigation">
@@ -1468,6 +1510,133 @@ function settingsProfileDisplay(profile) {
   return profile.full_name || profile.email || `Profile #${profile.id}`;
 }
 
+function memoProfileAliasesText(profile) {
+  return Array.isArray(profile?.name_aliases) ? profile.name_aliases.join(', ') : '';
+}
+
+function memoProfileAliasesFromText(value) {
+  return [...new Set(String(value || '')
+    .split(/[,\n]/)
+    .map(item => item.trim())
+    .filter(Boolean))];
+}
+
+function memoProfileBool(value) {
+  return value === true || value === 'true' || value === 1 || value === '1';
+}
+
+function renderMemoProfileRow(profile={}) {
+  const isNew = profile.id == null;
+  const rowId = isNew ? 'new' : String(profile.id);
+  const checkedAttr = field => ((field === 'is_active' && profile[field] !== false) || profile[field] === true) ? 'checked' : '';
+  return `
+    <tr data-memo-profile-row="${esc(rowId)}">
+      <td><span class="settings-profile-id">${isNew ? 'New' : esc(profile.id)}</span></td>
+      <td><input class="ri" data-profile-field="full_name" value="${esc(profile.full_name || '')}" placeholder="Required"></td>
+      <td><input class="ri" data-profile-field="title" value="${esc(profile.title || '')}" placeholder="Title"></td>
+      <td><input class="ri" data-profile-field="email" value="${esc(settingsNormalizedEmail(profile.email))}" placeholder="name@example.com"></td>
+      <td><textarea class="ri settings-profile-aliases" data-profile-field="name_aliases" placeholder="Comma or line separated">${esc(memoProfileAliasesText(profile))}</textarea></td>
+      ${['can_review','can_approve','is_pmo','is_active'].map(field => `
+        <td>
+          <label class="settings-profile-check" title="${esc(field)}">
+            <input class="settings-check-input" type="checkbox" data-profile-field="${field}" ${checkedAttr(field)}>
+          </label>
+        </td>
+      `).join('')}
+      <td><button class="btn-sm" type="button" onclick="saveMemoProfileRow(this)">${isNew ? 'Create' : 'Save'}</button></td>
+    </tr>`;
+}
+
+function setMemoProfilesStatus(message, tone='') {
+  const host = document.getElementById('settings-memo-profiles-status');
+  if(!host) return;
+  host.textContent = message || '';
+  host.className = `settings-inline-status${tone ? ' ' + tone : ''}`;
+}
+
+async function loadMemoProfilesForSettings() {
+  if(typeof checkSupa === 'function' && !(await checkSupa())) {
+    throw new Error('Supabase is not configured, so user_profiles cannot be loaded.');
+  }
+  return await supaFetch('user_profiles', 'GET', null, '?order=full_name.asc');
+}
+
+async function refreshMemoProfilesPanel() {
+  const body = document.getElementById('settings-memo-profiles-body');
+  if(!body) return;
+  body.innerHTML = '<tr><td colspan="10">Loading...</td></tr>';
+  setMemoProfilesStatus('Loading Memo Profiles...');
+  try {
+    const profiles = await loadMemoProfilesForSettings();
+    body.innerHTML = [
+      renderMemoProfileRow({ is_active: true }),
+      ...(profiles || []).map(renderMemoProfileRow),
+    ].join('');
+    setMemoProfilesStatus(`${(profiles || []).length} Memo Profiles loaded from user_profiles.`, 'ok');
+  } catch(e) {
+    body.innerHTML = `<tr><td colspan="10">${esc(e?.message || 'Could not load user_profiles.')}</td></tr>`;
+    setMemoProfilesStatus(e?.message || 'Could not load Memo Profiles.', 'error');
+  }
+}
+
+function readMemoProfileRow(row) {
+  const field = name => row.querySelector(`[data-profile-field="${name}"]`);
+  return {
+    full_name: field('full_name')?.value?.trim() || '',
+    title: field('title')?.value?.trim() || null,
+    email: settingsNormalizedEmail(field('email')?.value),
+    name_aliases: memoProfileAliasesFromText(field('name_aliases')?.value),
+    can_review: memoProfileBool(field('can_review')?.checked),
+    can_approve: memoProfileBool(field('can_approve')?.checked),
+    is_pmo: memoProfileBool(field('is_pmo')?.checked),
+    is_active: memoProfileBool(field('is_active')?.checked),
+  };
+}
+
+async function refreshMemoProfileConsumers() {
+  if(typeof _userProfilesCache !== 'undefined') _userProfilesCache = null;
+  if(typeof loadUserProfilesAsync === 'function') await loadUserProfilesAsync();
+  if(typeof refreshApproverDropdowns === 'function') refreshApproverDropdowns();
+  if(typeof renderPendingMemos === 'function') renderPendingMemos();
+  if(typeof refreshNotifications === 'function') refreshNotifications();
+  if(typeof renderApproverHealthCheck === 'function') renderApproverHealthCheck();
+}
+
+async function saveMemoProfileRow(button) {
+  const row = button?.closest?.('[data-memo-profile-row]');
+  if(!row) return;
+  const id = row.dataset.memoProfileRow === 'new' ? null : Number(row.dataset.memoProfileRow);
+  const payload = readMemoProfileRow(row);
+  if(!payload.full_name) {
+    showSettingsToast('Memo Profile full_name is required.', 'error');
+    return;
+  }
+  if(!payload.email) {
+    showSettingsToast('Memo Profile email is required.', 'error');
+    return;
+  }
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Saving...';
+  try {
+    if(typeof checkSupa === 'function' && !(await checkSupa())) {
+      throw new Error('Supabase is not configured, so Memo Profiles were not saved.');
+    }
+    if(id) {
+      await supaFetch('user_profiles', 'PATCH', payload, `?id=eq.${encodeURIComponent(id)}`);
+    } else {
+      await supaFetch('user_profiles', 'POST', payload);
+    }
+    await refreshMemoProfileConsumers();
+    await refreshMemoProfilesPanel();
+    showSettingsToast(id ? 'Memo Profile updated.' : 'Memo Profile created.', 'ok');
+  } catch(e) {
+    showSettingsToast(e?.message || 'Memo Profile could not be saved.', 'error');
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+}
+
 function settingsCompactList(items, emptyText, limit=4) {
   const list = [...new Set((items || []).filter(Boolean))];
   if(!list.length) return emptyText;
@@ -1631,6 +1800,7 @@ async function hydrateAuthorityLimitsPanel() {
 async function hydrateMemoApprovalPanel() {
   SETTINGS_SIGNATURE_PENDING_DATA_URL = null;
   await Promise.all([
+    refreshMemoProfilesPanel(),
     hydrateAuthorityLimitsPanel(),
     refreshSignaturePreview(),
     renderApproverHealthCheck(),
