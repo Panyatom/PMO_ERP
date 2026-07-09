@@ -40,10 +40,12 @@ PMO Override requires:
 
 PMO requester self-override is allowed.
 
-PMO Override is stage-based. Approve / Advance override resolves the current approval stage only:
+PMO Override is stage-based. The positive override outcome resolves the current approval stage only:
 
 - pending advances to pending_a2 when A2 exists
+- pending advances to completed when A2 does not exist
 - pending_a2 advances to pending_a3 when A3 exists
+- pending_a2 advances to completed when A3 does not exist
 - final stage advances to completed
 
 Reject or cancel override outcomes remain terminal when supported by the UI.

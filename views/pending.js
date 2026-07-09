@@ -572,10 +572,12 @@ function pmoOverrideCurrentStageInfo(memo) {
   const approver = (memo?.approvers || [])[idx] || null;
   const stage = `A${idx + 1}`;
   const nextApprover = (memo?.approvers || [])[idx + 1] || null;
+  const nextStage = nextApprover ? `A${idx + 2}` : null;
   const advanceLabel = nextApprover
-    ? `Approve / Advance to A${idx + 2}`
-    : 'Approve / Complete';
-  return { idx, approver, stage, nextApprover, advanceLabel };
+    ? `Override ${stage} and send to ${nextStage}`
+    : `Override ${stage} and complete memo`;
+  const resultLabel = nextStage ? `Send to ${nextStage}` : 'Complete memo';
+  return { idx, approver, stage, nextApprover, nextStage, advanceLabel, resultLabel };
 }
 
 function openPmoOverrideModal(memoNo) {
@@ -615,7 +617,8 @@ function openPmoOverrideModal(memoNo) {
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text-2);line-height:1.6">
         <div><strong>Current stage:</strong> ${esc(stageInfo.stage)} · ${esc(currentStatusLabel)}</div>
         <div><strong>Current assigned approver:</strong> ${esc(currentApprover)}</div>
-        <div style="margin-top:6px;color:var(--text-3)">Approve / Advance overrides only the current stage and moves to the next approver when one exists.</div>
+        <div><strong>Next stage / result:</strong> ${esc(stageInfo.resultLabel)}</div>
+        <div style="margin-top:6px;color:var(--text-3)">PMO Override resolves only ${esc(stageInfo.stage)}. Future approver stages stay pending unless they become the current stage later.</div>
       </div>
 
       <!-- Section A: Edit Approvers -->
@@ -727,9 +730,6 @@ function confirmPmoOverride(memoNo) {
 
   const stageInfo = pmoOverrideCurrentStageInfo(memo);
   const currentPendingIdx = stageInfo.idx;
-  const targetStatus = overrideOutcome === 'pmo_advance'
-    ? (stageInfo.nextApprover ? (currentPendingIdx + 1 === 1 ? 'pending_a2' : 'pending_a3') : 'completed')
-    : overrideOutcome;
 
   // The current approver step is marked overridden; later steps remain pending
   // unless the current stage is final and the memo completes.
@@ -754,6 +754,11 @@ function confirmPmoOverride(memoNo) {
       return { name, title, status: 'pending', approvedAt: null, approvedBy: null };
     }).filter(a => a.name);
   }
+  const routeApprovers = newApprovers || (memo.approvers || []);
+  const hasNextApprover = !!routeApprovers[currentPendingIdx + 1];
+  const targetStatus = overrideOutcome === 'pmo_advance'
+    ? (hasNextApprover ? (currentPendingIdx + 1 === 1 ? 'pending_a2' : 'pending_a3') : 'completed')
+    : overrideOutcome;
 
   const memos = loadMemos();
   appendAuditLog(memos, memoNo, `PMO Override → ${targetStatus} by ${user}`, note, {
