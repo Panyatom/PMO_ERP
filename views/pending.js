@@ -759,9 +759,15 @@ function confirmPmoOverride(memoNo) {
   const targetStatus = overrideOutcome === 'pmo_advance'
     ? (hasNextApprover ? (currentPendingIdx + 1 === 1 ? 'pending_a2' : 'pending_a3') : 'completed')
     : overrideOutcome;
+  const currentStageLabel = currentPendingIdx === 0 ? 'A1' : currentPendingIdx === 1 ? 'A2' : 'A3';
+  const pmoAuditAction = targetStatus === 'rejected'
+    ? 'PMO Override: Rejected'
+    : targetStatus === 'completed'
+      ? `PMO Override: ${currentStageLabel} overridden and completed`
+      : `PMO Override: ${currentStageLabel} overridden and sent to ${targetStatus === 'pending_a2' ? 'A2' : 'A3'}`;
 
   const memos = loadMemos();
-  appendAuditLog(memos, memoNo, `PMO Override → ${targetStatus} by ${user}`, note, {
+  appendAuditLog(memos, memoNo, pmoAuditAction, note, {
     statusBefore: memo?.status || null,
     statusAfter:  targetStatus,
     evidenceUrl,
@@ -778,6 +784,10 @@ function confirmPmoOverride(memoNo) {
     auditLog:         updatedAuditLog,
   };
   if (newApprovers) extra.approvers = newApprovers;
+  if (targetStatus === 'rejected') {
+    extra.rejectionReason = note;
+    extra.rejectedBy      = user;
+  }
 
   // Clear stale rejection/cancellation fields when overriding to a positive state
   // so they don't show up as "reject reason" on a completed memo

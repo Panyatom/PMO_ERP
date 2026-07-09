@@ -266,8 +266,18 @@ function _memoLinkedRecordsButtonsHtml(memo) {
 // (buildApprovalTimeline, below) and the PDF appendix
 // (buildApprovalTimelinePdfHtml, app.js's renderMemoPdf). Only applicable
 // events for this memo are included — no fixed/hardcoded stage list.
+function histPmoAuditLabel(e) {
+  if (!String(e?.action || '').startsWith('PMO Override')) return e?.action || '';
+  if (e.statusAfter === 'rejected') return 'PMO Override: Rejected';
+  const stage = e.statusBefore === 'pending_a3' ? 'A3' : e.statusBefore === 'pending_a2' ? 'A2' : 'A1';
+  if (e.statusAfter === 'completed') return `PMO Override: ${stage} overridden and completed`;
+  if (e.statusAfter === 'pending_a3') return `PMO Override: ${stage} overridden and sent to A3`;
+  if (e.statusAfter === 'pending_a2') return `PMO Override: ${stage} overridden and sent to A2`;
+  return e.action;
+}
 function computeApprovalTimelineEvents(memo) {
   const events = [];
+  const pmoStageLabel = i => i === 0 ? 'Reviewer' : `A${i + 1}`;
   if (memo.createdAt) events.push({ at: memo.createdAt, label: 'สร้าง Memo (Draft)', actor: histRequesterName(memo), kind: 'create' });
   if (memo.submittedAt && memo.submittedAt !== memo.createdAt) {
     events.push({ at: memo.submittedAt, label: 'ส่งขออนุมัติ (Submitted)', actor: histRequesterName(memo), kind: 'submit' });
@@ -299,7 +309,7 @@ function computeApprovalTimelineEvents(memo) {
     } else if (a.status === 'bypassed' && a.approvedAt) {
       events.push({ at: a.approvedAt, label: `${roleLabel} ข้ามการตรวจสอบ (Self Review)`, actor: a.name, kind: 'approve' });
     } else if (a.status === 'overridden' && a.overriddenAt) {
-      events.push({ at: a.overriddenAt, label: `${roleLabel} — PMO Override`, actor: a.overriddenBy, comment: a.overrideNote, kind: 'audit' });
+      events.push({ at: a.overriddenAt, label: `${pmoStageLabel(i)} stage overridden by PMO`, actor: a.overriddenBy, comment: a.overrideNote, kind: 'audit' });
     } else if (a.status === 'rejected' && a.rejectedAt) {
       events.push({ at: a.rejectedAt, label: `${roleLabel} ปฏิเสธ (Rejected)`, actor: a.rejectedBy, kind: 'reject' });
     }
@@ -308,7 +318,7 @@ function computeApprovalTimelineEvents(memo) {
     if (step.doneAt) events.push({ at: step.doneAt, label: `${step.role} อนุมัติ`, actor: step.name, kind: 'approve' });
   });
   (memo.auditLog || []).forEach(e => {
-    events.push({ at: e.timestamp, label: e.action, actor: e.actor, comment: e.comment, kind: 'audit' });
+    events.push({ at: e.timestamp, label: histPmoAuditLabel(e), actor: e.actor, comment: e.comment, kind: 'audit' });
   });
   // De-duplicate: the same transition is often captured both as a structured
   // field above (for a friendlier label) and as a generic auditLog entry.
@@ -356,6 +366,13 @@ function buildApprovalTimelinePdfHtml(memo) {
 function buildApprovalInfoRows(memo) {
   const rows = [];
   const requester = histRequesterName(memo);
+  const pmoOverrideReason = memo.pmoOverrideNote
+    || (memo.approvers || []).find(a => a?.status === 'overridden' && a.overrideNote)?.overrideNote
+    || [...(memo.auditLog || [])].reverse().find(e => String(e.action || '').startsWith('PMO Override') && e.comment)?.comment
+    || '';
+  const pmoOverrideEvidence = memo.pmoEvidenceUrl
+    || [...(memo.auditLog || [])].reverse().find(e => String(e.action || '').startsWith('PMO Override') && e.evidenceUrl)?.evidenceUrl
+    || '';
   if (requester && requester !== '—') rows.push(['ผู้ขอ (Requester)', requester]);
 
   (memo.approvers || []).forEach((a, i) => {
@@ -371,7 +388,8 @@ function buildApprovalInfoRows(memo) {
     rows.push([roleLabel, `${a.name}${a.title ? ' ('+a.title+')' : ''} — ${statusText}${atText ? ' · ' + atText : ''}`]);
 
     if (a.status === 'overridden') {
-      rows.push([`PMO Override — ${roleLabel}`, `โดย ${a.overriddenBy || '—'}${a.overrideNote ? ' · เหตุผล: ' + a.overrideNote : ''}`]);
+      const stageLabel = i === 0 ? 'Reviewer' : `A${i + 1}`;
+      rows.push([`${stageLabel} stage overridden by PMO`, `โดย ${a.overriddenBy || '—'}${a.overrideNote ? ' · เหตุผล: ' + a.overrideNote : ''}`]);
     }
     if (a.status === 'bypassed') {
       rows.push([`Self Review — ${roleLabel}`, `${a.name} เป็นผู้ขอเอง จึงข้ามขั้นตอนการตรวจสอบของตนเอง`]);
@@ -382,9 +400,10 @@ function buildApprovalInfoRows(memo) {
   if (memo.status === 'completed' && memo.approvedAt) rows.push(['วันที่อนุมัติสมบูรณ์ (Approved)', formatDateTime(memo.approvedAt)]);
 
   if (memo.status === 'rejected') {
-    rows.push(['เหตุผลที่ปฏิเสธ (Rejected Reason)', memo.rejectionReason || '—']);
+    rows.push(['เหตุผลที่ปฏิเสธ (Rejected Reason)', memo.rejectionReason || pmoOverrideReason || '—']);
     rows.push(['ปฏิเสธโดย / วันที่', `${memo.rejectedBy || '—'} · ${memo.rejectedAt ? formatDateTime(memo.rejectedAt) : '—'}`]);
   }
+  if (pmoOverrideEvidence) rows.push(['หลักฐาน PMO Override (Evidence)', 'แนบไฟล์แล้ว']);
   if (memo.status === 'cancelled') {
     rows.push(['เหตุผลที่ยกเลิก (Cancelled Reason)', memo.cancellationReason || '—']);
     rows.push(['ยกเลิกโดย / วันที่', `${memo.cancelledBy || '—'} · ${memo.cancelledAt ? formatDateTime(memo.cancelledAt) : '—'}`]);
@@ -525,9 +544,11 @@ function _buildMemoDetailContent(memo, mode) {
               white-space:nowrap;min-width:90px">${esc(shortDate(e.timestamp))}</div>
             <div style="font-size:12px;color:var(--text-2,var(--color-text-secondary))">
               <span style="font-weight:500;color:var(--text-1,var(--color-text-primary))">${esc(e.actor)}</span>
-              — ${esc(e.action)}
+              — ${esc(histPmoAuditLabel(e))}
               ${e.comment ? `<div style="font-size:11px;color:var(--text-3,var(--color-text-tertiary));
                 margin-top:2px">${esc(e.comment)}</div>` : ''}
+              ${e.evidenceUrl ? `<div style="font-size:11px;color:var(--text-3,var(--color-text-tertiary));
+                margin-top:2px">Evidence attached</div>` : ''}
             </div>
           </div>`).join('')
       : `<div style="font-size:12px;color:var(--text-3,var(--color-text-tertiary));
