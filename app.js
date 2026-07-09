@@ -1355,11 +1355,11 @@ function memoToDb(m) {
     type: m.type, type_label: m.typeLabel,
     status: m.status || 'pending',
     project: m.project, subject: m.subject, reason: m.reason,
-    to: m.to, date: m.date, total: Number(m.total)||0,
+    to: m.to, date: memoDbDate(m.date), total: Number(m.total)||0,
     amount_words: m.amountWords,
     requester_name: m.requesterName, requester_title: m.requesterTitle,
-    reviewer_name: m.reviewerName, reviewer_title: m.reviewerTitle, reviewer_date: m.reviewerDate,
-    approver_name: m.approverName, approver_title: m.approverTitle, approver_date: m.approverDate,
+    reviewer_name: m.reviewerName, reviewer_title: m.reviewerTitle, reviewer_date: memoDbDate(m.reviewerDate),
+    approver_name: m.approverName, approver_title: m.approverTitle, approver_date: memoDbDate(m.approverDate),
     approved_by: m.approvedBy, rejected_by: m.rejectedBy,
     approval_note: m.approvalNote, rejection_reason: m.rejectionReason,
     fx_rate: m.fxRate || null,
@@ -1575,6 +1575,29 @@ function dateInput(v) {
   const d = new Date(v + 'T00:00:00');
   return Number.isNaN(d.getTime()) ? v : thaiDate(d);
 }
+function memoDbDate(v) {
+  if(!v || v === '-') return null;
+  const text = String(v).trim();
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(iso) {
+    const year = Number(iso[1]);
+    return `${String(year > 2400 ? year - 543 : year).padStart(4,'0')}-${iso[2]}-${iso[3]}`;
+  }
+  const parts = text.split(/\s+/);
+  const yearMatch = text.match(/(\d{4})(?!.*\d{4})/);
+  if(parts.length >= 3 && yearMatch) {
+    const day = Number(parts[0]);
+    const month = MONTHS_TH.indexOf(parts[1]) + 1;
+    const year = Number(yearMatch[1]);
+    if(day > 0 && month > 0 && Number.isFinite(year)) {
+      const gregorianYear = year > 2400 ? year - 543 : year;
+      return `${String(gregorianYear).padStart(4,'0')}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    }
+  }
+  const parsed = new Date(text);
+  if(!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  return null;
+}
 function badgeClass(type) {
   return { sl:'badge-blue', hw:'badge-gray', int:'badge-green', ent:'badge-amber', dep:'badge-purple' }[type] || 'badge-gray';
 }
@@ -1704,19 +1727,19 @@ function memoToDb(m) {
     dep_items: m.depItems || [],
     // INT fields
     int_activity:  m.intActivity  || null,
-    int_date:      m.intDate      || null,
+    int_date:      memoDbDate(m.intDate),
     int_headcount: m.intHeadcount || null,
     int_pp:        m.intPP        || null,
     // ENT fields
     ent_client: m.entClient || null,
-    ent_date:   m.entDate   || null,
+    ent_date:   memoDbDate(m.entDate),
     ent_time:   m.entTime   || null,
     ent_place:  m.entPlace  || null,
     ent_people: m.entPeople || null,
     // DEP fields
     dep_location:  m.depLocation  || null,
-    dep_start:     m.depStart     || null,
-    dep_end:       m.depEnd       || null,
+    dep_start:     memoDbDate(m.depStart),
+    dep_end:       memoDbDate(m.depEnd),
     dep_emp_count: m.depEmpCount  || null,
     pmo_evidence_url:      m.pmoEvidenceUrl      || null,
     approval_evidence_url: m.approvalEvidenceUrl || null,
