@@ -300,6 +300,10 @@ function openApproveModal(memoNo, bulk) {
   const isBulk = Array.isArray(bulk) && bulk.length > 0;
   const targets = isBulk ? bulk : [memoNo];
   const memo = !isBulk ? loadMemos().find(m=>m.memoNo===memoNo) : null;
+  if (!isBulk && (!memo || !canCurrentUserActOnMemo(memo))) {
+    alert('คุณไม่มีสิทธิ์อนุมัติ Memo นี้');
+    return;
+  }
   const el = id => document.getElementById(id);
   if(isBulk) {
     el('approve-memo-no').textContent  = `${bulk.length} รายการ (${bulk.join(', ')})`;
@@ -435,6 +439,10 @@ function openRejectModal(memoNo, bulk) {
   const isBulk = Array.isArray(bulk) && bulk.length > 0;
   const targets = isBulk ? bulk : [memoNo];
   const memo = !isBulk ? loadMemos().find(m=>m.memoNo===memoNo) : null;
+  if (!isBulk && (!memo || !canCurrentUserActOnMemo(memo))) {
+    alert('คุณไม่มีสิทธิ์ Reject Memo นี้');
+    return;
+  }
   document.getElementById('reject-memo-no').textContent  = isBulk ? `${bulk.length} รายการ` : (memo?.memoNo || memoNo);
   document.getElementById('reject-reason-select').value  = '';
   document.getElementById('reject-comment').value        = '';
@@ -496,6 +504,10 @@ function confirmReject() {
 function openDetailModal(memoNo) {
   const memo = loadMemos().find(m=>m.memoNo===memoNo);
   if(!memo) return;
+  if (typeof canCurrentUserViewPendingMemo === 'function' && !canCurrentUserViewPendingMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์ดู Memo นี้');
+    return;
+  }
 
   // Use shared builder from history.js (already in global scope)
   if (typeof _buildMemoDetailContent === 'function') {
@@ -569,6 +581,10 @@ function pmoOverrideCurrentStageInfo(memo) {
 function openPmoOverrideModal(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
   if (!memo) return;
+  if (typeof isPMO === 'function' && !isPMO()) {
+    alert('เฉพาะ PMO เท่านั้นที่ใช้ PMO Override ได้');
+    return;
+  }
   const stageInfo = pmoOverrideCurrentStageInfo(memo);
   const currentStatusLabel = typeof histStatusLabel === 'function' ? histStatusLabel(memo) : (memo.status || 'Pending');
   const currentApprover = stageInfo.approver
@@ -780,6 +796,10 @@ function confirmPmoOverride(memoNo) {
 function openPmoEditApproversModal(memoNo) {
   const memo      = loadMemos().find(m => m.memoNo === memoNo);
   if (!memo) return;
+  if (typeof isPMO === 'function' && !isPMO()) {
+    alert('เฉพาะ PMO เท่านั้นที่แก้ไข Approvers ได้');
+    return;
+  }
   const approvers = memo.approvers || [];
   const profiles  = typeof getApprovers === 'function' ? getApprovers() : [];
 
@@ -865,6 +885,10 @@ function addApproverRow() {
 function confirmPmoEditApprovers(memoNo) {
   const note = document.getElementById('pmo-appr-note')?.value.trim();
   if (!note) { alert('กรุณาระบุเหตุผลที่แก้ไข'); return; }
+  if (typeof isPMO === 'function' && !isPMO()) {
+    alert('เฉพาะ PMO เท่านั้นที่แก้ไข Approvers ได้');
+    return;
+  }
 
   const rows      = document.querySelectorAll('#approver-rows .approver-edit-row');
   const memo      = loadMemos().find(m => m.memoNo === memoNo);

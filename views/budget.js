@@ -2337,7 +2337,9 @@ function showActualSpendRecord(id) {
 function showActualMemos(proj, type, memoNosStr) {
   const memoNos  = memoNosStr ? memoNosStr.split(',').filter(Boolean) : [];
   const allMemos = loadMemos();
-  const memos    = memoNos.map(no => allMemos.find(m => m.memoNo === no)).filter(Boolean);
+  const memos    = memoNos
+    .map(no => allMemos.find(m => m.memoNo === no))
+    .filter(m => m && (typeof canCurrentUserViewMemo === 'function' ? canCurrentUserViewMemo(m) : true));
   const total    = memos.reduce((s, m) => s + (Number(m.total) || 0), 0);
   document.getElementById('actual-memo-panel')?.remove();
   const panel = document.createElement('div');

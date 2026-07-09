@@ -1144,8 +1144,11 @@ function computeLicUserMappingData(memos, reviewState, parseAcctFn, manualRows) 
 }
 
 function _renderLicReviewQueueHtml(queueItems) {
-  if (!queueItems || !queueItems.length) return '';
-  const rows = queueItems.map(({ memo, acct }) => `<tr>
+  const visibleQueueItems = (queueItems || []).filter(({ memo }) =>
+    typeof canCurrentUserViewMemo === 'function' ? canCurrentUserViewMemo(memo) : true
+  );
+  if (!visibleQueueItems.length) return '';
+  const rows = visibleQueueItems.map(({ memo, acct }) => `<tr>
       <td style="padding-left:14px;font-weight:600;color:var(--blue);cursor:pointer" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${esc(memo.memoNo)}')">${esc(memo.memoNo)}</td>
       <td style="font-size:12px">${esc(memo.project || '—')}</td>
       <td style="text-align:center">${acct.rows.length}</td>

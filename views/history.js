@@ -98,10 +98,6 @@ function histMatchesAmount(memo, preset, minVal, maxVal) {
 // ── All-memo tab state ──
 let _histTab = 'all';
 
-function isPendingFamilyMemo(memo) {
-  return !memo?.status || memo.status === 'pending' || memo.status === 'pending_a2' || memo.status === 'pending_a3';
-}
-
 function ensureHistoryPendingFilterRemoved() {
   document.querySelectorAll('.hist-tab-btn[data-status="pending"]').forEach(btn => btn.remove());
   document.querySelectorAll('#hist-status option[value="pending"], #hist-status option[value="pending_a1"], #hist-status option[value="pending_a2"], #hist-status option[value="pending_a3"]').forEach(opt => opt.remove());
@@ -131,7 +127,11 @@ function switchHistTab(status, btn) {
 
 // ── Filter / sort (all statuses now) ──
 function getHistoryMemos() {
-  return loadMemos().filter(memo => !isPendingFamilyMemo(memo));
+  return loadMemos().filter(memo =>
+    typeof canCurrentUserViewMemoHistory === 'function'
+      ? canCurrentUserViewMemoHistory(memo)
+      : !isPendingFamilyMemo(memo)
+  );
 }
 
 function populateHistTabCounts() {
@@ -805,6 +805,10 @@ function _cleanSectionTable(html) {
 function openHistoryDetail(memoNo) {
   const memo = getHistoryMemos().find(m => m.memoNo === memoNo) || loadMemos().find(m => m.memoNo === memoNo);
   if (!memo) { alert('ไม่พบ Memo'); return; }
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์ดู Memo นี้');
+    return;
+  }
 
   document.getElementById('detail-content').innerHTML = _buildMemoDetailContent(memo, 'full');
 
@@ -943,6 +947,10 @@ async function confirmVoidMemo(memoNo) {
 function openMemoReadOnly(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo) || getHistoryMemos().find(m => m.memoNo === memoNo);
   if (!memo) { alert('ไม่พบ Memo'); return; }
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์ดู Memo นี้');
+    return;
+  }
   document.getElementById('detail-content').innerHTML = _buildMemoDetailContent(memo, 'readonly');
   const acts = document.getElementById('detail-actions');
   // Read-only tabs: no approve/reject/tag-budget/duplicate, but the Device
@@ -1114,6 +1122,10 @@ function renderHistoryMemos() {
 function editDraft(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
   if (!memo || memo.status !== 'draft') return;
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์แก้ไข Draft นี้');
+    return;
+  }
   try { localStorage.setItem('orbit-pmo-edit-draft', JSON.stringify(memo)); } catch(e) {}
   swView('create', document.querySelector('.sb-sub-item[onclick*="create"]'), 'Create Memo');
   setTimeout(() => { if (typeof applyDraftEdit === 'function') applyDraftEdit(); }, 100);
@@ -1124,6 +1136,10 @@ function editDraft(memoNo) {
 async function deleteDraft(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
   if (!memo || memo.status !== 'draft') return; // only Draft is user-deletable
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์ลบ Draft นี้');
+    return;
+  }
   if (!confirm(`ลบ Draft "${memoNo}" ออกจากระบบ?`)) return;
 
   const now = new Date().toISOString();
@@ -1171,6 +1187,10 @@ function _auditMemoDuplicated(memoNo, action) {
 function duplicateMemo(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
   if (!memo) return;
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์ดู Memo นี้');
+    return;
+  }
   const isRequester = typeof isMemoRequester === 'function' && isMemoRequester(memo);
   const isPmoUser = typeof isPMO === 'function' && isPMO();
   if (!isRequester && !isPmoUser) {
@@ -1189,6 +1209,10 @@ function duplicateMemo(memoNo) {
 function reeditRejectedMemo(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
   if (!memo || memo.status !== 'rejected') return;
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์ดู Memo นี้');
+    return;
+  }
   if (!confirm(`เปิด Memo "${memoNo}" เพื่อ Re-edit เป็น Draft ใหม่?\nMemo ที่ถูก Reject จะยังคงอยู่ใน History`)) return;
   try {
     localStorage.setItem('orbit-pmo-edit-draft', JSON.stringify(draftFromMemo(memo, memoNo)));

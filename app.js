@@ -1214,14 +1214,33 @@ function memoCurrentApprover(memo) {
 function isMemoRequester(memo) {
   return profileMatches(memo?.requesterProfileId, memo?.requesterName);
 }
+function isMemoApproverInRoute(memo) {
+  if (!memo) return false;
+  if ((memo.approvers || []).some(a => profileMatches(a.profileId, a.name))) return true;
+  return profileMatches(null, memo.reviewerName) || profileMatches(null, memo.approverName);
+}
+function isPendingFamilyMemo(memo) {
+  return !memo?.status || memo.status === 'pending' || memo.status === 'pending_a2' || memo.status === 'pending_a3';
+}
+function canCurrentUserViewMemo(memo) {
+  if (!memo) return false;
+  return isPMO() || isMemoRequester(memo) || isMemoApproverInRoute(memo);
+}
+function canCurrentUserViewPendingMemo(memo) {
+  if (!isPendingFamilyMemo(memo)) return false;
+  return isPMO() || isMemoRequester(memo) || isMemoCurrentApprover(memo);
+}
+function canCurrentUserViewMemoHistory(memo) {
+  if (isPendingFamilyMemo(memo)) return false;
+  return canCurrentUserViewMemo(memo);
+}
 function isMemoCurrentApprover(memo) {
   const approver = memoCurrentApprover(memo);
   if (!approver) return false;
   return profileMatches(approver.profileId, approver.name);
 }
 function isMemoVisibleInPending(memo) {
-  if (!memo || !['pending','pending_a2','pending_a3'].includes(memo.status)) return false;
-  return isPMO() || isMemoRequester(memo) || isMemoCurrentApprover(memo);
+  return canCurrentUserViewPendingMemo(memo);
 }
 function canCurrentUserActOnMemo(memo) {
   if (!memo || !['pending','pending_a2','pending_a3'].includes(memo.status)) return false;
@@ -3369,6 +3388,10 @@ function _normalisePdfData(data) {
 }
 
 async function downloadMemoPdf(data) {
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(data)) {
+    alert('คุณไม่มีสิทธิ์ดาวน์โหลด Memo นี้');
+    return;
+  }
   // ── Ensure sections are populated before PDF render ──────────────
   data = _normalisePdfData(data);
 
