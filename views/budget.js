@@ -555,12 +555,13 @@ function filteredActualSpendRecords(records = loadActualSpendRecords()) {
   const source = document.getElementById('as-source')?.value || 'all';
   const budgetStatus = msValues('as-budget-status');
   const year = document.getElementById('as-year')?.value || '';
-  const sourceMap = { memo:ACTUAL_SPEND_SOURCES.APPROVED_MEMO, manual:ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE, infra:ACTUAL_SPEND_SOURCES.INFRA_COST };
+  const sourceMap = { memo:ACTUAL_SPEND_SOURCES.APPROVED_MEMO };
   const spendTypes = type.map(spendTypeFromMemoType);
   return queryActualSpend({
-    source: source === 'all' ? '' : sourceMap[source],
+    source: source === 'all' || source === 'manual' ? '' : sourceMap[source],
   }, records).filter(record =>
     (!project.length || project.includes(record.project)) &&
+    (source !== 'manual' || record.source !== ACTUAL_SPEND_SOURCES.APPROVED_MEMO) &&
     (!spendTypes.length || spendTypes.includes(record.spendType)) &&
     (!budgetStatus.length || budgetStatus.includes(record.budgetStatus)) &&
     actualSpendRecordInRange(record, from, to) && (!year || actualSpendRecordInYear(record, year))
@@ -1340,6 +1341,11 @@ function showForecastCellBreakdown(rowIndex, monthKey) {
   const displayedAmount = Number(row.values[monthKey]) || 0;
   const total = contributors.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   if (Math.abs(displayedAmount - total) >= 0.01) return;
+  const contributorRecordIds = [...new Set(contributors.map(item => item.parentRecordId).filter(Boolean))];
+  if (contributorRecordIds.length === 1) {
+    showActualSpendRecord(contributorRecordIds[0]);
+    return;
+  }
   document.getElementById('forecast-cell-breakdown-panel')?.remove();
   const [year, monthNo] = monthKey.split('-').map(Number);
   const monthLabel = new Date(year, monthNo - 1, 1).toLocaleString('th-TH', { month:'long', year:'numeric' });
@@ -1867,13 +1873,14 @@ function openManualExpenseModal(editId = null) {
 
   const modal = document.createElement('div');
   modal.id = 'manual-expense-modal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:400;display:flex;align-items:center;justify-content:center';
+  modal.className = 'txn-modal-backdrop';
+  modal.style.zIndex = '400';
   modal.innerHTML = `
-    <div class="card" style="width:680px;max-width:96vw;max-height:92vh;overflow-y:auto;padding:22px">
+    <div class="card txn-modal-card txn-modal-card--form">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <div>
-          <div style="font-size:15px;font-weight:700">${expense ? 'Edit' : 'Add'} Manual Actual Spend</div>
-          <div style="font-size:11px;color:var(--text-3)">ใช้สำหรับ Memo หรือค่าใช้จ่ายก่อนเริ่มใช้งานระบบ</div>
+          <div class="txn-title">${expense ? 'Edit' : 'Add'} Manual Actual Spend</div>
+          <div class="txn-form-subtitle">บันทึกรายการ Actual Spend ที่เพิ่มเองสำหรับทุก Spend Type</div>
         </div>
         <button class="btn-sm" onclick="document.getElementById('manual-expense-modal').remove()">✕</button>
       </div>
@@ -1902,7 +1909,7 @@ function openManualExpenseModal(editId = null) {
           </select>
         </div>
         <div class="fg"><label>Description *</label>
-          <input id="me-description" class="ri" value="${esc(g('description'))}" placeholder="ชื่อ Software / อุปกรณ์ / รายการ">
+          <input id="me-description" class="ri" value="${esc(g('description'))}" placeholder="Transaction description">
         </div>
         <div class="fg"><label>Frequency *</label>
           <select id="me-frequency" class="ri" onchange="toggleManualExpenseSchedule()">
@@ -1923,7 +1930,7 @@ function openManualExpenseModal(editId = null) {
           <input id="me-amount-input" class="ri" type="number" min="0.01" step="0.01" value="${g('amount',0)}" oninput="manualExpenseRecalculate()">
         </div>
         <div class="fg"><label>Vendor / Program</label>
-          <input id="me-vendor-program" class="ri" value="${esc(g('vendorProgram'))}" placeholder="Vendor or program name">
+          <input id="me-vendor-program" class="ri" value="${esc(g('vendorProgram'))}" placeholder="Vendor, program, or related party">
         </div>
       </div>
       <div id="me-monthly-preview" style="display:none;margin-top:10px;padding:10px 12px;background:var(--blue-50);border-radius:var(--r-sm)">
@@ -2131,60 +2138,275 @@ function renderManualEntries() {
   container.innerHTML = `<div class="card" style="padding:0;overflow:auto"><table class="hist-table"><thead><tr><th style="width:10%">Reference No</th><th style="width:9%">Project</th><th style="width:8%">Spend Type</th><th style="width:20%">Description</th><th style="width:9%;text-align:right">Amount</th><th style="width:11%">Expense / Coverage Date</th><th style="width:9%">Budget Status</th><th style="width:24%;text-align:center">Actions</th></tr></thead><tbody>${rows.map(({ expense, record, referenceNo, schedule }) => `<tr><td style="font-weight:600">${esc(referenceNo)}</td><td>${esc(expense.project)}</td><td>${esc(record.spendType)}</td><td class="hist-cell-clip" title="${esc(expense.description)}">${esc(expense.description)}</td><td style="text-align:right;font-weight:600">${money(record.amount)}</td><td>${esc(schedule)}</td><td>${esc(record.budgetStatus)}</td><td style="text-align:center;white-space:nowrap"><button class="btn-sm" onclick="showManualEntryDetail('${esc(expense.id)}')">View Detail</button>${isPMO() ? ` <button class="btn-sm" onclick="openManualExpenseModal('${esc(expense.id)}')">Edit</button> <button class="btn-sm" style="color:var(--red)" onclick="voidManualExpense('${esc(expense.id)}')">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
-// Follows the same header (reference + subject + badges) / grouped-section style as the All Memo
-// "Memo Detail" modal (views/history.js _buildMemoDetailContent), minus an approval log — Actual
-// Spend and Manual Entry records have no approval workflow of their own. `fields` keeps the exact
-// same flat [label, value] list every caller already passed before this layout change, so every
-// existing field is still rendered; this only changes how it is grouped and styled, not the data.
-function showActualSpendDetailModal(title, fields, helper = '', details = '') {
+function canonicalActualSpendSourceLabel(source) {
+  return source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO ? 'Memo' : 'Manual Entry';
+}
+
+function canonicalActualSpendSourceKey(source) {
+  return source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO ? 'memo' : 'manual';
+}
+
+function canonicalActualSpendSourceBadgeClass(source) {
+  return source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO ? 'badge-blue' : 'badge-amber';
+}
+
+function canonicalDetailValue(value, format = value => value) {
+  if (value == null || value === '') return '-';
+  return format(value);
+}
+
+function canonicalCoverage(start, end) {
+  const startValue = canonicalDetailValue(start);
+  const endValue = canonicalDetailValue(end);
+  return startValue === '-' && endValue === '-' ? '-' : `${startValue} → ${endValue}`;
+}
+
+function canonicalTransactionMemo(record) {
+  if (record.source !== ACTUAL_SPEND_SOURCES.APPROVED_MEMO) return null;
+  const ref = record.memoId || record.referenceNo;
+  return loadMemos().find(memo => memo.memoNo === ref || memo.id === ref) || null;
+}
+
+function canonicalTransactionRecordFromMemo(memo) {
+  const existing = loadActualSpendRecords().find(record => record.memoId === memo.memoNo || record.referenceNo === memo.memoNo);
+  if (existing) return existing;
+  const spendType = spendTypeFromMemoType(memo.type);
+  const slItems = Array.isArray(memo.slItems) ? memo.slItems : [];
+  const slStarts = slItems.map(item => item.startMonth).filter(Boolean).sort();
+  const slEnds = slItems.map(item => item.endMonth).filter(Boolean).sort();
+  const startDate = spendType === SPEND_TYPES.SOFTWARE ? slStarts[0] || memo.date || '' : memo.intDate || memo.entDate || memo.depStart || memo.date || '';
+  const endDate = spendType === SPEND_TYPES.SOFTWARE ? slEnds[slEnds.length - 1] || startDate : memo.depEnd || startDate;
+  return createActualSpendRecord({
+    id: `actual-spend-memo-display-${memo.memoNo}`,
+    source: ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    memoId: memo.memoNo,
+    referenceNo: memo.memoNo,
+    project: memo.project || '',
+    spendType,
+    amount: Number(memo.total) || 0,
+    startDate,
+    endDate,
+    description: memo.subject || memo.reason || memo.memoNo,
+    detailLines: memo.type === 'sl' && slItems.length && typeof softwareMemoDetailLines === 'function'
+      ? softwareMemoDetailLines(slItems)
+      : [],
+  });
+}
+
+function openCanonicalTransactionDetailForMemo(memoNo, options = {}) {
+  const memo = loadMemos().find(item => item.memoNo === memoNo) ||
+    (typeof getHistoryMemos === 'function' ? getHistoryMemos().find(item => item.memoNo === memoNo) : null);
+  if (!memo) {
+    if (typeof openMemoReadOnly === 'function') openMemoReadOnly(memoNo, options);
+    return;
+  }
+  showCanonicalTransactionDetail(canonicalTransactionRecordFromMemo(memo), {
+    title: options.title || 'Transaction Detail',
+  });
+}
+
+function manualExpenseForRecord(record) {
+  const id = String(record?.id || '').startsWith('actual-spend-manual-')
+    ? String(record.id).slice('actual-spend-manual-'.length)
+    : '';
+  return id ? activeManualExpenses().find(expense => expense.id === id) || null : null;
+}
+
+function canonicalFieldGrid(fields) {
+  return `<div class="txn-field-grid">
+    ${fields.map(([label, value, format]) => `<div>
+      <span class="txn-field-label">${esc(label)}</span>
+      <span class="txn-field-value">${esc(canonicalDetailValue(value, format))}</span>
+    </div>`).join('')}
+  </div>`;
+}
+
+function renderLinkedSpendTypeItems(record) {
+  const linkedItems = Array.isArray(record.linkedItems) ? record.linkedItems.filter(Boolean) : [];
+  if (!linkedItems.length) return '';
+  const software = record.spendType === SPEND_TYPES.SOFTWARE;
+  const hardware = record.spendType === SPEND_TYPES.HARDWARE;
+  const headers = hardware
+    ? ['Device', 'Model', 'Serial No.', 'Quantity', 'Amount']
+    : software
+      ? ['License', 'Plan', 'Quantity', 'Start Date', 'End Date', 'Amount']
+      : ['Item', 'Description', 'Quantity', 'Amount'];
+  const cells = item => hardware
+    ? [item.deviceName || item.name, item.model, item.serialNumber, item.quantity, money(Number(item.amount) || 0)]
+    : software
+      ? [item.licenseName || item.name, item.plan, item.quantity, item.startDate, item.endDate, money(Number(item.amount) || 0)]
+      : [item.name || item.item, item.description, item.quantity, money(Number(item.amount) || 0)];
+  return `<div class="txn-section">
+    <div class="txn-section-title">Linked Items</div>
+    <div class="txn-table-wrap">
+      <table class="hist-table hist-table--ellipsis">
+        <thead><tr>${headers.map(header => `<th>${esc(header)}</th>`).join('')}</tr></thead>
+        <tbody>${linkedItems.map(item => `<tr>${cells(item).map(value => `<td>${esc(canonicalDetailValue(value))}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function manualEntryDetailFields(record) {
+  const expense = manualExpenseForRecord(record);
+  const expenseDate = expense?.expenseDate || (record.startDate && record.startDate === record.endDate ? record.startDate : '');
+  const coverage = canonicalCoverage(record.startDate, record.endDate);
+  const frequency = expense ? (expense.frequency === 'monthly' ? 'Monthly' : 'One-time') : '';
+  const vendorProgram = record.vendorProgram || expense?.vendorProgram || '';
+  const notes = record.notes || expense?.notes || '';
+  const description = record.description || expense?.description || '';
+  const amount = Number(record.amount) || 0;
+  if (record.spendType === SPEND_TYPES.TEAM_ACTIVITY) {
+    return [
+      ['Activity / Description', description],
+      ['Activity Date / Expense Date', expenseDate || record.startDate],
+      ['Amount', amount, money],
+      ['Vendor / Program', vendorProgram],
+      ['Notes', notes],
+    ];
+  }
+  if (record.spendType === SPEND_TYPES.CLIENT_EXPENSE) {
+    return [
+      ['Expense Description', description],
+      ['Expense Date', expenseDate || record.startDate],
+      ['Amount', amount, money],
+      ['Vendor / Program', vendorProgram],
+      ['Notes', notes],
+    ];
+  }
+  if (record.spendType === SPEND_TYPES.HARDWARE) {
+    return [
+      ['Item / Description', description],
+      ['Purchase Date / Expense Date', expenseDate || record.startDate],
+      ['Amount', amount, money],
+      ['Vendor', vendorProgram],
+      ['Notes', notes],
+    ];
+  }
+  if (record.spendType === SPEND_TYPES.SOFTWARE) {
+    return [
+      ['Software / Description', description],
+      ['Expense Date', expenseDate || record.startDate],
+      ['Amount', amount, money],
+      ['Vendor / Program', vendorProgram],
+      ['Frequency', frequency],
+      ['Coverage', coverage],
+      ['Notes', notes],
+    ];
+  }
+  const label = record.spendType === SPEND_TYPES.INFRA ? 'Infra Description'
+    : record.spendType === SPEND_TYPES.DEPLOYMENT ? 'Deployment Description'
+      : 'Description';
+  return [
+    [label, description],
+    ['Expense Date', expenseDate || record.startDate],
+    ['Amount', amount, money],
+    ['Vendor / Program', vendorProgram],
+    ['Coverage', coverage],
+    ['Notes', notes],
+  ];
+}
+
+function renderManualEntrySpendTypeDetail(record) {
+  return `<div class="txn-section">
+    <div class="txn-section-title">${esc(record.spendType || 'Manual Entry')} Detail</div>
+    ${canonicalFieldGrid(manualEntryDetailFields(record))}
+  </div>`;
+}
+
+function renderMemoFallbackDetail(record) {
+  const lines = Array.isArray(record.detailLines) ? record.detailLines.filter(Boolean) : [];
+  if (record.spendType === SPEND_TYPES.SOFTWARE && lines.length) {
+    return `<div class="txn-section">
+      <div class="txn-section-title">รายการ Software</div>
+      <div class="txn-table-wrap">
+        <table class="hist-table hist-table--ellipsis" style="min-width:760px">
+          <thead><tr><th>#</th><th>Program</th><th>Plan</th><th class="hist-amt">Quantity</th><th class="hist-amt">Unit Cost</th><th>Coverage</th><th class="hist-amt">Amount</th></tr></thead>
+          <tbody>${lines.map((line, index) => `<tr>
+            <td>${index + 1}</td>
+            <td>${esc(canonicalDetailValue(line.program))}</td>
+            <td>${esc(canonicalDetailValue(line.plan))}</td>
+            <td class="hist-amt">${esc(canonicalDetailValue(line.quantity))}</td>
+            <td class="hist-amt">${esc(canonicalDetailValue(line.unitCost, money))}</td>
+            <td>${esc(canonicalCoverage(line.coverageStart || record.startDate, line.coverageEnd || record.endDate))}</td>
+            <td class="hist-amt" style="font-weight:600">${esc(canonicalDetailValue(Number(line.lineAmount) || Number(line.amount) || 0, money))}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }
+  return `<div class="txn-section">
+    <div class="txn-section-title">${esc(record.spendType || 'Memo')} Detail</div>
+    ${canonicalFieldGrid([
+      ['Description', record.description],
+      ['Amount', record.amount, money],
+      ['Coverage', canonicalCoverage(record.startDate, record.endDate)],
+      ['Program / Vendor', record.vendorProgram || record.program],
+    ])}
+  </div>`;
+}
+
+function renderMemoSpendTypeDetail(record) {
+  const memo = canonicalTransactionMemo(record);
+  if (memo && typeof _buildMemoTypeSection === 'function') {
+    const html = _buildMemoTypeSection(memo);
+    if (html) return `<div class="txn-section">${html}</div>`;
+  }
+  return renderMemoFallbackDetail(record);
+}
+
+function renderCanonicalDetailSection(record) {
+  const linkedHtml = renderLinkedSpendTypeItems(record);
+  if (linkedHtml) return linkedHtml;
+  if (record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO) return renderMemoSpendTypeDetail(record);
+  return renderManualEntrySpendTypeDetail(record);
+}
+
+function showCanonicalTransactionDetail(record, options = {}) {
   document.getElementById('actual-spend-record-detail')?.remove();
   const panel = document.createElement('div');
   panel.id = 'actual-spend-record-detail';
-  panel.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:310;display:flex;align-items:center;justify-content:center';
+  panel.className = 'txn-modal-backdrop';
+  const poolId = getFinalBudgetPoolId(record);
+  const pool = loadBudgetPools().find(item => item.id === poolId);
+  const expense = manualExpenseForRecord(record);
+  const expenseDate = expense?.expenseDate || (record.startDate && record.startDate === record.endDate ? record.startDate : '');
+  const summaryFields = [
+    ['Source', canonicalActualSpendSourceLabel(record.source)],
+    ['Reference No.', record.referenceNo || record.memoId],
+    ['Project', record.project],
+    ['Program', record.vendorProgram || record.program],
+    ...(record.plan ? [['Plan', record.plan]] : []),
+    ['Spend Type', record.spendType],
+    ['Amount', record.amount, money],
+    ...(expenseDate ? [['Expense Date', expenseDate]] : []),
+    ['Coverage Start', record.startDate],
+    ['Coverage End', record.endDate],
+    ['Budget Pool', pool?.name || pool?.poolName || poolId],
+  ];
+  const summaryHtml = canonicalFieldGrid(summaryFields);
+  const sourceLabel = canonicalActualSpendSourceLabel(record.source);
+  const status = record.budgetStatus || '';
+  const poolLabel = pool?.name || pool?.poolName || poolId || '-';
 
-  const byLabel = label => fields.find(([fieldLabel]) => fieldLabel === label)?.[1];
-  const reference = byLabel('Reference No');
-  const subject = byLabel('Description');
-  const project = byLabel('Project');
-  const source = byLabel('Source');
-  const status = byLabel('Budget Status');
-  const badges = [
-    source ? { label: actualSpendSourceShortLabel(source), className: actualSpendSourceBadgeClass(source) } : null,
-    status ? { label: status, className: actualSpendBudgetStatusBadgeClass(status) } : null,
-  ].filter(Boolean);
-  // Reference No / Description / Source / Budget Status move into the header above; Project is
-  // shown inline next to the badges. Everything else keeps its place below so no field is dropped,
-  // only re-positioned for readability. The lower section is split into named groups (Spend
-  // Details / Audit / Notes) separated by a thin rule instead of a filled grey box — a flat colour
-  // panel around every group read as visual noise rather than useful separation.
-  const headerLabels = ['Reference No', 'Description', 'Source', 'Budget Status', 'Project'];
-  const auditLabels = ['Created By', 'Created Date', 'Updated At', 'Creation Method'];
-  const notesValue = byLabel('Notes');
-  const spendFields = fields.filter(([label]) => !headerLabels.includes(label) && !auditLabels.includes(label) && label !== 'Notes');
-  const auditFields = fields.filter(([label]) => auditLabels.includes(label));
-  const field = ([label, fieldValue]) => `<div><div style="font-size:10px;color:var(--text-3);margin-bottom:3px">${esc(label)}</div><div style="overflow-wrap:anywhere">${esc(fieldValue == null || fieldValue === '' ? '—' : fieldValue)}</div></div>`;
-  const grid = list => `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px 20px">${list.map(field).join('')}</div>`;
-  const sectionLabel = text => `<div style="font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">${esc(text)}</div>`;
-  const divider = 'margin-top:18px;padding-top:14px;border-top:1px solid var(--border)';
-  const bodyHtml = [
-    spendFields.length ? `<div>${sectionLabel('Spend Details')}${grid(spendFields)}</div>` : '',
-    auditFields.length ? `<div style="${divider}">${sectionLabel('Audit')}${grid(auditFields)}</div>` : '',
-    notesValue !== undefined ? `<div style="${divider}">${sectionLabel('Notes')}<div style="overflow-wrap:anywhere;font-size:12px;line-height:1.5">${esc(notesValue == null || notesValue === '' ? '—' : notesValue)}</div></div>` : '',
-  ].filter(Boolean).join('');
-
-  panel.innerHTML = `<div class="card" style="width:720px;max-width:95vw;max-height:86vh;overflow:auto;padding:0">
-    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+  panel.innerHTML = `<div class="card txn-modal-card">
+    <div class="txn-modal-header">
       <div style="min-width:0">
-        <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">${esc(title)}</div>
-        ${reference ? `<div style="font-size:15px;font-weight:600;overflow-wrap:anywhere">${esc(reference)}</div>` : ''}
-        ${subject ? `<div style="font-size:12px;color:var(--text-2);margin-top:2px;overflow-wrap:anywhere">${esc(subject)}</div>` : ''}
-        ${badges.length || project ? `<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:6px">${badges.map(b => `<span class="badge ${b.className}">${esc(b.label)}</span>`).join('')}${project ? `<span style="font-size:11px;color:var(--text-2)">${esc(project)}</span>` : ''}</div>` : ''}
+        <div class="txn-title">${esc(options.title || 'Transaction Detail')}</div>
+        <div class="txn-description">${esc(record.description || record.referenceNo || '-')}</div>
+        <div class="txn-badge-row">
+          <span class="badge ${canonicalActualSpendSourceBadgeClass(record.source)}">${esc(sourceLabel)}</span>
+          ${status ? `<span class="badge ${actualSpendBudgetStatusBadgeClass(status)}">${esc(status)}</span>` : ''}
+          <span class="txn-muted">${esc(poolLabel)}</span>
+        </div>
       </div>
       <button class="btn-sm" onclick="document.getElementById('actual-spend-record-detail').remove()" style="flex-shrink:0">✕</button>
     </div>
-    ${helper ? `<div style="margin:12px 16px 0;padding:9px 11px;background:var(--blue-50);color:var(--blue);border-radius:var(--r-sm);font-size:11px">${esc(helper)}</div>` : ''}
-    <div style="padding:16px">${bodyHtml}</div>
-    ${details}
+    ${options.helper ? `<div class="txn-helper">${esc(options.helper)}</div>` : ''}
+    <div class="txn-modal-body">
+      ${summaryHtml}
+      ${renderCanonicalDetailSection(record)}
+    </div>
   </div>`;
   document.body.appendChild(panel);
   panel.addEventListener('click', event => { if (event.target === panel) panel.remove(); });
@@ -2194,13 +2416,10 @@ function showActualSpendDetailModal(title, fields, helper = '', details = '') {
 // `source` is displayed, so Approved Memo / Manual-Historical / Infra Cost are always visually
 // distinguished the same way. Does not change the stored source value, only its presentation.
 function actualSpendSourceShortLabel(source) {
-  return source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO ? 'Memo'
-    : source === ACTUAL_SPEND_SOURCES.INFRA_COST ? 'Infra' : 'Historical';
+  return canonicalActualSpendSourceLabel(source);
 }
 function actualSpendSourceBadgeClass(source) {
-  if (source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO) return 'badge-blue';
-  if (source === ACTUAL_SPEND_SOURCES.INFRA_COST) return 'badge-green';
-  return 'badge-amber';
+  return canonicalActualSpendSourceBadgeClass(source);
 }
 function actualSpendBudgetStatusBadgeClass(status) {
   if (status === BUDGET_STATUSES.MAPPED) return 'badge-green';
@@ -2257,15 +2476,8 @@ function manualExpenseAuditTimelineHtml(expense) {
 function showManualEntryDetail(id) {
   const expense = activeManualExpenses().find(item => item.id === id);
   if (!expense) return;
-  const { record, referenceNo, schedule, frequencyLabel, poolLabel } = manualEntryViewModel(expense);
-  showActualSpendDetailModal('Manual Entry Detail', [
-    ['Reference No', referenceNo], ['Project', expense.project], ['Spend Type', record.spendType],
-    ['Description', expense.description], ['Amount', money(record.amount)], ['Frequency', frequencyLabel],
-    ['Expense Date / Coverage', schedule], ['Vendor / Program', expense.vendorProgram || expense.program || expense.notes || '—'],
-    ['Budget Pool', poolLabel], ['Budget Status', record.budgetStatus], ['Created By', expense.createdBy || '—'],
-    ['Created Date', formatActualSpendDateTime(expense.createdAt)], ['Updated At', formatActualSpendDateTime(expense.updatedAt)],
-    ['Notes', expense.notes || '—'], ['Creation Method', expense.entryKind || '—'],
-  ], '', manualExpenseAuditTimelineHtml(expense));
+  const { record } = manualEntryViewModel(expense);
+  showCanonicalTransactionDetail(record, { title:'Manual Entry Detail' });
 }
 
 async function renderActualSpend() {
@@ -2327,18 +2539,19 @@ async function renderActualSpend() {
     return;
   }
 
-  const sourceTotal = source => calculateActualSpend(records, { source });
-  const memoTotal = sourceTotal(ACTUAL_SPEND_SOURCES.APPROVED_MEMO);
-  const manualTotal = sourceTotal(ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE);
-  const infraTotal = sourceTotal(ACTUAL_SPEND_SOURCES.INFRA_COST);
+  const memoRecords = records.filter(record => record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO);
+  const manualRecords = records.filter(record => record.source !== ACTUAL_SPEND_SOURCES.APPROVED_MEMO);
+  const memoTotal = calculateActualSpend(memoRecords);
+  const manualTotal = calculateActualSpend(manualRecords);
   const grandTotal = calculateActualSpend(records);
   const tdS = 'padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px';
   const byProject = {};
   records.forEach(record => {
     const project = record.project || '(ไม่ระบุ)';
-    const key = `${record.spendType}|${record.source}`;
+    const sourceKey = canonicalActualSpendSourceKey(record.source);
+    const key = `${record.spendType}|${sourceKey}`;
     if (!byProject[project]) byProject[project] = {};
-    if (!byProject[project][key]) byProject[project][key] = { spendType:record.spendType, source:record.source, amount:0, records:[] };
+    if (!byProject[project][key]) byProject[project][key] = { spendType:record.spendType, sourceKey, source:record.source, amount:0, records:[] };
     byProject[project][key].amount += Number(record.amount) || 0;
     byProject[project][key].records.push(record);
   });
@@ -2350,16 +2563,15 @@ async function renderActualSpend() {
   container.innerHTML = `
     <div style="margin:2px 0 14px;display:flex;gap:20px;align-items:center;flex-wrap:wrap;font-size:12px">
       <strong style="font-size:13px">Actual Spend ปี ${esc(selectedYear)}: <span style="color:var(--blue)">${money(Math.round(grandTotal))}</span></strong>
-      <span style="color:var(--text-3)"><strong style="color:var(--blue)">Memo</strong> ${money(Math.round(memoTotal))} · ${records.filter(r=>r.source===ACTUAL_SPEND_SOURCES.APPROVED_MEMO).length} รายการ</span>
-      <span style="color:var(--text-3)"><strong style="color:var(--amber)">Historical</strong> ${money(Math.round(manualTotal))} · ${records.filter(r=>r.source===ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE).length} รายการ</span>
-      <span style="color:var(--text-3)"><strong style="color:var(--green)">Infra</strong> ${money(Math.round(infraTotal))} · ${records.filter(r=>r.source===ACTUAL_SPEND_SOURCES.INFRA_COST).length} รายการ</span>
+      <span style="color:var(--text-3)"><strong style="color:var(--blue)">Memo</strong> ${money(Math.round(memoTotal))} · ${memoRecords.length} รายการ</span>
+      <span style="color:var(--text-3)"><strong style="color:var(--amber)">Manual Entry</strong> ${money(Math.round(manualTotal))} · ${manualRecords.length} รายการ</span>
     </div>
     ${Object.entries(byProject).sort((a,b) => Object.values(b[1]).reduce((s,v)=>s+v.amount,0) - Object.values(a[1]).reduce((s,v)=>s+v.amount,0)).map(([project, groups]) => {
       const projectTotal = Object.values(groups).reduce((sum, group) => sum + group.amount, 0);
       return `<div class="card" style="padding:0;overflow:auto;margin-bottom:10px">
         <div style="padding:10px 14px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;justify-content:space-between"><strong>${esc(project)}</strong><strong style="color:var(--blue)">${money(Math.round(projectTotal))}</strong></div>
         <table class="hist-table"><thead><tr><th>Type</th><th>Source</th><th style="text-align:right">Amount</th><th style="text-align:right">รายการ</th><th style="text-align:right">% ของ Project</th></tr></thead>
-        <tbody>${Object.values(groups).sort((a,b)=>b.amount-a.amount).map(group => `<tr style="cursor:pointer" onclick="showActualSpendGroup('${encodeURIComponent(project)}','${encodeURIComponent(group.spendType)}','${encodeURIComponent(group.source)}')">
+        <tbody>${Object.values(groups).sort((a,b)=>b.amount-a.amount).map(group => `<tr style="cursor:pointer" onclick="showActualSpendGroup('${encodeURIComponent(project)}','${encodeURIComponent(group.spendType)}','${encodeURIComponent(group.sourceKey)}')">
           <td style="${tdS}"><span style="padding:2px 8px;border-radius:4px;background:var(--bg)">${esc(group.spendType)}</span></td><td style="${tdS}"><span class="badge ${actualSpendSourceBadgeClass(group.source)}">${actualSpendSourceShortLabel(group.source)}</span></td>
           <td style="${tdS};text-align:right;font-weight:600">${money(Math.round(group.amount))}</td><td style="${tdS};text-align:right;color:var(--blue)">${group.records.length} <span style="color:var(--text-3)">รายการ →</span></td><td style="${tdS};text-align:right">${percentLabel(group.amount, projectTotal)}</td></tr>`).join('')}</tbody></table></div>`;
     }).join('')}`;
@@ -2368,8 +2580,12 @@ async function renderActualSpend() {
 function showActualSpendGroup(projectEncoded, typeEncoded, sourceEncoded) {
   const project = decodeURIComponent(projectEncoded);
   const spendType = decodeURIComponent(typeEncoded);
-  const source = decodeURIComponent(sourceEncoded);
-  const rows = filteredActualSpendRecords().filter(record => record.project === project && record.spendType === spendType && record.source === source);
+  const sourceKey = decodeURIComponent(sourceEncoded);
+  const rows = filteredActualSpendRecords().filter(record =>
+    record.project === project &&
+    record.spendType === spendType &&
+    canonicalActualSpendSourceKey(record.source) === sourceKey
+  );
   const rowCard = record => {
     return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--r-sm);cursor:pointer;align-items:start" onclick="document.getElementById('actual-spend-group-panel').remove();showActualSpendRecord('${esc(record.id)}')"><div style="min-width:0"><div style="font-size:10px;color:var(--text-3);margin-bottom:3px">Reference No</div><div style="font-weight:600;color:var(--blue);overflow-wrap:anywhere">${esc(record.referenceNo || '—')}</div></div><div><div style="font-size:10px;color:var(--text-3);margin-bottom:3px">Source</div><span class="badge ${actualSpendSourceBadgeClass(record.source)}">${actualSpendSourceShortLabel(record.source)}</span></div><div><div style="font-size:10px;color:var(--text-3);margin-bottom:3px">Coverage</div><div>${esc(record.startDate||'—')} → ${esc(record.endDate||'—')}</div></div><div><div style="font-size:10px;color:var(--text-3);margin-bottom:3px">Budget Status</div><div>${esc(record.budgetStatus)}</div></div><div><div style="font-size:10px;color:var(--text-3);margin-bottom:3px">Amount</div><div style="font-weight:700">${money(record.amount)}</div></div></div>`;
   };
@@ -2385,16 +2601,7 @@ function showActualSpendRecord(id) {
   const record = loadActualSpendRecords().find(item => item.id === id);
   if (!record) return;
   const helper = record.source === ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE ? 'To modify this record, go to Actual Spend → Manual Entries.' : '';
-  const poolId = getFinalBudgetPoolId(record);
-  const pool = loadBudgetPools().find(item => item.id === poolId);
-  const poolLabel = pool?.name || pool?.poolName || poolId || '—';
-  showActualSpendDetailModal('Actual Spend Detail', [
-    ['Reference No', record.referenceNo || '—'], ['Source', record.source], ['Project', record.project],
-    ['Spend Type', record.spendType], ['Description', record.description || '—'], ['Amount', money(record.amount)],
-    ['Coverage', `${record.startDate || '—'} → ${record.endDate || '—'}`], ['Vendor / Program', record.vendorProgram || '—'],
-    ['Budget Pool', poolLabel], ['Budget Status', record.budgetStatus || '—'], ['Created By', record.createdBy || '—'],
-    ['Created Date', formatActualSpendDateTime(record.createdAt)], ['Updated At', formatActualSpendDateTime(record.updatedAt)], ['Notes', record.notes || '—'],
-  ], helper, softwareActualSpendDetails(record));
+  showCanonicalTransactionDetail(record, { title:'Actual Spend Detail', helper });
 }
 
 function showActualMemos(proj, type, memoNosStr) {
@@ -2459,7 +2666,7 @@ function showManualExpenses(proj, type) {
     <div class="card" style="width:780px;max-width:96vw;max-height:86vh;overflow:auto;padding:0">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--surface);z-index:1">
         <div>
-          <div style="font-size:14px;font-weight:600">${esc(proj)} · ${BGT_TYPE_LABELS[type] || type} · Historical</div>
+          <div style="font-size:14px;font-weight:600">${esc(proj)} · ${BGT_TYPE_LABELS[type] || type} · Manual Entry</div>
           <div style="font-size:11px;color:var(--text-3)">${rows.length} รายการ · ${money(Math.round(total))}</div>
         </div>
         <button class="btn-sm" onclick="document.getElementById('actual-manual-panel').remove()">✕</button>
@@ -2937,7 +3144,7 @@ function assignBudgetPoolFromWorkspace(recordId) {
   }
   // Infra Cost: the Infra Cost persistence model has no Budget Pool field to assign today. Do not
   // invent a new storage model for it — surface this clearly instead of silently doing nothing.
-  alert('Infra Cost ยังไม่รองรับการ assign Budget Pool จากหน้านี้ — โปรดติดต่อ PMO เพื่อจัดการโดยตรงใน Budget Pool');
+  alert('รายการนี้ยังไม่รองรับการ assign Budget Pool จากหน้านี้ — โปรดติดต่อ PMO เพื่อจัดการโดยตรงใน Budget Pool');
 }
 
 function budgetAssignmentRowsTable(records) {
@@ -2953,7 +3160,7 @@ function budgetAssignmentRowsTable(records) {
     if (record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO || record.source === ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE) {
       return `<button class="btn-sm" onclick="assignBudgetPoolFromWorkspace('${esc(record.id)}')">Assign</button>`;
     }
-    return `<span style="font-size:11px;color:var(--text-3)" title="Infra Cost Budget Pool assignment is not yet supported">View only</span>`;
+    return `<span style="font-size:11px;color:var(--text-3)" title="Budget Pool assignment is not yet supported for this item">View only</span>`;
   };
   const rows = [...records].sort((a,b) => String(b.startDate||'').localeCompare(String(a.startDate||'')));
   // Same shared `.hist-table`/`.hist-table--ellipsis` classes as the Budget Pool table and the

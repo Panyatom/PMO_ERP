@@ -928,7 +928,7 @@ function _backToMemoFromDeviceRegistry() {
   const memoNo = _devDeepLinkFilter?.memoNo;
   _devDeepLinkFilter = null;
   _renderDeviceTable();
-  if(memoNo && typeof openMemoReadOnly === 'function') openMemoReadOnly(memoNo);
+  if(memoNo && typeof openCanonicalTransactionDetailForMemo === 'function') openCanonicalTransactionDetailForMemo(memoNo);
 }
 function _clearDevDeepLinkFilter() {
   _devDeepLinkFilter = null;
@@ -1315,7 +1315,7 @@ function openDeviceDetail(id) {
         <div style="font-size:9px;color:var(--text-3);margin-bottom:2px">${esc('Source Memo Number')}</div>
         <div style="display:flex;gap:6px;align-items:center;justify-content:space-between">
           <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis">${memoNoEsc}</div>
-          <button class="btn-sm" style="font-size:10px;padding:2px 7px;white-space:nowrap" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${memoNoEsc}',{source:'device-detail'})">View Source Memo</button>
+          <button class="btn-sm" style="font-size:10px;padding:2px 7px;white-space:nowrap" onclick="typeof openCanonicalTransactionDetailForMemo==='function'&&openCanonicalTransactionDetailForMemo('${memoNoEsc}',{source:'device-detail'})">View Source Memo</button>
         </div>
       </div>`
     : infoCell('Source Memo Number', '—');
@@ -1573,7 +1573,7 @@ function _backToMemoFromPO() {
   const memoNo = _poDeepLinkFilter?.memoNo;
   _poDeepLinkFilter = null;
   _renderPOTable();
-  if(memoNo && typeof openMemoReadOnly === 'function') openMemoReadOnly(memoNo);
+  if(memoNo && typeof openCanonicalTransactionDetailForMemo === 'function') openCanonicalTransactionDetailForMemo(memoNo);
 }
 function _clearPODeepLinkFilter() {
   _poDeepLinkFilter = null;
@@ -1800,7 +1800,7 @@ function _renderPOTable() {
     const remaining = po.orderedQty - po.arrivedQty; // derived only, never persisted
     const devCount = _devicesCountForPO(po);
     return `<tr style="${po.status==='fulfilled'||poIsVoidedSource(po)?'opacity:0.7':''}">
-      <td style="color:#185FA5;font-weight:500;cursor:pointer;padding:9px 12px" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${esc(po.memoNo)}')">${esc(po.memoNo)}</td>
+      <td style="color:#185FA5;font-weight:500;cursor:pointer;padding:9px 12px" onclick="typeof openCanonicalTransactionDetailForMemo==='function'&&openCanonicalTransactionDetailForMemo('${esc(po.memoNo)}')">${esc(po.memoNo)}</td>
       <td style="padding:9px 12px;font-size:12px">${esc(po.itemName)}</td>
       <td style="padding:9px 12px;font-size:12px">${esc(po.project||'—')}</td>
       <td style="padding:9px 12px;text-align:center;font-size:12px">${po.orderedQty}</td>

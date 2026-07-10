@@ -578,7 +578,7 @@ function _renderLicMemoIndexRows() {
       <td style="padding-left:16px;font-weight:600">
         ${esc(lic.name)}
         ${lic.vendor ? `<div style="font-size:10px;color:var(--text-3);font-weight:400">${esc(lic.vendor)}</div>` : ''}
-        ${lic.memoNo ? `<div style="font-size:10px;color:var(--blue);font-weight:400;cursor:pointer" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${esc(lic.memoNo)}')">${esc(lic.memoNo)}</div>` : ''}
+        ${lic.memoNo ? `<div style="font-size:10px;color:var(--blue);font-weight:400;cursor:pointer" onclick="typeof openCanonicalTransactionDetailForMemo==='function'&&openCanonicalTransactionDetailForMemo('${esc(lic.memoNo)}')">${esc(lic.memoNo)}</div>` : ''}
       </td>
       <td style="font-size:12px">${esc(lic.plan || '—')}</td>
       <td style="text-align:right">${esc(lic.seats || 1)}</td>
@@ -1171,12 +1171,12 @@ function _renderLicReviewQueueHtml(queueItems) {
   );
   if (!visibleQueueItems.length) return '';
   const rows = visibleQueueItems.map(({ memo, acct }) => `<tr>
-      <td style="padding-left:14px;font-weight:600;color:var(--blue);cursor:pointer" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${esc(memo.memoNo)}')">${esc(memo.memoNo)}</td>
+      <td style="padding-left:14px;font-weight:600;color:var(--blue);cursor:pointer" onclick="typeof openCanonicalTransactionDetailForMemo==='function'&&openCanonicalTransactionDetailForMemo('${esc(memo.memoNo)}')">${esc(memo.memoNo)}</td>
       <td style="font-size:12px">${esc(memo.project || '—')}</td>
       <td style="text-align:center">${acct.rows.length}</td>
       <td style="text-align:center">${acct.cols.length}</td>
       <td style="text-align:center;white-space:nowrap">
-        <button class="btn-sm" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${esc(memo.memoNo)}')">View Memo</button>
+        <button class="btn-sm" onclick="typeof openCanonicalTransactionDetailForMemo==='function'&&openCanonicalTransactionDetailForMemo('${esc(memo.memoNo)}')">View Memo</button>
         <button class="btn-sm" style="color:var(--green,#27500A)" onclick="_approveLicReview('${esc(memo.memoNo)}')">✓ Approve</button>
         <button class="btn-sm" style="color:var(--red)" onclick="_rejectLicReview('${esc(memo.memoNo)}')">✕ Reject</button>
       </td>
