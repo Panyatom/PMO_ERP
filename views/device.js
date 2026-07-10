@@ -555,6 +555,13 @@ function warrantyStatus(warrantyDate) {
 // ── Auto-sync from HW Memos (legacy — for memos approved before PO system) ──
 // syncFromHWMemos removed — devices only enter registry via markArrived()
 
+let _devProjectSummaryExpanded = false;
+
+function toggleDeviceProjectSummary() {
+  _devProjectSummaryExpanded = !_devProjectSummaryExpanded;
+  renderDeviceSummaries(loadDevices());
+}
+
 // ── Summary tables ──
 function renderDeviceSummaries(devices) {
   // Table 1: Platform × Type
@@ -604,7 +611,8 @@ function renderDeviceSummaries(devices) {
   const projBody = document.getElementById('dev-summary-project-body');
   if(projBody) {
     const rows = Object.entries(projMap).sort((a,b) => b[1].total - a[1].total);
-    projBody.innerHTML = rows.map(([p, d]) =>
+    const visibleRows = _devProjectSummaryExpanded ? rows : rows.slice(0, 5);
+    projBody.innerHTML = visibleRows.map(([p, d]) =>
       `<tr>
         <td style="padding-left:16px;font-weight:500">${esc(p)}</td>
         <td>${d['in-use']||'—'}</td>
@@ -613,6 +621,17 @@ function renderDeviceSummaries(devices) {
         <td style="text-align:right;padding-right:16px;font-weight:600">${d.total}</td>
       </tr>`
     ).join('');
+    const toggle = document.getElementById('dev-summary-project-toggle');
+    if(toggle) {
+      toggle.style.display = rows.length > 5 ? '' : 'none';
+      toggle.textContent = _devProjectSummaryExpanded ? 'Collapse' : 'View All';
+      toggle.setAttribute('aria-expanded', _devProjectSummaryExpanded ? 'true' : 'false');
+    }
+    const scroll = document.getElementById('dev-summary-project-scroll');
+    if(scroll) {
+      scroll.style.maxHeight = _devProjectSummaryExpanded ? '300px' : '';
+      scroll.style.overflowY = _devProjectSummaryExpanded ? 'auto' : '';
+    }
   }
 }
 
@@ -1178,7 +1197,7 @@ function openDeviceDetail(id) {
         <div style="font-size:9px;color:var(--text-3);margin-bottom:2px">${esc('Source Memo Number')}</div>
         <div style="display:flex;gap:6px;align-items:center;justify-content:space-between">
           <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis">${memoNoEsc}</div>
-          <button class="btn-sm" style="font-size:10px;padding:2px 7px;white-space:nowrap" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${memoNoEsc}')">View Source Memo</button>
+          <button class="btn-sm" style="font-size:10px;padding:2px 7px;white-space:nowrap" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${memoNoEsc}',{source:'device-detail'})">View Source Memo</button>
         </div>
       </div>`
     : infoCell('Source Memo Number', '—');

@@ -1724,6 +1724,40 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <div class="metric-card"><div class="metric-label">Available</div><div class="metric-val" id="dev-available" style="color:var(--gray)">0</div><div class="metric-sub">ยังไม่มีผู้ถือ</div></div>
         </div>
 
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+          <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
+            <div style="padding:12px 16px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600">Summary by Platform × Type</div>
+            <table class="hist-table" id="dev-summary-platform">
+              <thead><tr>
+                <th style="padding-left:16px">Platform</th>
+                <th>Mobile</th>
+                <th>Tablet</th>
+                <th>Other</th>
+                <th style="text-align:right;padding-right:16px">Total</th>
+              </tr></thead>
+              <tbody id="dev-summary-platform-body"></tbody>
+            </table>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600">
+              <span>Summary by Project</span>
+              <button type="button" id="dev-summary-project-toggle" class="btn-sm" style="display:none;font-size:11px;padding:3px 9px" onclick="toggleDeviceProjectSummary()">View All</button>
+            </div>
+            <div id="dev-summary-project-scroll" style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+              <table class="hist-table" id="dev-summary-project">
+                <thead><tr>
+                  <th style="padding-left:16px">โครงการ</th>
+                  <th>In Use</th>
+                  <th>Available</th>
+                  <th>Other</th>
+                  <th style="text-align:right;padding-right:16px">Total</th>
+                </tr></thead>
+                <tbody id="dev-summary-project-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- Filter row -->
         <div id="dev-registry-context-banner" style="display:none;margin-bottom:10px"></div>
         <div class="filter-toolbar">
@@ -1791,35 +1825,6 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <div id="dev-load-more-footer" style="display:none"></div>
         </div> <!-- end registry table card -->
 
-        <!-- Secondary summaries follow the primary operational table. -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
-          <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
-            <div style="padding:12px 16px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600">Summary by Platform × Type</div>
-            <table class="hist-table" id="dev-summary-platform">
-              <thead><tr>
-                <th style="padding-left:16px">Platform</th>
-                <th>Mobile</th>
-                <th>Tablet</th>
-                <th>Other</th>
-                <th style="text-align:right;padding-right:16px">Total</th>
-              </tr></thead>
-              <tbody id="dev-summary-platform-body"></tbody>
-            </table>
-          </div>
-          <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
-            <div style="padding:12px 16px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600">Summary by Project</div>
-            <table class="hist-table" id="dev-summary-project">
-              <thead><tr>
-                <th style="padding-left:16px">โครงการ</th>
-                <th>In Use</th>
-                <th>Available</th>
-                <th>Other</th>
-                <th style="text-align:right;padding-right:16px">Total</th>
-              </tr></thead>
-              <tbody id="dev-summary-project-body"></tbody>
-            </table>
-          </div>
-        </div>
         </div> <!-- end dev-panel-registry -->
       </div> <!-- end view-device -->
 

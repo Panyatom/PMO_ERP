@@ -959,7 +959,7 @@ async function confirmVoidMemo(memoNo) {
 }
 
 // ── Read-only detail (Budget / License / Device tabs) ──
-function openMemoReadOnly(memoNo) {
+function openMemoReadOnly(memoNo, options = {}) {
   const memo = loadMemos().find(m => m.memoNo === memoNo) || getHistoryMemos().find(m => m.memoNo === memoNo);
   if (!memo) { alert('ไม่พบ Memo'); return; }
   if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
@@ -971,7 +971,8 @@ function openMemoReadOnly(memoNo) {
   // Read-only tabs: no approve/reject/tag-budget/duplicate, but the Device
   // Management deep-links (Part 5) are still useful here since this view is
   // itself reached by clicking a memo number from the PO table.
-  if (acts) acts.innerHTML = `${_memoLinkedRecordsButtonsHtml(memo)}<button class="btn-ghost" type="button" onclick="closeDetailModal()">ปิด</button>`;
+  const linkedActions = options?.source === 'device-detail' ? '' : _memoLinkedRecordsButtonsHtml(memo);
+  if (acts) acts.innerHTML = `${linkedActions}<button class="btn-ghost" type="button" onclick="closeDetailModal()">ปิด</button>`;
   const modalInner = document.querySelector('#detail-modal > div');
   if (modalInner) modalInner.style.maxWidth = '680px';
   document.getElementById('detail-modal').style.display = 'flex';
