@@ -3801,3 +3801,22 @@ function deleteBudgetPool(id) {
       alert('ไม่สามารถลบ Budget Pool ได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่');
     });
 }
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    forecastCellIsClickable,
+    canonicalDetailValue,
+    canonicalCoverage,
+    canonicalFieldGrid,
+    manualEntryDetailFields,
+    renderManualEntrySpendTypeDetail,
+    renderMemoFallbackDetail,
+    renderMemoSpendTypeDetail,
+    renderCanonicalDetailSection,
+    canonicalTransactionRecordFromMemo,
+    canonicalActualSpendSourceLabel,
+    showCanonicalTransactionDetail,
+    openCanonicalTransactionDetailForMemo,
+    showManualEntryDetail,
+  };
+}

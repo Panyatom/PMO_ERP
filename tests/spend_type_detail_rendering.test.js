@@ -1,0 +1,131 @@
+// Forecast Drill-down P0 — spend-type-aware detail rendering.
+//
+// Covers spec items 5 & 6: Memo transactions must use the real, spend-type
+// specific renderer (history.js's _buildMemoTypeSection, via
+// renderMemoSpendTypeDetail) rather than one generic table; Manual Entry
+// transactions must use spend-type-aware fields/labels (manualEntryDetailFields)
+// sourced only from data Manual Entry actually captures, with missing values
+// shown as "-" and Source always "Manual Entry".
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { loadViews } = require('./helpers/load_views');
+
+const { app, budget } = loadViews();
+const { SPEND_TYPES, ACTUAL_SPEND_SOURCES } = app;
+
+// ── Memo spend-type detail rendering (real history.js renderer) ──
+
+test('Memo Software (sl) detail renders the Software line-item table, not the generic fallback', () => {
+  const memo = {
+    memoNo: 'MEMO-SL', type: 'sl', status: 'completed', project: 'AOA', total: 12000, subject: 'Software',
+    slItems: [{ name: 'Figma', plan: 'Org', price: 1000, months: 12, qty: 1, startMonth: '2026-01', endMonth: '2026-12' }],
+  };
+  app.storeMemos([memo]);
+  const record = budget.canonicalTransactionRecordFromMemo(memo);
+  const html = budget.renderMemoSpendTypeDetail(record);
+  assert.ok(html.includes('รายการ Software'));
+  assert.ok(html.includes('Figma'));
+  assert.ok(!html.includes('Program / Vendor'), 'should not fall back to the generic Memo detail table');
+});
+
+test('Memo Hardware (hw) detail renders the Hardware line-item table', () => {
+  const memo = {
+    memoNo: 'MEMO-HW', type: 'hw', status: 'completed', project: 'AOA', total: 80000, subject: 'Laptops', date: '2026-02-01',
+    hwItems: [{ name: 'Dell Laptop', price: 40000, qty: 2 }],
+  };
+  app.storeMemos([memo]);
+  const record = budget.canonicalTransactionRecordFromMemo(memo);
+  const html = budget.renderMemoSpendTypeDetail(record);
+  assert.ok(html.includes('รายการ Hardware'));
+  assert.ok(html.includes('Dell Laptop'));
+});
+
+test('Memo Team Activity (int) detail renders activity-specific fields', () => {
+  const memo = {
+    memoNo: 'MEMO-INT', type: 'int', status: 'completed', project: 'AOA', total: 15000, subject: 'Team outing',
+    intActivity: 'Year-end party', intDate: '2026-03-01', intHeadcount: 30, intPP: 500,
+  };
+  app.storeMemos([memo]);
+  const record = budget.canonicalTransactionRecordFromMemo(memo);
+  const html = budget.renderMemoSpendTypeDetail(record);
+  assert.ok(html.includes('Team Activity'));
+  assert.ok(html.includes('Year-end party'));
+});
+
+test('Memo Client Expense (ent) detail renders client-entertainment-specific fields', () => {
+  const memo = {
+    memoNo: 'MEMO-ENT', type: 'ent', status: 'completed', project: 'AOA', total: 9000, subject: 'Client dinner',
+    entClient: 'Acme Corp', entDate: '2026-04-01', entPlace: 'Bangkok', entPeople: 6,
+  };
+  app.storeMemos([memo]);
+  const record = budget.canonicalTransactionRecordFromMemo(memo);
+  const html = budget.renderMemoSpendTypeDetail(record);
+  assert.ok(html.includes('รายละเอียดงานรับรอง'));
+  assert.ok(html.includes('Acme Corp'));
+});
+
+// ── Manual Entry spend-type detail rendering ──
+
+function manualRecord(spendType, overrides = {}) {
+  return {
+    source: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
+    spendType,
+    amount: 1000,
+    startDate: '2026-01',
+    endDate: '2026-01',
+    description: 'Manual entry description',
+    ...overrides,
+  };
+}
+
+test('Manual Entry Software fields are spend-type aware and labeled for Software', () => {
+  const fields = budget.manualEntryDetailFields(manualRecord(SPEND_TYPES.SOFTWARE, { vendorProgram: 'Adobe' }));
+  const labels = fields.map(([label]) => label);
+  assert.deepEqual(labels, ['Software / Description', 'Expense Date', 'Amount', 'Vendor / Program', 'Frequency', 'Coverage', 'Notes']);
+});
+
+test('Manual Entry Team Activity fields are spend-type aware and labeled for Team Activity', () => {
+  const fields = budget.manualEntryDetailFields(manualRecord(SPEND_TYPES.TEAM_ACTIVITY));
+  const labels = fields.map(([label]) => label);
+  assert.deepEqual(labels, ['Activity / Description', 'Activity Date / Expense Date', 'Amount', 'Vendor / Program', 'Notes']);
+});
+
+test('Manual Entry Client Expense fields are spend-type aware and labeled for Client Expense', () => {
+  const fields = budget.manualEntryDetailFields(manualRecord(SPEND_TYPES.CLIENT_EXPENSE));
+  const labels = fields.map(([label]) => label);
+  assert.deepEqual(labels, ['Expense Description', 'Expense Date', 'Amount', 'Vendor / Program', 'Notes']);
+});
+
+test('Manual Entry Hardware fields are spend-type aware and labeled for Hardware', () => {
+  const fields = budget.manualEntryDetailFields(manualRecord(SPEND_TYPES.HARDWARE));
+  const labels = fields.map(([label]) => label);
+  assert.deepEqual(labels, ['Item / Description', 'Purchase Date / Expense Date', 'Amount', 'Vendor', 'Notes']);
+});
+
+test('Manual Entry Infra fields use an Infra-specific description label, not a Memo-only field', () => {
+  const fields = budget.manualEntryDetailFields(manualRecord(SPEND_TYPES.INFRA));
+  const labels = fields.map(([label]) => label);
+  assert.deepEqual(labels, ['Infra Description', 'Expense Date', 'Amount', 'Vendor / Program', 'Coverage', 'Notes']);
+  // Memo-only concepts (Program/Plan detail lines) must not be manufactured for Manual Entry.
+  assert.ok(!labels.some(l => /program|plan/i.test(l) && l !== 'Vendor / Program'));
+});
+
+test('Manual Entry detail shows "-" for relevant missing values instead of hiding the field', () => {
+  const record = { source: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE, spendType: SPEND_TYPES.HARDWARE, amount: 0, startDate: '', endDate: '' };
+  const fields = budget.manualEntryDetailFields(record);
+  const vendorField = fields.find(([label]) => label === 'Vendor');
+  const notesField = fields.find(([label]) => label === 'Notes');
+  assert.equal(budget.canonicalDetailValue(vendorField[1]), '-');
+  assert.equal(budget.canonicalDetailValue(notesField[1]), '-');
+  // The section itself still renders (fields present), it just shows "-" per value.
+  const html = budget.renderManualEntrySpendTypeDetail(record);
+  assert.ok(html.includes('-'));
+  assert.ok(html.includes('Hardware Detail'));
+});
+
+test('Manual Entry canonical routing always shows Source as "Manual Entry", never the Memo label', () => {
+  for (const spendType of [SPEND_TYPES.SOFTWARE, SPEND_TYPES.TEAM_ACTIVITY, SPEND_TYPES.CLIENT_EXPENSE, SPEND_TYPES.HARDWARE, SPEND_TYPES.INFRA]) {
+    const record = manualRecord(spendType);
+    assert.equal(budget.canonicalActualSpendSourceLabel(record.source), 'Manual Entry');
+  }
+});

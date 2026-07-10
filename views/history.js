@@ -1591,3 +1591,12 @@ function loadMoreHistory() {
 function resetHistoryPagination() {
   window._histVisible = 20;
 }
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    _buildMemoDetailContent,
+    _buildMemoTypeSection,
+    openHistoryDetail,
+    openMemoReadOnly,
+  };
+}

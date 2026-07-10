@@ -1861,3 +1861,11 @@ function submitMarkArrived() {
 document.addEventListener('click', e => {
   if (e.target === document.getElementById('mark-arrived-modal')) closeMarkArrivedModal();
 });
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    openDeviceDetail,
+    storeDevices,
+    loadDevices,
+  };
+}

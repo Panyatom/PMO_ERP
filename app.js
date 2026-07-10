@@ -1090,6 +1090,19 @@ if (typeof module !== 'undefined' && module.exports) {
     forecastComponents,
     calculateForecast,
     forecastExportDataset,
+    esc,
+    money,
+    loadMemos,
+    storeMemos,
+    loadActualSpendRecords,
+    storeActualSpendRecords,
+    getFinalBudgetPoolId,
+    spendTypeFromMemoType,
+    softwareMemoDetailLines,
+    shortDate,
+    badgeClass,
+    histStatusLabel,
+    histStatusBadgeClass,
   };
 }
 
