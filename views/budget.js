@@ -1325,6 +1325,63 @@ function getActualInRange(proj, fromKey, toKey) {
 // ── Forecast vs Actual ──
 let _forecastView = { months:[], rows:[] };
 
+function forecastCellIsClickable(row, monthKey) {
+  const displayAmount = Number(row?.values?.[monthKey]) || 0;
+  const supportedAmount = Number(row?.supportedValues?.[monthKey]) || 0;
+  const contributors = row?.contributors?.[monthKey] || [];
+  return displayAmount > 0 && contributors.length > 0 && Math.abs(displayAmount - supportedAmount) < 0.01;
+}
+
+function showForecastCellBreakdown(rowIndex, monthKey) {
+  const row = _forecastView.rows[rowIndex];
+  if (!row || !forecastCellIsClickable(row, monthKey)) return;
+  const month = _forecastView.months.find(item => item.key === monthKey);
+  const contributors = row.contributors[monthKey] || [];
+  const displayedAmount = Number(row.values[monthKey]) || 0;
+  const total = contributors.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  if (Math.abs(displayedAmount - total) >= 0.01) return;
+  document.getElementById('forecast-cell-breakdown-panel')?.remove();
+  const [year, monthNo] = monthKey.split('-').map(Number);
+  const monthLabel = new Date(year, monthNo - 1, 1).toLocaleString('th-TH', { month:'long', year:'numeric' });
+  const panel = document.createElement('div');
+  panel.id = 'forecast-cell-breakdown-panel';
+  panel.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;display:flex;align-items:center;justify-content:center';
+  const field = (label, value) => `<div><div style="font-size:10px;color:var(--text-3);margin-bottom:3px">${esc(label)}</div><div style="overflow-wrap:anywhere">${esc(value == null || value === '' ? '—' : value)}</div></div>`;
+  const contributorCard = item => `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--r-sm);cursor:pointer;align-items:start"
+      onclick="document.getElementById('forecast-cell-breakdown-panel')?.remove();showActualSpendRecord('${esc(item.parentRecordId)}')">
+      ${field('Source', actualSpendSourceShortLabel(item.source))}
+      ${field('Reference No', item.referenceNo || item.memoId)}
+      ${field('Project', item.project)}
+      ${field('Program', item.program)}
+      ${field('Plan', item.plan)}
+      ${field('Spend Type', item.spendType)}
+      ${field('Month', monthLabel)}
+      ${field('Amount', money(Number(item.amount) || 0))}
+      ${field('Coverage Start', item.coverageStart)}
+      ${field('Coverage End', item.coverageEnd)}
+      ${item.componentType === 'detailLine' ? field('Detail Line', `#${Number(item.detailLineIndex) + 1}`) : ''}
+    </div>`;
+  panel.innerHTML = `<div class="card" style="width:900px;max-width:96vw;max-height:86vh;overflow:auto;padding:0">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:10px;position:sticky;top:0;background:var(--surface);z-index:1">
+      <div>
+        <div style="font-size:14px;font-weight:600">${esc(row.project)} · ${esc(row.program)}</div>
+        <div style="font-size:11px;color:var(--text-3)">${esc(monthLabel)} · ${esc(month?.kind === 'forecast' ? 'Forecast source detail' : 'Actual source detail')}</div>
+      </div>
+      <button class="btn-sm" onclick="document.getElementById('forecast-cell-breakdown-panel').remove()">✕</button>
+    </div>
+    <div style="padding:10px;display:flex;flex-direction:column;gap:8px">
+      ${contributors.map(contributorCard).join('')}
+    </div>
+    <div style="padding:10px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:18px;font-size:12px">
+      <span style="color:var(--text-3)">Breakdown total</span>
+      <strong style="color:var(--blue)">${money(total)}</strong>
+    </div>
+  </div>`;
+  document.body.appendChild(panel);
+  panel.addEventListener('click', event => { if (event.target === panel) panel.remove(); });
+}
+
 function _renderForecastTable() {
   const body   = document.getElementById('sl-forecast-body');
   const thead  = document.getElementById('sl-forecast-thead');
@@ -1380,11 +1437,17 @@ function _renderForecastTable() {
     let projTotal = 0;
     const projMonthTotals = months.map(() => 0);
     projectRows.forEach(row => {
+      const rowIndex = _forecastView.rows.indexOf(row);
       let rowTotal = 0;
       const cells = months.map((m, mi) => {
         const v = row.values[m.key] || 0;
         rowTotal += v; projMonthTotals[mi] += v; projTotal += v;
-        if(v > 0) return `<td style="${m.kind === 'forecast' ? tdFS : tdS}">${money(Math.round(v))}</td>`;
+        if(v > 0) {
+          const clickable = forecastCellIsClickable(row, m.key);
+          const cellStyle = `${m.kind === 'forecast' ? tdFS : tdS}${clickable ? ';text-decoration:underline;cursor:pointer' : ''}`;
+          const clickAttr = clickable ? ` onclick="showForecastCellBreakdown(${rowIndex},'${esc(m.key)}')"` : '';
+          return `<td style="${cellStyle}"${clickAttr}>${money(Math.round(v))}</td>`;
+        }
         return `<td style="${m.kind === 'forecast' ? tdFS : tdS};color:var(--text-3)">—</td>`;
       }).join('');
       rows += `<tr>
@@ -2786,7 +2849,7 @@ function actualSpendRowsTable(records) {
   if (!records.length) return `<div class="hist-empty">No records found.</div>`;
   const referenceCell = record => {
     const ref = esc(record.referenceNo || '—');
-    if (record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO && record.referenceNo) {
+    if (record.id) {
       return `<span style="color:var(--blue);font-weight:600;text-decoration:underline;cursor:pointer" onclick="showBvaRecordDetail('${esc(record.id)}')">${ref}</span>`;
     }
     return `<span style="font-weight:600">${ref}</span>`;
@@ -2881,7 +2944,7 @@ function budgetAssignmentRowsTable(records) {
   if (!records.length) return `<div class="hist-empty">No records need assignment.</div>`;
   const referenceCell = record => {
     const ref = esc(record.referenceNo || '—');
-    if (record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO && record.referenceNo) {
+    if (record.id) {
       return `<span style="color:var(--blue);font-weight:600;text-decoration:underline;cursor:pointer" onclick="showBvaRecordDetail('${esc(record.id)}')">${ref}</span>`;
     }
     return `<span style="font-weight:600">${ref}</span>`;

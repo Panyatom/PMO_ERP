@@ -659,7 +659,7 @@ function calculateActualSpendInRange(records = [], fromMonth, toMonth, filters =
   }, 0);
 }
 
-function calculateForecast(records = [], asOfDate = new Date(), filters = {}) {
+function forecastMonths(asOfDate = new Date()) {
   const anchor = new Date(asOfDate);
   const anchorYear = anchor.getFullYear();
   const anchorMonth = anchor.getMonth();
@@ -671,35 +671,128 @@ function calculateForecast(records = [], asOfDate = new Date(), filters = {}) {
       kind: offset <= 0 ? 'actual' : 'forecast',
     });
   }
+  return months;
+}
+
+function forecastComponentMonthlyAmount(component = {}) {
+  const monthlyCost = Number(component.monthlyCost) || 0;
+  if (monthlyCost > 0) return monthlyCost;
+  const coverageMonths = Number(component.coverageMonths) || inclusiveCoverageMonths(component.coverageStart, component.coverageEnd);
+  return coverageMonths ? (Number(component.amount) || 0) / coverageMonths : 0;
+}
+
+function forecastComponents(records = [], filters = {}) {
   const eligible = queryActualSpend(filters, records).filter(record =>
     (record.spendType === SPEND_TYPES.SOFTWARE || record.spendType === SPEND_TYPES.INFRA) &&
     record.coverageStatus === 'Complete'
   );
-  const grouped = new Map();
+  const components = [];
   eligible.forEach(record => {
-    const program = record.vendorProgram || record.description || record.referenceNo || record.spendType;
-    const key = [record.project, program, record.spendType].join('\u0000');
+    const recordProgram = record.vendorProgram || record.description || record.referenceNo || record.spendType;
+    const recordCoverageStart = String(record.startDate || '').slice(0, 7);
+    const recordCoverageEnd = String(record.endDate || '').slice(0, 7);
+    const recordCoverageMonths = Number(record.coverageMonths) || inclusiveCoverageMonths(recordCoverageStart, recordCoverageEnd);
+    const base = {
+      parentRecordId: record.id,
+      memoId: record.memoId || null,
+      referenceNo: record.referenceNo || '',
+      source: record.source || '',
+      project: record.project || '',
+      spendType: record.spendType || '',
+      description: record.description || '',
+      recordVendorProgram: record.vendorProgram || '',
+    };
+    const detailLines = record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO &&
+      record.spendType === SPEND_TYPES.SOFTWARE && Array.isArray(record.detailLines)
+      ? record.detailLines.filter(line => line && (line.program || line.plan || Number(line.monthlyCost) || Number(line.lineAmount) || line.coverageStart || line.coverageEnd))
+      : [];
+    if (detailLines.length) {
+      detailLines.forEach((line, index) => {
+        const coverageStart = String(line.coverageStart || recordCoverageStart).slice(0, 7);
+        const coverageEnd = String(line.coverageEnd || recordCoverageEnd).slice(0, 7);
+        const coverageMonths = Number(line.coverageMonths) || inclusiveCoverageMonths(coverageStart, coverageEnd);
+        const monthlyCost = Number(line.monthlyCost) || (coverageMonths ? (Number(line.lineAmount) || 0) / coverageMonths : 0);
+        components.push({
+          ...base,
+          componentId: `${record.id}:detail:${index}`,
+          componentType: 'detailLine',
+          detailLineIndex: index,
+          program: line.program || recordProgram,
+          plan: line.plan || '',
+          quantity: Number(line.quantity) || 0,
+          unitCost: Number(line.unitCost) || 0,
+          monthlyCost,
+          amount: Number(line.lineAmount) || monthlyCost * (coverageMonths || 0),
+          coverageStart,
+          coverageEnd,
+          coverageMonths,
+        });
+      });
+      return;
+    }
+    components.push({
+      ...base,
+      componentId: `${record.id}:record`,
+      componentType: 'record',
+      detailLineIndex: null,
+      program: recordProgram,
+      plan: '',
+      quantity: null,
+      unitCost: null,
+      monthlyCost: recordCoverageMonths ? (Number(record.amount) || 0) / recordCoverageMonths : 0,
+      amount: Number(record.amount) || 0,
+      coverageStart: recordCoverageStart,
+      coverageEnd: recordCoverageEnd,
+      coverageMonths: recordCoverageMonths,
+    });
+  });
+  return components;
+}
+
+function calculateForecast(records = [], asOfDate = new Date(), filters = {}) {
+  const months = forecastMonths(asOfDate);
+  const grouped = new Map();
+  forecastComponents(records, filters).forEach(component => {
+    const program = component.program || component.referenceNo || component.spendType;
+    const plan = component.plan || '';
+    const key = [component.project, program, plan, component.spendType].join('\u0000');
     if (!grouped.has(key)) grouped.set(key, {
-      project: record.project,
+      project: component.project,
       program,
-      spendType: record.spendType,
+      plan,
+      spendType: component.spendType,
       values: Object.fromEntries(months.map(month => [month.key, 0])),
+      supportedValues: Object.fromEntries(months.map(month => [month.key, 0])),
+      contributors: Object.fromEntries(months.map(month => [month.key, []])),
     });
     const row = grouped.get(key);
-    const allocations = actualSpendMonthlyAllocations(record);
-    const coverageEnd = String(record.endDate).slice(0, 7);
-    const monthlyCost = (Number(record.amount) || 0) / record.coverageMonths;
+    const coverageStart = String(component.coverageStart || '').slice(0, 7);
+    const coverageEnd = String(component.coverageEnd || '').slice(0, 7);
+    const monthlyCost = forecastComponentMonthlyAmount(component);
     months.forEach(month => {
-      const allocated = Number(allocations[month.key]) || 0;
-      const carriedForecast = month.kind === 'forecast' && month.key > coverageEnd ? monthlyCost : 0;
-      row.values[month.key] += allocated || carriedForecast;
+      const covered = coverageStart && coverageEnd && month.key >= coverageStart && month.key <= coverageEnd;
+      const supportedAmount = covered ? monthlyCost : 0;
+      const carriedForecast = month.kind === 'forecast' && coverageEnd && month.key > coverageEnd ? monthlyCost : 0;
+      const displayAmount = supportedAmount || carriedForecast;
+      if (displayAmount <= 0) return;
+      row.values[month.key] += displayAmount;
+      if (supportedAmount > 0) {
+        row.supportedValues[month.key] += supportedAmount;
+        row.contributors[month.key].push({
+          ...component,
+          month: month.key,
+          amount: supportedAmount,
+        });
+      }
     });
   });
   const rows = [...grouped.values()].sort((a, b) =>
-    a.project.localeCompare(b.project) || a.spendType.localeCompare(b.spendType) || a.program.localeCompare(b.program)
+    a.project.localeCompare(b.project) || a.spendType.localeCompare(b.spendType) ||
+    a.program.localeCompare(b.program) || String(a.plan || '').localeCompare(String(b.plan || ''))
   ).map(row => ({
     ...row,
     total: months.reduce((sum, month) => sum + row.values[month.key], 0),
+    supportedTotal: months.reduce((sum, month) => sum + row.supportedValues[month.key], 0),
   }));
   return { months, rows };
 }
@@ -708,9 +801,9 @@ function forecastExportDataset(forecast = { months:[], rows:[] }) {
   const months = forecast.months || [];
   const rows = forecast.rows || [];
   return {
-    headers: ['Project','Program','Spend Type', ...months.map(month => `${month.key} ${month.kind}`), 'Total'],
+    headers: ['Project','Program','Plan','Spend Type', ...months.map(month => `${month.key} ${month.kind}`), 'Total'],
     rows: rows.map(row => [
-      row.project, row.program, row.spendType,
+      row.project, row.program, row.plan || '', row.spendType,
       ...months.map(month => row.values[month.key] || 0),
       row.total,
     ]),
@@ -975,6 +1068,8 @@ const FINANCIAL_HELPERS = Object.freeze({
   calculateActualSpend,
   actualSpendMonthlyAllocations,
   calculateActualSpendInRange,
+  forecastMonths,
+  forecastComponents,
   calculateForecast,
   forecastExportDataset,
   calculateBudgetUtilization,
@@ -983,6 +1078,20 @@ const FINANCIAL_HELPERS = Object.freeze({
   calculateBudgetVsActualDataset,
   budgetVsActualExportDataset,
 });
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    SPEND_TYPES,
+    ACTUAL_SPEND_SOURCES,
+    BUDGET_STATUSES,
+    createActualSpendRecord,
+    actualSpendMonthlyAllocations,
+    forecastMonths,
+    forecastComponents,
+    calculateForecast,
+    forecastExportDataset,
+  };
+}
 
 function importActualSpendRecords(rows) {
   const existing = loadActualSpendRecords();
