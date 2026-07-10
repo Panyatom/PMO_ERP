@@ -72,6 +72,14 @@ function parseExcelDate(val) {
   const d = new Date(s);
   return isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10);
 }
+function isLicenseImportDateRangeInvalid(purchaseDate, expiry) {
+  if (typeof isLicenseDateRangeInvalid === 'function') return isLicenseDateRangeInvalid(purchaseDate, expiry);
+  if (!purchaseDate || !expiry) return false;
+  const purchase = new Date(String(purchaseDate).slice(0,10) + 'T00:00:00');
+  const expiryDate = new Date(String(expiry).slice(0,10) + 'T00:00:00');
+  if (Number.isNaN(purchase.getTime()) || Number.isNaN(expiryDate.getTime())) return false;
+  return expiryDate < purchase;
+}
 function strVal(v) { return String(v||'').trim(); }
 function numVal(v) { const n = Number(v); return isNaN(n) ? 0 : n; }
 function parseProjectCodeDate(val) {
@@ -276,6 +284,7 @@ async function importLicenses(rows) {
   const now = new Date().toISOString();
   let added = 0, skipped = 0, updated = 0;
   const changed = [];
+  const rejected = [];
 
   const licenseDateKey = value => {
     const raw = String(value || '').trim();
@@ -288,9 +297,15 @@ async function importLicenses(rows) {
     l.memoNo, l.name, l.plan, l.project, licenseDateKey(l.purchaseDate), licenseDateKey(l.expiry),
   ].map(v => String(v || '').trim().toLowerCase()).join('||');
 
-  rows.forEach(row => {
+  rows.forEach((row, index) => {
     const name = strVal(row['Name'] || row['name'] || row['Software Name'] || row['software_name'] || row['à¸Šà¸·à¹ˆà¸­ Software']);
     if(!name) { skipped++; return; }
+    const purchaseDate = parseExcelDate(row['Purchase Date'] || row['purchase_date'] || row['à¸§à¸±à¸™à¸—à¸µà¹ˆà¸‹à¸·à¹‰à¸­']);
+    const expiryDate = parseExcelDate(row['Expiry Date'] || row['expiry_date'] || row['à¸§à¸±à¸™à¸«à¸¡à¸”à¸­à¸²à¸¢à¸¸']);
+    if (isLicenseImportDateRangeInvalid(purchaseDate, expiryDate)) {
+      rejected.push(`Row ${index + 2}: Expiry Date must not be earlier than Purchase Date`);
+      return;
+    }
 
     const license = {
       id: crypto.randomUUID(),
@@ -303,10 +318,9 @@ async function importLicenses(rows) {
       department:    strVal(row['Department'] || row['department'] || row['à¹à¸œà¸™à¸']),
       project:       strVal(row['Project'] || row['project'] || row['à¹‚à¸„à¸£à¸‡à¸à¸²à¸£']),
       licenseType:   strVal(row['License Type'] || row['license_type'] || 'subscription'),
-      purchaseDate:  parseExcelDate(row['Purchase Date'] || row['purchase_date'] || row['à¸§à¸±à¸™à¸—à¸µà¹ˆà¸‹à¸·à¹‰à¸­']),
+      purchaseDate,
       expiry:        (() => {
-        const d = parseExcelDate(row['Expiry Date'] || row['expiry_date'] || row['à¸§à¸±à¸™à¸«à¸¡à¸”à¸­à¸²à¸¢à¸¸']);
-        return d ? new Date(d+'T00:00:00').toISOString() : null;
+        return expiryDate ? new Date(expiryDate+'T00:00:00').toISOString() : null;
       })(),
       billingFreq:   strVal(row['Billing Freq'] || row['billing_freq'] || 'monthly'),
       statusOverride: (() => {
@@ -340,7 +354,7 @@ async function importLicenses(rows) {
   storeManualLicenses(existing);
   await Promise.all(changed.map(license => saveLicenseAsync(license)));
   renderLicense();
-  alert(`License import completed\nAdded: ${added}\nUpdated: ${updated}${skipped ? `\nSkipped blank rows: ${skipped}` : ''}`);
+  alert(`License import completed\nAdded: ${added}\nUpdated: ${updated}${skipped ? `\nSkipped blank rows: ${skipped}` : ''}${rejected.length ? `\nRejected rows:\n${rejected.join('\n')}` : ''}`);
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

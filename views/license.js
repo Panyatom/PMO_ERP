@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
-// views/license.js  —  License Management  (4-tab redesign)
-// Tabs: Memo Index | By Project | Users | Other
+// views/license.js  —  License Management
+// Tabs: Memo Index | License Summary | Users
 // Data sources:
 //   1. SL memos (completed) → slItems JSON → memo-derived licenses
 //   2. SL memos sections['ตาราง Account'] → user × license matrix
@@ -49,6 +49,13 @@ function dbToLicense(r) {
 }
 function isDeletedLicense(lic) {
   return lic?.statusOverride === 'deleted';
+}
+function isLicenseDateRangeInvalid(purchaseDate, expiry) {
+  if (!purchaseDate || !expiry) return false;
+  const purchase = new Date(String(purchaseDate).slice(0,10) + 'T00:00:00');
+  const expiryDate = new Date(String(expiry).slice(0,10) + 'T00:00:00');
+  if (Number.isNaN(purchase.getTime()) || Number.isNaN(expiryDate.getTime())) return false;
+  return expiryDate < purchase;
 }
 
 // ── localStorage / Supabase CRUD ───────────────────────────
@@ -217,9 +224,23 @@ function getAllLicenses() {
     .filter(m => m.type === 'sl' && m.status === 'completed')
     .flatMap(parseLicenseFromMemo);
   const manualAll = loadManualLicenses();
-  const manual = (_licCache !== null ? _licCache : manualAll).filter(l => !isDeletedLicense(l));
-  const manualIds = new Set(manualAll.map(l => l.id));
-  return [...memoLicenses.filter(l => !manualIds.has(l.id)), ...manual];
+  const memoById = new Map(memoLicenses.map(l => [String(l.id), l]));
+  const manual = (_licCache !== null ? _licCache : manualAll).filter(l => !isDeletedLicense(l)).map(l => {
+    const memo = memoById.get(String(l.id));
+    if (!memo) return l;
+    return {
+      ...memo,
+      owner: l.owner || memo.owner || '',
+      department: l.department || memo.department || '',
+      statusOverride: l.statusOverride || memo.statusOverride || null,
+      note: l.note || memo.note || '',
+      createdAt: l.createdAt || memo.createdAt,
+      updatedAt: l.updatedAt || memo.updatedAt,
+      source: 'memo',
+    };
+  });
+  const manualIds = new Set(manual.map(l => String(l.id)));
+  return [...memoLicenses.filter(l => !manualIds.has(String(l.id))), ...manual];
 }
 
 // ── Status logic ─────────────────────────────────────────
@@ -362,6 +383,7 @@ function renderLicense() {
 }
 
 function switchLicTab(tab) {
+  if (tab === 'other') tab = 'memo-index';
   _licCurrentTab = tab;
   document.querySelectorAll('.lic-tab-btn, #view-license .tab-btn').forEach(b => {
     const on = b.dataset.tab === tab;
@@ -375,7 +397,7 @@ function _renderLicTab(tab) {
   if (tab === 'memo-index')  _renderLicMemoIndex();
   if (tab === 'by-project')  _renderLicByProject();
   if (tab === 'users')       _renderLicUsers();
-  if (tab === 'other')       _renderLicOther();
+  if (!['memo-index', 'by-project', 'users'].includes(tab)) switchLicTab('memo-index');
 }
 
 // ── TAB 1: MEMO INDEX ─────────────────────────────────────
@@ -2335,6 +2357,8 @@ function _kpi(label, val, color, sub) {
 function openLicenseModal(id) {
   const modal = document.getElementById('license-modal');
   modal.style.display = 'flex';
+  const dateError = document.getElementById('lic-date-error');
+  if (dateError) { dateError.style.display = 'none'; dateError.textContent = ''; }
   _populateLicenseFilters(getAllLicenses());
   if (id) {
     const lic = getAllLicenses().find(l => String(l.id) === String(id));
@@ -2410,11 +2434,34 @@ function saveLicenseManual() {
     note: document.getElementById('lic-note').value.trim(),
     source: 'manual', updatedAt: now,
   };
+  const dateError = document.getElementById('lic-date-error');
+  if (isLicenseDateRangeInvalid(data.purchaseDate, data.expiry)) {
+    if (dateError) {
+      dateError.textContent = 'Expiry Date must not be earlier than Purchase Date.';
+      dateError.style.display = '';
+    } else {
+      alert('Expiry Date must not be earlier than Purchase Date.');
+    }
+    return;
+  }
+  if (dateError) { dateError.style.display = 'none'; dateError.textContent = ''; }
   const allLics = getAllLicenses();
   let finalData;
   if (editId) {
     const orig = allLics.find(l => String(l.id) === String(editId));
-    finalData = { ...(orig||{}), ...data, id: editId, createdAt: orig?.createdAt || now };
+    finalData = orig?.source === 'memo'
+      ? {
+          ...orig,
+          owner: data.owner,
+          department: data.department,
+          statusOverride: data.statusOverride,
+          note: data.note,
+          id: editId,
+          source: 'manual',
+          createdAt: orig?.createdAt || now,
+          updatedAt: now,
+        }
+      : { ...(orig||{}), ...data, id: editId, createdAt: orig?.createdAt || now };
   } else {
     finalData = { id: nextLicenseId(), ...data, createdAt: now };
   }
