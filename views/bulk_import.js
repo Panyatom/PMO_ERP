@@ -382,7 +382,9 @@ async function importDevices(rows) {
       updatedAt:    now,
       note:         strVal(row['Remark'] || row['Note'] || ''),
       osVersion:    strVal(row['OS version'] || row['OS Version'] || ''),
-      status:       'not_identified',
+      status:       typeof defaultDeviceStatusFromQaOwner === 'function'
+        ? defaultDeviceStatusFromQaOwner(strVal(row['QA Owner'] || ''))
+        : (strVal(row['QA Owner'] || '') ? 'in-use' : 'available'),
       createdAt:    now,
     };
     const dupIdx = typeof findExistingDevice === 'function'

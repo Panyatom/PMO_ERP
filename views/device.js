@@ -38,7 +38,7 @@ function deviceToDb(d, isNew=false) {
     qa_owner:      d.qaOwner || null,
     os_version:    d.osVersion || null,
     photo_url:     d.photoUrl || null,
-    status:        d.status || 'not_identified',
+    status:        normalizeDeviceStatus(d.status, d.qaOwner),
     memo_ref:      d.memoNo || null,    // use memoNo as single field name
     purchase_order_id: d.purchaseOrderId || null,
     note:          d.note || null,
@@ -78,7 +78,7 @@ function dbToDevice(r) {
     qaOwner:      r.qa_owner || '',
     osVersion:    r.os_version || '',
     photoUrl:     r.photo_url || '',
-    status:       r.status || 'not_identified',
+    status:       normalizeDeviceStatus(r.status, r.qa_owner),
     memoNo:       r.memo_ref || '',   // canonical field name
     purchaseOrderId: r.purchase_order_id || '',
     note:         r.note || '',
@@ -137,13 +137,13 @@ function _excludeDeletedDevices(devices) {
   return (devices || []).filter(d => !d.deleted);
 }
 function _loadDevicesRaw() {
-  if (_devCache !== null && _devCache.length > 0) return _devCache;
+  if (_devCache !== null && _devCache.length > 0) return _devCache.map(normalizeDeviceRecord);
   try {
     const d = JSON.parse(localStorage.getItem(DEVICE_KEY) || '[]');
     if (Array.isArray(d)) {
       d.forEach(dev => { if (dev.memoRef && !dev.memoNo) { dev.memoNo = dev.memoRef; delete dev.memoRef; } });
     }
-    return Array.isArray(d) ? d : [];
+    return Array.isArray(d) ? d.map(normalizeDeviceRecord) : [];
   } catch(e) { return []; }
 }
 
@@ -159,7 +159,7 @@ async function loadDevicesAsync() {
     }
   }
   // Offline fallback
-  try { const d = JSON.parse(localStorage.getItem(DEVICE_KEY)||'[]'); return _excludeDeletedDevices(Array.isArray(d)?d:[]); } catch(e) { return []; }
+  try { const d = JSON.parse(localStorage.getItem(DEVICE_KEY)||'[]'); return _excludeDeletedDevices(Array.isArray(d)?d.map(normalizeDeviceRecord):[]); } catch(e) { return []; }
 }
 
 async function saveDeviceAsync(data) {
@@ -503,7 +503,7 @@ async function markArrived(poId, qty, serialNumbers = []) {
       company:         '',
       returnDate:      '',
       warranty:        '',
-      status:          'not_identified',
+      status:          'available',
       memoNo:          po.memoNo      || '',
       purchaseOrderId: po.id,
       note:            `Arrived from ${po.memoNo} · ${po.itemName}`,
@@ -540,9 +540,36 @@ async function markArrived(poId, qty, serialNumbers = []) {
 // ── Helpers ──
 const PLATFORM_LABEL = { ios:'iOS', android:'Android', huawei:'Huawei', windows:'Windows', other:'Other' };
 const TYPE_LABEL = { mobile:'Mobile', tablet:'Tablet', laptop:'Laptop', other:'Other' };
+const DEVICE_OPERATIONAL_STATUSES = ['available', 'in-use', 'maintenance', 'retired'];
+
+function defaultDeviceStatusFromQaOwner(qaOwner) {
+  return qaOwner && String(qaOwner).trim() ? 'in-use' : 'available';
+}
+
+function normalizeDeviceStatus(status, qaOwner) {
+  return DEVICE_OPERATIONAL_STATUSES.includes(status) ? status : defaultDeviceStatusFromQaOwner(qaOwner);
+}
+
+function normalizeDeviceRecord(d) {
+  return d ? { ...d, status: normalizeDeviceStatus(d.status, d.qaOwner) } : d;
+}
+
+function missingDeviceIdentificationFields(d) {
+  const missing = [];
+  if(!d.brand) missing.push('Brand / Model');
+  if(!d.assetTag) missing.push('Asset IT');
+  if(!d.serial) missing.push('Serial Number');
+  return missing;
+}
+
+function deviceIdentificationBadgeHtml(d) {
+  const missing = missingDeviceIdentificationFields(d);
+  if(!missing.length) return '';
+  return `<span class="badge badge-amber" title="Missing: ${esc(missing.join(', '))}" style="font-size:10px;margin-top:4px;display:inline-block">Missing ID</span>`;
+}
 
 function deviceStatusBadge(status) {
-  return { 'not_identified':{ label:'Not Identified', cls:'badge-gray' }, 'in-use':{ label:'In Use', cls:'badge-blue' }, 'available':{ label:'Available', cls:'badge-green' }, 'maintenance':{ label:'Maintenance', cls:'badge-amber' }, 'retired':{ label:'Retired', cls:'badge-gray' } }[status] || { label:status, cls:'badge-gray' };
+  return { 'in-use':{ label:'In Use', cls:'badge-blue' }, 'available':{ label:'Available', cls:'badge-green' }, 'maintenance':{ label:'Maintenance', cls:'badge-amber' }, 'retired':{ label:'Retired', cls:'badge-gray' } }[normalizeDeviceStatus(status)] || { label:status, cls:'badge-gray' };
 }
 function warrantyStatus(warrantyDate) {
   if(!warrantyDate) return null;
@@ -642,7 +669,7 @@ function downloadDeviceTemplate() {
     'owner','project','warranty','note'];
   const example = ['MacBook Pro 14"','Apple','laptop','mac',
     'C02XL0MCJG5M','ORB-2024-001',
-    'สมชาย ใจดี','Geo9','2027-03-01','Status defaults to not_identified'];
+    'สมชาย ใจดี','Geo9','2027-03-01','Status defaults from QA Owner'];
   _downloadCSV('Device_Template', headers, [example]);
 }
 
@@ -706,7 +733,7 @@ async function importDeviceBulk(file) {
       project:      get(row,'project'),
       qaOwner:      get(row,'qaowner','qa_owner'),
       osVersion:    get(row,'osversion','os_version'),
-      status:       'not_identified',
+      status:       defaultDeviceStatusFromQaOwner(get(row,'qaowner','qa_owner')),
       warranty:     get(row,'warranty'),
       note:         get(row,'note','remark'),
       source:       'bulk-import',
@@ -898,14 +925,14 @@ function _renderDeviceTable() {
       <td style="padding-left:16px;font-weight:500">
         ${esc(d.name)}
         ${d.brand?`<div style="font-size:10px;color:var(--text-3);font-weight:400">${esc(d.brand)}</div>`:''}
+        ${deviceIdentificationBadgeHtml(d)}
       </td>
       <td style="font-size:12px">${esc(platLbl)}</td>
       <td style="font-size:12px">${esc(typeLbl)}</td>
       <td style="font-family:monospace;font-size:11px">${esc(d.assetTag||'—')}</td>
       <td style="font-family:monospace;font-size:11px">${esc(d.serial||'—')}</td>
       <td style="font-size:12px">
-        ${esc(d.owner||'—')}
-        ${d.position?`<div style="font-size:10px;color:var(--text-3)">${esc(d.position)}</div>`:''}
+        ${esc(d.qaOwner||'—')}
       </td>
       <td style="font-size:12px">${esc(d.project||'—')}</td>
       <td style="text-align:center"><span class="badge ${statusB.cls}">${esc(statusB.label)}</span></td>
@@ -963,7 +990,7 @@ function openDeviceModal(id) {
     setVal('dev-assigned-date', d.assignedDate);
     setVal('dev-return-date', d.returnDate); setVal('dev-memo-ref', d.memoNo);
     setVal('dev-warranty', d.warranty);
-    setVal('dev-status', d.status||'not_identified'); setVal('dev-note', d.note);
+    setVal('dev-status', normalizeDeviceStatus(d.status, d.qaOwner)); setVal('dev-note', d.note);
     setVal('dev-qa-owner', d.qaOwner);
     // Audit follow-up: a device created from a PO/Hardware Memo arrival (source
     // === 'memo') keeps its memo link read-only; manual devices stay editable.
@@ -977,10 +1004,25 @@ function openDeviceModal(id) {
     setVal('dev-platform','ios'); setVal('dev-type','mobile');
     setVal('dev-company',''); setVal('dev-project','');
     setVal('dev-pbx-number',''); setVal('dev-os-version',''); setVal('dev-position',''); setVal('dev-qa-owner','');
-    setVal('dev-status','not_identified');
+    setVal('dev-status', defaultDeviceStatusFromQaOwner(''));
     setVal('dev-assigned-date', new Date().toISOString().slice(0,10));
     _setDeviceMemoLinkUI(false, '');
   }
+  _initDeviceStatusSuggestion();
+}
+
+let _devLastSuggestedStatus = 'available';
+
+function _initDeviceStatusSuggestion() {
+  const qaOwnerEl = document.getElementById('dev-qa-owner');
+  const statusEl = document.getElementById('dev-status');
+  if(!qaOwnerEl || !statusEl) return;
+  _devLastSuggestedStatus = defaultDeviceStatusFromQaOwner(qaOwnerEl.value);
+  qaOwnerEl.oninput = () => {
+    const nextSuggestion = defaultDeviceStatusFromQaOwner(qaOwnerEl.value);
+    if(statusEl.value === _devLastSuggestedStatus) statusEl.value = nextSuggestion;
+    _devLastSuggestedStatus = nextSuggestion;
+  };
 }
 
 // Toggles the Link HW Memo field between read-only (PO/memo-sourced device) and
@@ -1055,7 +1097,7 @@ function saveDevice() {
     memoNo:       g('dev-memo-ref'),
     warranty:     g('dev-warranty'),
     qaOwner:      g('dev-qa-owner'),
-    status:       g('dev-status') || 'not_identified',
+    status:       normalizeDeviceStatus(g('dev-status'), g('dev-qa-owner')),
     note:         g('dev-note'),
     updatedAt:    now,
     // Milestone 2 Task 2.3 — Created By / Updated By metadata.
@@ -1222,6 +1264,7 @@ function openDeviceDetail(id) {
         </div>
       </div>
       <div style="display:flex;gap:6px;align-items:center">
+        ${deviceIdentificationBadgeHtml(d)}
         <span class="badge ${statusB.cls}">${esc(statusB.label)}</span>
         <button class="btn-sm" onclick="document.getElementById('dev-detail-modal').style.display='none';openDeviceModal('${idStr}')" style="font-size:11px;padding:3px 8px">✎ Edit</button>
         <button class="btn-sm" onclick="deleteDeviceFromDetail('${idStr}')" style="font-size:11px;padding:3px 8px;color:var(--red)">✕ Delete</button>

@@ -1776,9 +1776,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <option value="other">Other</option>
           </select></span>
           <span class="filter-control"><span class="filter-label">Status</span><select id="dev-filter-status" onchange="renderDevice()">
-            <option value="not_identified">Not Identified</option>
-            <option value="in-use">In Use</option>
             <option value="available">Available</option>
+            <option value="in-use">In Use</option>
             <option value="maintenance">Maintenance</option>
             <option value="retired">Retired</option>
           </select></span>
@@ -1814,7 +1813,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
               <th style="width:7%">Type</th>
               <th style="width:10%">Asset ACC</th>
               <th style="width:11%">Serial No.</th>
-              <th style="width:11%">Assignee</th>
+              <th style="width:11%">QA Owner</th>
               <th style="width:9%">Project</th>
               <th style="width:9%;text-align:center">Status</th>
               <th style="width:9%">Updated</th>
@@ -2298,7 +2297,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
     </div>
     <div class="form-grid" style="margin-bottom:10px">
       <div class="fg"><label>Warranty Expiry</label><input type="date" id="dev-warranty"></div>
-      <div class="fg"><label>สถานะ</label><select id="dev-status"><option value="not_identified">Not Identified</option><option value="in-use">In Use</option><option value="available">Available</option><option value="maintenance">Maintenance</option><option value="retired">Retired</option></select></div>
+      <div class="fg"><label>สถานะ</label><select id="dev-status"><option value="available">Available</option><option value="in-use">In Use</option><option value="maintenance">Maintenance</option><option value="retired">Retired</option></select></div>
     </div>
     <div class="fg" style="margin-bottom:16px">
       <label>หมายเหตุ</label>
