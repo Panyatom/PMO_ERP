@@ -26,6 +26,7 @@ function deviceToDb(d, isNew=false) {
     platform:      d.platform || 'other',
     type:          d.type || 'other',
     serial:        d.serial || null,
+    asset_it:      d.assetIt || null,
     asset_tag:     d.assetTag || null,
     pbx_number:    d.pbxNumber || null,
     owner:         d.owner || null,
@@ -66,6 +67,7 @@ function dbToDevice(r) {
     platform:     r.platform || 'other',
     type:         r.type || 'other',
     serial:       r.serial || '',
+    assetIt:      r.asset_it || '',
     assetTag:     r.asset_tag || '',
     pbxNumber:    r.pbx_number || '',
     owner:        r.owner || '',
@@ -492,10 +494,11 @@ async function markArrived(poId, qty, serialNumbers = []) {
       // itemName — a blank Asset/Serial at arrival is acceptable, a blank or
       // memo-number-shaped device name is not.
       name:            po.itemName    || 'Unnamed Hardware Item',
-      brand:           '',
+      brand:           po.itemName    || '',
       platform:        'other',
       type:            'mobile',
       serial:          serial,
+      assetIt:         '',
       assetTag:        '',
       owner:           '',
       assignedDate:    now.slice(0, 10),
@@ -551,13 +554,72 @@ function normalizeDeviceStatus(status, qaOwner) {
 }
 
 function normalizeDeviceRecord(d) {
-  return d ? { ...d, status: normalizeDeviceStatus(d.status, d.qaOwner) } : d;
+  return d ? { ...d, assetIt: d.assetIt || '', assetTag: d.assetTag || '', status: normalizeDeviceStatus(d.status, d.qaOwner) } : d;
+}
+
+function deviceIdentityKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function devicePrimaryLabel(d) {
+  return (d?.brand || d?.name || 'Unnamed Device').trim();
+}
+
+function deviceConflictLabel(d) {
+  if(!d) return 'another device';
+  const suffix = d.serial || d.assetIt || d.id || '';
+  return suffix ? `${devicePrimaryLabel(d)} (${suffix})` : devicePrimaryLabel(d);
+}
+
+function findDeviceIdentityMatches(devices, data, options = {}) {
+  const excludeId = options.excludeId == null ? '' : String(options.excludeId);
+  const serialKey = deviceIdentityKey(data?.serial);
+  const assetItKey = deviceIdentityKey(data?.assetIt);
+  const candidates = (devices || []).filter(d => !excludeId || String(d.id) !== excludeId);
+  return {
+    serialMatches: serialKey ? candidates.filter(d => deviceIdentityKey(d.serial) === serialKey) : [],
+    assetItMatches: assetItKey ? candidates.filter(d => deviceIdentityKey(d.assetIt) === assetItKey) : [],
+  };
+}
+
+function validateDeviceIdentityUnique(devices, data, options = {}) {
+  const { serialMatches, assetItMatches } = findDeviceIdentityMatches(devices, data, options);
+  const serialMatch = serialMatches[0] || null;
+  const assetItMatch = assetItMatches[0] || null;
+  if(serialMatch && assetItMatch && String(serialMatch.id) !== String(assetItMatch.id)) {
+    return {
+      ok: false,
+      reason: 'conflict',
+      message: `Serial Number and Asset IT point to different existing devices: ${deviceConflictLabel(serialMatch)} and ${deviceConflictLabel(assetItMatch)}.`,
+      serialMatch,
+      assetItMatch,
+    };
+  }
+  if(serialMatch) {
+    return {
+      ok: false,
+      reason: 'serial',
+      message: `Serial Number ${data.serial} is already used by another device: ${deviceConflictLabel(serialMatch)}.`,
+      serialMatch,
+      assetItMatch,
+    };
+  }
+  if(assetItMatch) {
+    return {
+      ok: false,
+      reason: 'assetIt',
+      message: `Asset IT ${data.assetIt} is already used by another device: ${deviceConflictLabel(assetItMatch)}.`,
+      serialMatch,
+      assetItMatch,
+    };
+  }
+  return { ok: true, serialMatch, assetItMatch };
 }
 
 function missingDeviceIdentificationFields(d) {
   const missing = [];
   if(!d.brand) missing.push('Brand / Model');
-  if(!d.assetTag) missing.push('Asset IT');
+  if(!d.assetIt) missing.push('Asset IT');
   if(!d.serial) missing.push('Serial Number');
   return missing;
 }
@@ -565,7 +627,7 @@ function missingDeviceIdentificationFields(d) {
 function deviceIdentificationBadgeHtml(d) {
   const missing = missingDeviceIdentificationFields(d);
   if(!missing.length) return '';
-  return `<span class="badge badge-amber" title="Missing: ${esc(missing.join(', '))}" style="font-size:10px;margin-top:4px;display:inline-block">Missing ID</span>`;
+  return `<span class="badge badge-amber" title="Missing: ${esc(missing.join(', '))}" style="font-size:10px;display:inline-flex;margin-left:6px;vertical-align:middle">Missing ID</span>`;
 }
 
 function deviceStatusBadge(status) {
@@ -665,10 +727,10 @@ function renderDeviceSummaries(devices) {
 // ── Main render ──
 // ── Device Bulk Import / Template ──────────────────────────────
 function downloadDeviceTemplate() {
-  const headers = ['name','brand','type','platform','serial','asset_tag',
+  const headers = ['name','brand','type','platform','serial','asset_it','asset_acc',
     'owner','project','warranty','note'];
   const example = ['MacBook Pro 14"','Apple','laptop','mac',
-    'C02XL0MCJG5M','ORB-2024-001',
+    'C02XL0MCJG5M','IT-2024-001','ACC-2024-001',
     'สมชาย ใจดี','Geo9','2027-03-01','Status defaults from QA Owner'];
   _downloadCSV('Device_Template', headers, [example]);
 }
@@ -727,7 +789,8 @@ async function importDeviceBulk(file) {
       platform:     get(row,'platform','os') || 'other',
       pbxNumber:    get(row,'pbxnumber','pbx_number'),
       serial:       get(row,'serial','serialnumber','sn'),
-      assetTag:     get(row,'assetacc','asset_acc','asset_tag','assettag','assetno'),
+      assetIt:      get(row,'assetit','asset_it','itasset','assetitno','assetitnumber','assetnoit'),
+      assetTag:     get(row,'assetacc','asset_acc','assettag','asset_tag'),
       owner:        get(row,'owner','assignee','user'),
       position:     get(row,'position'),
       project:      get(row,'project'),
@@ -757,16 +820,21 @@ async function importDeviceBulk(file) {
   const existingRaw = _loadDevicesRaw();
   const activeExisting = _excludeDeletedDevices(existingRaw);
   const merged = [...existingRaw];
+  const addedDevices = [];
+  let added = 0;
   valid.forEach(d => {
     if (d.serial && activeExisting.find(e => e.serial === d.serial)) return;
+    if (d.assetIt && activeExisting.find(e => e.assetIt === d.assetIt)) return;
     merged.push(d);
+    addedDevices.push(d);
+    added++;
   });
   storeDevices(merged);
-  valid.forEach(d => {
+  addedDevices.forEach(d => {
     if (typeof saveDeviceAsync === 'function') saveDeviceAsync(d).catch(e => console.warn('Device bulk sync failed', e));
   });
   renderDevice();
-  alert('✓ Import อุปกรณ์สำเร็จ — เพิ่ม ' + valid.length + ' รายการ (ซ้ำ serial: ข้ามแล้ว)');
+  alert('✓ Import อุปกรณ์สำเร็จ — เพิ่ม ' + added + ' รายการ (ซ้ำ Serial/Asset IT: ข้ามแล้ว)');
 }
 
 function renderDevice() {
@@ -814,7 +882,7 @@ function _filteredDevices(allDevices) {
   if(projFilter.length) devices = devices.filter(d => projFilter.includes(d.project));
   if(compFilter.length) devices = devices.filter(d => compFilter.includes(d.company));
   if(search) devices = devices.filter(d => [
-    d.name, d.brand, d.serial, d.assetTag, d.pbxNumber,
+    d.name, d.brand, d.serial, d.assetIt, d.assetTag, d.pbxNumber,
     d.owner, d.position, d.project, d.company, d.osVersion,
     d.qaOwner, d.note, d.memoNo, d.type, d.platform,
     PLATFORM_LABEL[d.platform||'other'], TYPE_LABEL[d.type||'other']
@@ -909,7 +977,7 @@ function _renderDeviceTable() {
 
   const tbody = document.getElementById('dev-table-body');
   if(!devices.length) {
-    tbody.innerHTML = `<tr><td colspan="12" class="hist-empty">${esc(_deviceEmptyStateMessage(devices, allDevices))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="hist-empty">${esc(_deviceEmptyStateMessage(devices, allDevices))}</td></tr>`;
     const footer = document.getElementById('dev-load-more-footer');
     if(footer) { footer.style.display = 'none'; footer.innerHTML = ''; }
     return;
@@ -936,6 +1004,7 @@ function _renderDeviceTable() {
     const platLbl = PLATFORM_LABEL[d.platform||'other'] || d.platform || '—';
     const typeLbl = TYPE_LABEL[d.type||'other'] || d.type || '—';
     const updDate = d.updatedAt ? shortDate(d.updatedAt) : (d.assignedDate ? shortDate(d.assignedDate) : '—');
+    const primaryLabel = devicePrimaryLabel(d);
     // Device ids are BIGINT (numeric) once synced from Supabase but stay as a
     // string placeholder (nextDeviceId()) until then — quoting here (and
     // comparing via String(...) in openDeviceModal/openDeviceDetail/
@@ -944,12 +1013,12 @@ function _renderDeviceTable() {
     // instead of throwing a ReferenceError on an unquoted bare identifier.
     return `<tr style="cursor:pointer" onclick="openDeviceDetail('${esc(String(d.id))}')">
       <td style="padding-left:16px;font-weight:500">
-        ${esc(d.name)}
-        ${d.brand?`<div style="font-size:10px;color:var(--text-3);font-weight:400">${esc(d.brand)}</div>`:''}
+        ${esc(primaryLabel)}
         ${deviceIdentificationBadgeHtml(d)}
       </td>
       <td style="font-size:12px">${esc(platLbl)}</td>
       <td style="font-size:12px">${esc(typeLbl)}</td>
+      <td style="font-family:monospace;font-size:11px">${esc(d.assetIt||'—')}</td>
       <td style="font-family:monospace;font-size:11px">${esc(d.assetTag||'—')}</td>
       <td style="font-family:monospace;font-size:11px">${esc(d.serial||'—')}</td>
       <td style="font-size:12px">
@@ -1001,9 +1070,9 @@ function openDeviceModal(id) {
     refreshDeviceProjectOptions(d.project || '');
     document.getElementById('dev-modal-title').textContent = 'Edit Device';
     document.getElementById('dev-edit-id').value = d.id;
-    setVal('dev-name', d.name);        setVal('dev-brand', d.brand);
+    setVal('dev-name', d.name);        setVal('dev-brand', d.brand || d.name);
     setVal('dev-platform', d.platform||'other'); setVal('dev-type', d.type||'mobile');
-    setVal('dev-asset', d.assetTag);   setVal('dev-serial', d.serial);
+    setVal('dev-asset-it', d.assetIt); setVal('dev-asset', d.assetTag);   setVal('dev-serial', d.serial);
     setVal('dev-pbx-number', d.pbxNumber);
     setVal('dev-os-version', d.osVersion);
     setVal('dev-company', d.company);  setVal('dev-project', d.project);
@@ -1020,7 +1089,7 @@ function openDeviceModal(id) {
     refreshDeviceProjectOptions('');
     document.getElementById('dev-modal-title').textContent = 'Add Device';
     document.getElementById('dev-edit-id').value = '';
-    ['dev-name','dev-brand','dev-asset','dev-serial','dev-owner','dev-return-date',
+    ['dev-name','dev-brand','dev-asset-it','dev-asset','dev-serial','dev-owner','dev-return-date',
      'dev-warranty','dev-memo-ref','dev-note'].forEach(id => setVal(id,''));
     setVal('dev-platform','ios'); setVal('dev-type','mobile');
     setVal('dev-company',''); setVal('dev-project','');
@@ -1083,28 +1152,25 @@ function refreshDeviceProjectOptions(selectedDeviceProject = '') {
   refreshProjectMultiSelectOptions('po-filter-project');
 }
 
-// ── Dedup check — find existing device by serial or assetTag ──
+// ── Dedup check — find existing device by serial or Asset IT ──
 function findExistingDevice(devices, data) {
-  if (!devices || !devices.length) return -1;
-  return devices.findIndex(d => {
-    if (data.serial    && data.serial    !== '' && d.serial    === data.serial)    return true;
-    if (data.assetTag  && data.assetTag  !== '' && d.assetTag  === data.assetTag)  return true;
-    return false;
-  });
+  const { serialMatches, assetItMatches } = findDeviceIdentityMatches(devices, data);
+  const match = serialMatches[0] || assetItMatches[0] || null;
+  return match ? devices.findIndex(d => String(d.id) === String(match.id)) : -1;
 }
 
 function saveDevice() {
-  const name = document.getElementById('dev-name').value.trim();
-  if(!name) { alert('กรุณากรอก Device Name'); return; }
   const editId = document.getElementById('dev-edit-id').value;
-  const devices = loadDevices();
   const now = new Date().toISOString();
   const g = id => document.getElementById(id)?.value?.trim()||'';
+  const brandModel = g('dev-brand');
+  const legacyName = g('dev-name');
   const data = {
-    name,
-    brand:        g('dev-brand'),
+    name:         brandModel || legacyName || 'Unnamed Device',
+    brand:        brandModel,
     platform:     g('dev-platform') || 'other',
     type:         g('dev-type') || 'mobile',
+    assetIt:      g('dev-asset-it'),
     assetTag:     g('dev-asset'),
     pbxNumber:    g('dev-pbx-number'),
     serial:       g('dev-serial'),
@@ -1124,6 +1190,11 @@ function saveDevice() {
     // Milestone 2 Task 2.3 — Created By / Updated By metadata.
     updatedBy:    currentUser(),
   };
+  const duplicateCheck = validateDeviceIdentityUnique(loadDevices(), data, { excludeId: editId || null });
+  if(!duplicateCheck.ok) {
+    alert(duplicateCheck.message);
+    return;
+  }
   if(editId) {
     const allDevs = loadDevices();
     const idx = allDevs.findIndex(d => String(d.id) === String(editId));
@@ -1141,26 +1212,9 @@ function saveDevice() {
     appendDeviceAuditLog(updated, 'Edited', { statusBefore: orig.status||null, statusAfter: updated.status||null });
     saveDeviceAsync(updated).catch(e => console.warn('Device save failed', e));
   } else {
-    const allDevs = loadDevices();
-    const dupIdx = findExistingDevice(allDevs, data);
-    if(dupIdx >= 0) {
-      const dup = allDevs[dupIdx];
-      const matchField = (data.assetTag && data.assetTag === dup.assetTag) ? `Asset: ${data.assetTag}` : `Serial: ${data.serial}`;
-      if(!confirm(`พบอุปกรณ์ซ้ำ (${matchField})\nอัปเดตข้อมูลอันเดิมแทน?`)) return;
-      const isMemoSourced = dup.source === 'memo';
-      const merged = {
-        ...dup, ...data,
-        memoNo: isMemoSourced ? dup.memoNo : data.memoNo,
-        source: dup.source || 'manual',
-        auditLog: [...(dup.auditLog||[])],
-      };
-      appendDeviceAuditLog(merged, 'Edited', { comment: `Merged duplicate (${matchField})`, statusBefore: dup.status||null, statusAfter: merged.status||null });
-      saveDeviceAsync(merged).catch(e => console.warn('Device save failed', e));
-    } else {
-      const created = { id: nextDeviceId(), ...data, source: 'manual', createdAt: now, createdBy: currentUser(), auditLog: [] };
-      appendDeviceAuditLog(created, 'Created');
-      saveDeviceAsync(created).catch(e => console.warn('Device save failed', e));
-    }
+    const created = { id: nextDeviceId(), ...data, source: 'manual', createdAt: now, createdBy: currentUser(), auditLog: [] };
+    appendDeviceAuditLog(created, 'Created');
+    saveDeviceAsync(created).catch(e => console.warn('Device save failed', e));
   }
   closeDeviceModal();
   // UAT smoke-test fix: saveDevice() previously called renderDevice() here,
@@ -1178,7 +1232,7 @@ function saveDevice() {
 function deleteDevice(id) {
   const d = loadDevices().find(dev => String(dev.id) === String(id));
   if(!d) return Promise.resolve(false);
-  if(!confirm(`ลบ "${d.name}" ออกจากระบบ?`)) return Promise.resolve(false);
+  if(!confirm(`ลบ "${devicePrimaryLabel(d)}" ออกจากระบบ?`)) return Promise.resolve(false);
   // Milestone 3B fix: deleteDeviceAsync() already updates the local cache/
   // localStorage synchronously before its own Supabase PATCH goes out. Calling
   // renderDevice() here (instead of re-rendering directly) would fire a fresh
@@ -1210,13 +1264,13 @@ function exportDeviceCsv() {
   // full unfiltered registry — see MASTER_SPEC.md "Export Rules".
   const devices = _filteredDevices(loadDevices());
   if(!devices.length) { alert('ไม่มีข้อมูลสำหรับ Export'); return; }
-  const headers = ['PBX Number','OS','Type','Brand / Model','Asset ACC',
+  const headers = ['PBX Number','OS','Type','Brand / Model','Asset IT','Asset ACC',
     'Serial','Assignee','Position','Project','Received date','QA Owner',
     'Updated Date','Remark','OS version','Status','Warranty','Memo Ref'];
   const rows = devices.map(d => [
     d.pbxNumber||'', PLATFORM_LABEL[d.platform||'other']||d.platform||'',
-    TYPE_LABEL[d.type||'other']||d.type||'', d.name||'',
-    d.assetTag||'', d.serial||'', d.owner||'', d.position||'',
+    TYPE_LABEL[d.type||'other']||d.type||'', devicePrimaryLabel(d),
+    d.assetIt||'', d.assetTag||'', d.serial||'', d.owner||'', d.position||'',
     d.project||'', d.assignedDate||'', d.qaOwner||'',
     d.updatedAt ? d.updatedAt.slice(0,10) : '', d.note||'', d.osVersion||'',
     d.status||'', d.warranty||'', d.memoNo||''
@@ -1255,6 +1309,7 @@ function openDeviceDetail(id) {
   const typeLbl = TYPE_LABEL[d.type||'other'] || d.type || '—';
   const statusB = deviceStatusBadge(d.status);
   const typeIcon = { mobile:'📱', tablet:'📟', laptop:'💻', other:'🖥' }[d.type||'other'] || '🖥';
+  const primaryLabel = devicePrimaryLabel(d);
   const sourceMemoCell = memoNo
     ? `<div style="background:var(--bg);border-radius:var(--r-sm);padding:8px 10px">
         <div style="font-size:9px;color:var(--text-3);margin-bottom:2px">${esc('Source Memo Number')}</div>
@@ -1280,7 +1335,7 @@ function openDeviceDetail(id) {
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:42px;height:42px;border-radius:var(--r-sm);background:var(--blue-50);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">${typeIcon}</div>
         <div>
-          <div style="font-size:15px;font-weight:700;color:var(--text)">${esc(d.name)}</div>
+          <div style="font-size:15px;font-weight:700;color:var(--text)">${esc(primaryLabel)}</div>
           <div style="font-size:11px;color:var(--text-3)">${esc(d.brand||'')} · ${esc(platLbl)} · ${esc(typeLbl)}</div>
         </div>
       </div>
@@ -1301,8 +1356,9 @@ function openDeviceDetail(id) {
           ${infoCell('Platform / OS', platLbl)}
           ${infoCell('OS Version', d.osVersion||'—')}
           ${infoCell('Type', typeLbl)}
-          ${infoCell('Brand / Model', d.brand||'—')}
+          ${infoCell('Brand / Model', devicePrimaryLabel(d))}
           ${infoCell('Serial no.', d.serial||'—')}
+          ${infoCell('Asset IT', d.assetIt||'—')}
           ${infoCell('Asset ACC', d.assetTag||'—')}
           ${infoCell('PBX Number', d.pbxNumber||'—')}
           ${infoCell('Warranty', d.warranty ? shortDate(d.warranty) : '—')}

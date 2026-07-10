@@ -346,70 +346,200 @@ async function importLicenses(rows) {
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // DEVICE IMPORT
 // Template columns:
-// PBX Number | OS | Type | Brand / Model | Asset ACC | Serial | Assignee |
+// PBX Number | OS | Type | Brand / Model | Asset IT | Asset ACC | Serial | Assignee |
 // Position | Project | Received date | QA Owner | Remark | OS version
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function deviceImportValue(row, keys) {
+  const normalize = value => String(value).toLowerCase().replace(/[\s_.-]/g, '');
+  for(const key of keys) {
+    const found = Object.keys(row).find(rowKey => normalize(rowKey) === normalize(key));
+    if(found && strVal(row[found])) return row[found];
+  }
+  return '';
+}
+
+function deviceImportKey(value) {
+  return strVal(value).toLowerCase();
+}
+
+function mergeDeviceImportPatch(existing, patch, now) {
+  const merged = { ...existing };
+  Object.entries(patch).forEach(([key, value]) => {
+    if(['id','createdAt','createdBy','auditLog'].includes(key)) return;
+    if(value !== '') merged[key] = value;
+  });
+  merged.id = existing.id;
+  merged.createdAt = existing.createdAt;
+  merged.createdBy = existing.createdBy || null;
+  merged.updatedAt = now;
+  merged.updatedBy = typeof currentUser === 'function' ? currentUser() : 'Import';
+  merged.source = existing.source || 'manual';
+  merged.auditLog = [...(existing.auditLog || [])];
+  if(typeof appendDeviceAuditLog === 'function') {
+    appendDeviceAuditLog(merged, 'Bulk import updated', { comment: 'Updated from Device Excel import' });
+  }
+  return merged;
+}
+
 async function importDevices(rows) {
-  const existing = loadDevices();
+  const existingRaw = typeof _loadDevicesRaw === 'function' ? _loadDevicesRaw() : loadDevices();
+  const activeExisting = typeof _excludeDeletedDevices === 'function' ? _excludeDeletedDevices(existingRaw) : existingRaw;
+  const existing = [...existingRaw];
   const now = new Date().toISOString();
-  let added = 0, skipped = 0, updated = 0;
+  let added = 0, skipped = 0, updated = 0, failed = 0;
   const changed = [];
+  const results = [];
+  const seenSerial = new Map();
+  const seenAssetIt = new Map();
+  const touchedExistingIds = new Map();
 
-  rows.forEach(row => {
-    const name = strVal(row['Brand / Model'] || row['Name'] || row['name'] || row['Device Name']);
-    if(!name) { skipped++; return; }
+  rows.forEach((row, index) => {
+    const rowNo = index + 2;
+    const hasAnyData = Object.values(row || {}).some(v => strVal(v));
+    if(!hasAnyData) {
+      skipped++;
+      results.push({ rowNo, status:'Skipped', reason:'Blank row' });
+      return;
+    }
 
-    const typeRaw = strVal(row['Type'] || row['type']).toLowerCase();
+    const name = strVal(deviceImportValue(row, ['Brand / Model','Name','Device Name']));
+    const serial = strVal(deviceImportValue(row, ['Serial','Serial No','Serial Number','SN']));
+    const assetIt = strVal(deviceImportValue(row, ['Asset IT','AssetIT','Asset_IT','IT Asset','Asset IT No.','Asset IT Number']));
+    const serialKey = deviceImportKey(serial);
+    const assetItKey = deviceImportKey(assetIt);
+
+    if(serialKey && seenSerial.has(serialKey)) {
+      failed++;
+      results.push({ rowNo, status:'Failed', reason:`Duplicate Serial with row ${seenSerial.get(serialKey)}` });
+      return;
+    }
+    if(assetItKey && seenAssetIt.has(assetItKey)) {
+      failed++;
+      results.push({ rowNo, status:'Failed', reason:`Duplicate Asset IT with row ${seenAssetIt.get(assetItKey)}` });
+      return;
+    }
+
+    const matches = typeof findDeviceIdentityMatches === 'function'
+      ? findDeviceIdentityMatches(activeExisting, { serial, assetIt })
+      : { serialMatches: activeExisting.filter(d => serialKey && deviceImportKey(d.serial) === serialKey), assetItMatches: activeExisting.filter(d => assetItKey && deviceImportKey(d.assetIt) === assetItKey) };
+    const serialMatches = matches.serialMatches || [];
+    const assetItMatches = matches.assetItMatches || [];
+    if(serialMatches.length > 1) {
+      failed++;
+      results.push({ rowNo, status:'Failed', reason:'Serial matches multiple active devices' });
+      return;
+    }
+    if(assetItMatches.length > 1) {
+      failed++;
+      results.push({ rowNo, status:'Failed', reason:'Asset IT matches multiple active devices' });
+      return;
+    }
+    const serialMatch = serialMatches[0] || null;
+    const assetItMatch = assetItMatches[0] || null;
+    if(serialMatch && assetItMatch && String(serialMatch.id) !== String(assetItMatch.id)) {
+      failed++;
+      const serialLabel = typeof deviceConflictLabel === 'function' ? deviceConflictLabel(serialMatch) : 'another device';
+      const assetItLabel = typeof deviceConflictLabel === 'function' ? deviceConflictLabel(assetItMatch) : 'another device';
+      results.push({ rowNo, status:'Failed', reason:`Serial Number and Asset IT point to different existing devices: ${serialLabel} and ${assetItLabel}` });
+      return;
+    }
+    const matchedExisting = serialMatch || assetItMatch || null;
+    if(matchedExisting && touchedExistingIds.has(String(matchedExisting.id))) {
+      failed++;
+      results.push({ rowNo, status:'Failed', reason:`Matches existing device already updated by row ${touchedExistingIds.get(String(matchedExisting.id))}` });
+      return;
+    }
+
+    const typeRaw = strVal(deviceImportValue(row, ['Type'])).toLowerCase();
     const typeMap = { 'mobile':'mobile', 'mobile phone':'mobile', 'laptop':'laptop', 'tablet':'tablet', 'other':'other' };
-    const type = typeMap[typeRaw] || 'other';
+    const type = typeRaw ? (typeMap[typeRaw] || 'other') : '';
 
-    const osRaw = strVal(row['OS'] || row['os'] || '').toLowerCase();
+    const osRaw = strVal(deviceImportValue(row, ['OS','Platform'])).toLowerCase();
     const platMap = { 'ios':'ios', 'android':'android', 'huawei':'huawei', 'windows':'windows' };
-    const platform = platMap[osRaw] || 'other';
+    const platform = osRaw ? (platMap[osRaw] || 'other') : '';
 
-    const device = {
-      id: crypto.randomUUID(),
-      name, type, platform,
-      brand:        strVal(row['Brand / Model'] || ''),
-      pbxNumber:    strVal(row['PBX Number'] || row['pbx_number'] || ''),
-      assetTag:     strVal(row['Asset ACC'] || row['Asset IT'] || row['Asset Tag'] || ''),
-      serial:       strVal(row['Serial'] || row['Serial No'] || ''),
-      owner:        strVal(row['Assignee'] || row['Owner'] || ''),
-      position:     strVal(row['Position'] || ''),
-      project:      strVal(row['Project'] || ''),
-      assignedDate: parseExcelDate(row['Received date'] || row['Assigned Date'] || ''),
-      qaOwner:      strVal(row['QA Owner'] || ''),
+    const qaOwner = strVal(deviceImportValue(row, ['QA Owner','QA_Owner']));
+    const brandModel = strVal(deviceImportValue(row, ['Brand / Model','Brand','Model']));
+    const patch = {
+      name:         name || brandModel,
+      type,
+      platform,
+      brand:        brandModel,
+      pbxNumber:    strVal(deviceImportValue(row, ['PBX Number','PBX_Number'])),
+      assetIt,
+      assetTag:     strVal(deviceImportValue(row, ['Asset ACC','Asset_ACC','Asset Tag'])),
+      serial,
+      owner:        strVal(deviceImportValue(row, ['Assignee','Owner'])),
+      position:     strVal(deviceImportValue(row, ['Position'])),
+      project:      strVal(deviceImportValue(row, ['Project'])),
+      company:      strVal(deviceImportValue(row, ['Company'])),
+      assignedDate: parseExcelDate(deviceImportValue(row, ['Received date','Assigned Date','Received Date'])),
+      returnDate:   parseExcelDate(deviceImportValue(row, ['Return Date'])),
+      warranty:     parseExcelDate(deviceImportValue(row, ['Warranty','Warranty Expiry'])),
+      qaOwner,
       updatedAt:    now,
-      note:         strVal(row['Remark'] || row['Note'] || ''),
-      osVersion:    strVal(row['OS version'] || row['OS Version'] || ''),
-      status:       typeof defaultDeviceStatusFromQaOwner === 'function'
-        ? defaultDeviceStatusFromQaOwner(strVal(row['QA Owner'] || ''))
-        : (strVal(row['QA Owner'] || '') ? 'in-use' : 'available'),
+      note:         strVal(deviceImportValue(row, ['Remark','Note'])),
+      osVersion:    strVal(deviceImportValue(row, ['OS version','OS Version'])),
+      status:       qaOwner
+        ? (typeof defaultDeviceStatusFromQaOwner === 'function'
+          ? defaultDeviceStatusFromQaOwner(qaOwner)
+          : 'in-use')
+        : '',
       createdAt:    now,
     };
-    const dupIdx = typeof findExistingDevice === 'function'
-      ? findExistingDevice(existing, device)
-      : existing.findIndex(d => {
-          if(device.assetTag && d.assetTag && device.assetTag === d.assetTag) return true;
-          if(device.serial && d.serial && device.serial === d.serial) return true;
-          return false;
-        });
 
-    if(dupIdx >= 0) {
-      existing[dupIdx] = { ...existing[dupIdx], ...device, id: existing[dupIdx].id, createdAt: existing[dupIdx].createdAt };
-      changed.push(existing[dupIdx]);
+    if(matchedExisting) {
+      const existingIdx = existing.findIndex(d => String(d.id) === String(matchedExisting.id));
+      if(existingIdx < 0) {
+        failed++;
+        results.push({ rowNo, status:'Failed', reason:'Matched device was not found in local cache' });
+        return;
+      }
+      existing[existingIdx] = mergeDeviceImportPatch(existing[existingIdx], patch, now);
+      changed.push(existing[existingIdx]);
+      touchedExistingIds.set(String(existing[existingIdx].id), rowNo);
       updated++;
+      results.push({ rowNo, status:'Updated', reason: serialMatch ? 'Matched Serial' : 'Matched Asset IT' });
     } else {
+      const device = {
+        id: crypto.randomUUID(),
+        ...patch,
+        name: patch.brand || patch.name || 'Unnamed Device',
+        type: patch.type || 'other',
+        platform: patch.platform || 'other',
+        status: patch.status || (typeof defaultDeviceStatusFromQaOwner === 'function' ? defaultDeviceStatusFromQaOwner(patch.qaOwner) : (patch.qaOwner ? 'in-use' : 'available')),
+        source: 'bulk-import',
+        createdAt: now,
+        updatedAt: now,
+        createdBy: typeof currentUser === 'function' ? currentUser() : 'Import',
+        updatedBy: typeof currentUser === 'function' ? currentUser() : 'Import',
+        auditLog: [],
+      };
+      if(typeof appendDeviceAuditLog === 'function') {
+        appendDeviceAuditLog(device, 'Bulk import created', { comment: 'Created from Device Excel import' });
+      }
       existing.push(device);
       changed.push(device);
       added++;
+      const missingIdFields = typeof missingDeviceIdentificationFields === 'function'
+        ? missingDeviceIdentificationFields(device)
+        : [];
+      results.push({ rowNo, status:'Added', reason: missingIdFields.length ? 'Imported with Missing ID' : 'New device' });
     }
+
+    if(serialKey) seenSerial.set(serialKey, rowNo);
+    if(assetItKey) seenAssetIt.set(assetItKey, rowNo);
   });
 
   storeDevices(existing);
   await Promise.all(changed.map(device => saveDeviceAsync(device)));
   renderDevice();
-  alert(`✓ Import สำเร็จ\nเพิ่มใหม่ ${added}${updated ? ` · อัปเดตเดิม ${updated}` : ''}${skipped ? `\nข้ามแถวว่าง ${skipped}` : ''} รายการ`);
+  const detail = results
+    .filter(r => r.status === 'Failed' || r.status === 'Skipped')
+    .slice(0, 12)
+    .map(r => `Row ${r.rowNo}: ${r.status} - ${r.reason}`)
+    .join('\n');
+  alert(`Device import completed\nAdded: ${added}\nUpdated: ${updated}\nSkipped / Failed: ${skipped + failed}${detail ? `\n\n${detail}` : ''}`);
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -491,9 +621,9 @@ function downloadTemplate(type) {
     },
     device: {
       filename: 'device_import_template.xlsx',
-      headers: ['PBX Number','OS','Type','Brand / Model','Asset ACC','Serial','Assignee','Position','Project','Received date','QA Owner','Remark','OS version'],
-      sample: [['PBX-001','iOS','Mobile','Apple iPhone 15','ACC-001','SN12345','Chuen K.','PMO','AOA-MP','2025-01-15','Best IT','','iOS 17.4.1'],
-               ['PBX-002','Windows','Laptop','Dell Latitude 5540','ACC-002','SN67890','Tom P.','Developer','TTB','2025-02-01','Best IT','','Windows 11']]
+      headers: ['PBX Number','OS','Type','Brand / Model','Asset IT','Asset ACC','Serial','Assignee','Position','Company','Project','Received date','Warranty','Return Date','QA Owner','Remark','OS version'],
+      sample: [['PBX-001','iOS','Mobile','Apple iPhone 15','IT-001','ACC-001','SN12345','Chuen K.','PMO','Orbit Digital','AOA-MP','2025-01-15','2027-01-15','','Best IT','','iOS 17.4.1'],
+               ['PBX-002','Windows','Laptop','Dell Latitude 5540','IT-002','ACC-002','SN67890','Tom P.','Developer','BBIK','TTB','2025-02-01','2028-02-01','','Best IT','','Windows 11']]
     },
     budget: {
       filename: 'budget_import_template.xlsx',

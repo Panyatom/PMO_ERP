@@ -1835,7 +1835,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
               <th style="width:16%;padding-left:16px">Brand / Model</th>
               <th style="width:8%">OS</th>
               <th style="width:7%">Type</th>
-              <th style="width:10%">Asset ACC</th>
+              <th style="width:9%">Asset IT</th>
+              <th style="width:9%">Asset ACC</th>
               <th style="width:11%">Serial No.</th>
               <th style="width:11%">QA Owner</th>
               <th style="width:9%">Project</th>
@@ -2267,8 +2268,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
       <button onclick="closeDeviceModal()" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:20px">&#x2715;</button>
     </div>
     <input type="hidden" id="dev-edit-id">
+    <input type="hidden" id="dev-name">
     <div class="device-form-grid">
-      <div class="fg"><label>Device Name *</label><input type="text" id="dev-name" placeholder="เช่น iPhone 15 Pro"></div>
       <div class="fg"><label>Brand / Model</label><input type="text" id="dev-brand" placeholder="เช่น Apple iPhone 15 Pro"></div>
       <div class="fg"><label>Platform *</label>
         <select id="dev-platform">
@@ -2287,6 +2288,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <option value="other">Other</option>
         </select>
       </div>
+      <div class="fg"><label>Asset IT</label><input type="text" id="dev-asset-it" placeholder="เช่น IT-001"></div>
       <div class="fg"><label>Asset ACC</label><input type="text" id="dev-asset" placeholder="เช่น ACC-001"></div>
       <div class="fg"><label>Serial Number</label><input type="text" id="dev-serial" placeholder="S/N หรือ IMEI"></div>
       <div class="fg"><label>PBX Number</label><input type="text" id="dev-pbx-number" placeholder="เช่น PBX-001"></div>
