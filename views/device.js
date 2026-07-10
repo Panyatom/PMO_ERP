@@ -892,19 +892,10 @@ function _renderDeviceTable() {
       <td style="text-align:center"><span class="badge ${statusB.cls}">${esc(statusB.label)}</span></td>
       <td style="font-size:11px;color:var(--text-3)">${updDate}</td>
       <td style="text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
-        <button class="btn-sm" onclick="event.stopPropagation();openDeviceModal('${esc(String(d.id))}')" style="padding:3px 7px;font-size:11px" title="แก้ไข">✎</button>
-        <button class="btn-sm" onclick="event.stopPropagation();deleteDevice('${esc(String(d.id))}')" style="padding:3px 7px;font-size:11px;color:var(--red)" title="ลบ">✕</button>
+        <button class="btn-sm" onclick="event.stopPropagation();openDeviceDetail('${esc(String(d.id))}')" style="padding:3px 9px;font-size:11px" title="View Detail">View</button>
       </td>
     </tr>`;
   }).join('');
-
-  tbody.onclick = function(e) {
-    const btn = e.target.closest('[data-action]');
-    if(!btn) return;
-    const id = Number(btn.dataset.id);
-    if(btn.dataset.action==='edit')   openDeviceModal(id);
-    if(btn.dataset.action==='delete') deleteDevice(id);
-  };
 
   // Load more footer
   const footer = document.getElementById('dev-load-more-footer');
@@ -1104,8 +1095,8 @@ function saveDevice() {
 
 function deleteDevice(id) {
   const d = loadDevices().find(dev => String(dev.id) === String(id));
-  if(!d) return;
-  if(!confirm(`ลบ "${d.name}" ออกจากระบบ?`)) return;
+  if(!d) return Promise.resolve(false);
+  if(!confirm(`ลบ "${d.name}" ออกจากระบบ?`)) return Promise.resolve(false);
   // Milestone 3B fix: deleteDeviceAsync() already updates the local cache/
   // localStorage synchronously before its own Supabase PATCH goes out. Calling
   // renderDevice() here (instead of re-rendering directly) would fire a fresh
@@ -1115,9 +1106,19 @@ function deleteDevice(id) {
   // Awaiting the delete, then re-rendering from the already-updated local
   // cache directly (no redundant fetch), matches the pattern already used by
   // submitMarkArrived().
-  deleteDeviceAsync(id).then(() => {
+  return deleteDeviceAsync(id).then(() => {
     _renderDeviceTable();
+    return true;
   }).catch(e => console.warn('Delete failed', e));
+}
+
+function deleteDeviceFromDetail(id) {
+  deleteDevice(id).then(deleted => {
+    if(deleted) {
+      const panel = document.getElementById('dev-detail-modal');
+      if(panel) panel.style.display = 'none';
+    }
+  });
 }
 
 // ── Export CSV ──
@@ -1166,10 +1167,21 @@ function openDeviceDetail(id) {
   const d = loadDevices().find(dev => String(dev.id) === String(id));
   if(!d) return;
   const idStr = esc(String(d.id));
+  const memoNo = d.memoNo || '';
+  const memoNoEsc = esc(memoNo);
   const platLbl = PLATFORM_LABEL[d.platform||'other'] || d.platform || '—';
   const typeLbl = TYPE_LABEL[d.type||'other'] || d.type || '—';
   const statusB = deviceStatusBadge(d.status);
   const typeIcon = { mobile:'📱', tablet:'📟', laptop:'💻', other:'🖥' }[d.type||'other'] || '🖥';
+  const sourceMemoCell = memoNo
+    ? `<div style="background:var(--bg);border-radius:var(--r-sm);padding:8px 10px">
+        <div style="font-size:9px;color:var(--text-3);margin-bottom:2px">${esc('Source Memo Number')}</div>
+        <div style="display:flex;gap:6px;align-items:center;justify-content:space-between">
+          <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis">${memoNoEsc}</div>
+          <button class="btn-sm" style="font-size:10px;padding:2px 7px;white-space:nowrap" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${memoNoEsc}')">View Source Memo</button>
+        </div>
+      </div>`
+    : infoCell('Source Memo Number', '—');
 
   let panel = document.getElementById('dev-detail-modal');
   if(!panel) {
@@ -1193,6 +1205,7 @@ function openDeviceDetail(id) {
       <div style="display:flex;gap:6px;align-items:center">
         <span class="badge ${statusB.cls}">${esc(statusB.label)}</span>
         <button class="btn-sm" onclick="document.getElementById('dev-detail-modal').style.display='none';openDeviceModal('${idStr}')" style="font-size:11px;padding:3px 8px">✎ Edit</button>
+        <button class="btn-sm" onclick="deleteDeviceFromDetail('${idStr}')" style="font-size:11px;padding:3px 8px;color:var(--red)">✕ Delete</button>
         <button class="btn-sm" onclick="document.getElementById('dev-detail-modal').style.display='none'" style="font-size:11px;padding:3px 8px">✕</button>
       </div>
     </div>
@@ -1202,13 +1215,15 @@ function openDeviceDetail(id) {
       <div>
         <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Device info</div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
-          ${infoCell('OS', platLbl)}
-          ${infoCell('OS version', d.osVersion||'—')}
+          ${infoCell('Platform / OS', platLbl)}
+          ${infoCell('OS Version', d.osVersion||'—')}
           ${infoCell('Type', typeLbl)}
+          ${infoCell('Brand / Model', d.brand||'—')}
           ${infoCell('Serial no.', d.serial||'—')}
           ${infoCell('Asset ACC', d.assetTag||'—')}
           ${infoCell('PBX Number', d.pbxNumber||'—')}
           ${infoCell('Warranty', d.warranty ? shortDate(d.warranty) : '—')}
+          ${infoCell('Status', statusB.label)}
         </div>
       </div>
 
@@ -1217,10 +1232,22 @@ function openDeviceDetail(id) {
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
           ${infoCell('Assignee', d.owner||'—')}
           ${infoCell('Position', d.position||'—')}
-          ${infoCell('Project', d.project||'—')}
-          ${infoCell('Received date', d.assignedDate ? shortDate(d.assignedDate) : '—')}
           ${infoCell('QA Owner', d.qaOwner||'—')}
-          ${infoCell('Updated', d.updatedAt ? shortDate(d.updatedAt) : '—')}
+          ${infoCell('Project', d.project||'—')}
+          ${infoCell('Company', d.company||'—')}
+          ${infoCell('Received date', d.assignedDate ? shortDate(d.assignedDate) : '—')}
+          ${infoCell('Return Date', d.returnDate ? shortDate(d.returnDate) : '—')}
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Source and audit</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+          ${sourceMemoCell}
+          ${infoCell('Created By', d.createdBy||'—')}
+          ${infoCell('Created Date', d.createdAt ? shortDate(d.createdAt) : '—')}
+          ${infoCell('Updated By', d.updatedBy||'—')}
+          ${infoCell('Updated Date', d.updatedAt ? shortDate(d.updatedAt) : '—')}
         </div>
       </div>
 
