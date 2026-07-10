@@ -262,6 +262,30 @@ body {
 .fg input[readonly]:focus { box-shadow: none; border-color: var(--border); }
 .fg textarea { resize: vertical; min-height: 64px; }
 .form-note { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+.device-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px 12px;
+  margin-bottom: 16px;
+}
+.device-form-grid .fg { min-width: 0; }
+.device-form-wide { grid-column: 1 / -1; }
+.device-memo-link-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+.device-memo-link-control .btn-sm {
+  height: 33px;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .device-form-grid { grid-template-columns: 1fr; }
+  .device-form-wide { grid-column: auto; }
+  .device-memo-link-control { grid-template-columns: 1fr; }
+  .device-memo-link-control .btn-sm { width: 100%; }
+}
 
 /* ── ITEMS TABLE ── */
 .items-hdr {

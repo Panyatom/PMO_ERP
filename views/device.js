@@ -586,7 +586,7 @@ let _devProjectSummaryExpanded = false;
 
 function toggleDeviceProjectSummary() {
   _devProjectSummaryExpanded = !_devProjectSummaryExpanded;
-  renderDeviceSummaries(loadDevices());
+  renderDeviceSummaries(_filteredDevices(loadDevices()));
 }
 
 // ── Summary tables ──
@@ -867,31 +867,51 @@ function _clearDevDeepLinkFilter() {
   _renderDeviceTable();
 }
 
+function _deviceEmptyStateMessage(filteredDevices, allDevices) {
+  if (filteredDevices.length) return '';
+  if (_devDeepLinkFilter?.source === 'po' && _devDeepLinkFilter.poId) {
+    const poDevices = allDevices.filter(d => d.purchaseOrderId === _devDeepLinkFilter.poId);
+    if (!poDevices.length) return 'No devices have been registered for this Purchase Order';
+  }
+  const hasActiveRegistryFilters = !!(document.getElementById('dev-search')?.value || '').trim()
+    || msValues('dev-filter-platform').length
+    || msValues('dev-filter-type').length
+    || msValues('dev-filter-status').length
+    || msValues('dev-filter-project').length
+    || msValues('dev-filter-company').length
+    || !!_devDeepLinkFilter;
+  return hasActiveRegistryFilters || allDevices.length
+    ? 'No devices found. Try changing filters.'
+    : 'No devices found — click Add Device or Import Excel.';
+}
+
 function _renderDeviceTable() {
   _renderDevRegistryContextBanner();
 
   const allDevices = loadDevices();
+  const devices = _filteredDevices(allDevices);
 
-  // Metrics (unfiltered)
-  const total    = allDevices.length;
-  const inUse    = allDevices.filter(d => d.status==='in-use').length;
-  const available= allDevices.filter(d => d.status==='available').length;
-  const wExp     = allDevices.filter(d => d.warranty && new Date(d.warranty) < new Date()).length;
+  // Metrics reflect the same filtered dataset as the summaries and list.
+  const total    = devices.length;
+  const inUse    = devices.filter(d => d.status==='in-use').length;
+  const available= devices.filter(d => d.status==='available').length;
+  const wExp     = devices.filter(d => d.warranty && new Date(d.warranty) < new Date()).length;
   document.getElementById('dev-total').textContent           = total;
   document.getElementById('dev-total-sub').textContent       = total ? `${inUse} in use` : '';
   document.getElementById('dev-inuse').textContent           = inUse;
   document.getElementById('dev-available').textContent       = available;
   document.getElementById('dev-warranty-expired').textContent= wExp;
 
-  // Summary tables (unfiltered)
-  renderDeviceSummaries(allDevices);
+  // Summary tables use the same filtered dataset as metrics and list.
+  renderDeviceSummaries(devices);
 
   const search = (document.getElementById('dev-search')?.value||'').toLowerCase();
-  const devices = _filteredDevices(allDevices);
 
   const tbody = document.getElementById('dev-table-body');
   if(!devices.length) {
-    tbody.innerHTML = `<tr><td colspan="12" class="hist-empty">${search ? 'No devices found. Try changing filters.' : 'No devices found — click Add Device or Import Excel.'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" class="hist-empty">${esc(_deviceEmptyStateMessage(devices, allDevices))}</td></tr>`;
+    const footer = document.getElementById('dev-load-more-footer');
+    if(footer) { footer.style.display = 'none'; footer.innerHTML = ''; }
     return;
   }
 
@@ -903,6 +923,7 @@ function _renderDeviceTable() {
     statFilter: msValues('dev-filter-status'),
     projFilter: msValues('dev-filter-project'),
     compFilter: msValues('dev-filter-company'),
+    deepLinkFilter: _devDeepLinkFilter,
   });
   if(typeof _devLastFilter !== 'undefined' && _devLastFilter !== filterKey) _devVisibleCount = DEV_PAGE_SIZE;
   window._devLastFilter = filterKey;
@@ -1460,13 +1481,12 @@ function _devicesCountForPO(po) {
   return loadDevices().filter(d => d.purchaseOrderId === po.id).length;
 }
 
-// Device Management D2 (Part 3) — PO -> Device Registry drill-down. No-op
-// when the PO has zero devices created yet (rendered as plain, non-clickable
-// text in _renderPOTable(), never wired to this handler at all).
+// Device Management D2 (Part 3) — PO -> Device Registry drill-down. Always
+// opens the registry with PO context; zero-device POs render an inline empty
+// state there instead of failing silently.
 function viewDevicesForPO(poId) {
   const po = loadPurchaseOrders().find(p => p.id === poId);
   if(!po) return;
-  if(!_devicesCountForPO(po)) return;
   _devDeepLinkFilter = { poId: po.id, memoNo: po.memoNo, itemName: po.itemName, source: 'po' };
   // switchDevTab('registry', ...) only toggles panel visibility — it does not
   // re-render (unlike the 'orders' branch, which calls renderPurchaseOrders())
@@ -1647,11 +1667,6 @@ function poActionBtn(po) {
     return `<button class="btn-sm" style="font-size:11px" onclick="advancePOStatus('${esc(po.id)}','awaiting')">Mark awaiting</button>`;
   if (s === 'awaiting' || s === 'partial_arrived')
     return `<button class="btn-sm" style="font-size:11px;background:#185FA5;color:#fff;border-color:transparent" onclick="openMarkArrivedModal('${esc(po.id)}')">+ Mark arrived</button>`;
-  if (s === 'fulfilled')
-    // Device Management D2 (Part 3) — scoped to this PO's own devices, same
-    // as the Devices column's drill-down link, instead of jumping to an
-    // unfiltered Device Registry.
-    return `<button class="btn-sm" style="font-size:11px;color:var(--text-3)" onclick="viewDevicesForPO('${esc(po.id)}')">View devices</button>`;
   return '';
 }
 
@@ -1667,6 +1682,12 @@ function advancePOStatus(poId, newStatus) {
   savePurchaseOrderAsync(po).catch(e => console.warn('PO advance failed', e));
   _poCache = null;
   _renderPOTable();
+}
+
+function _setPOActionsColumnVisible(show) {
+  const tbody = document.getElementById('po-table-body');
+  const actionHead = tbody?.closest('table')?.querySelector('thead tr th:last-child');
+  if(actionHead) actionHead.style.display = show ? '' : 'none';
 }
 
 function _renderPOTable() {
@@ -1692,7 +1713,8 @@ function _renderPOTable() {
   if (!tbody) return;
 
   if (!pos.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="hist-empty">No purchase orders found — approve a Hardware memo to create one automatically.</td></tr>`;
+    _setPOActionsColumnVisible(false);
+    tbody.innerHTML = `<tr><td colspan="9" class="hist-empty">No purchase orders found — approve a Hardware memo to create one automatically.</td></tr>`;
     const countEl = document.getElementById('po-visible-count');
     if(countEl) countEl.textContent = '';
     return;
@@ -1703,15 +1725,19 @@ function _renderPOTable() {
   if(countEl) countEl.textContent = visible.length === pos.length ? `${pos.length} orders` : `Showing ${visible.length} of ${pos.length} orders`;
 
   if (!visible.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="hist-empty">No purchase orders found. Try changing filters.</td></tr>`;
+    _setPOActionsColumnVisible(false);
+    tbody.innerHTML = `<tr><td colspan="9" class="hist-empty">No purchase orders found. Try changing filters.</td></tr>`;
     return;
   }
 
   // Sort: active first (by status order), then fulfilled, then voided source
   const statusOrder = { pending_order:0, ordered:1, awaiting:2, partial_arrived:3, fulfilled:4, voided_source:5 };
   const sorted = [...visible].sort((a,b) => (statusOrder[poEffectiveStatus(a)]||99) - (statusOrder[poEffectiveStatus(b)]||99));
+  const rows = sorted.map(po => ({ po, actionHtml: poActionBtn(po) }));
+  const showActions = rows.some(row => row.actionHtml);
+  _setPOActionsColumnVisible(showActions);
 
-  tbody.innerHTML = sorted.map(po => {
+  tbody.innerHTML = rows.map(({ po, actionHtml }) => {
     const pct = po.orderedQty > 0 ? Math.round(po.arrivedQty / po.orderedQty * 100) : 0;
     const barColor = pct >= 100 ? '#3B6D11' : '#185FA5';
     const voidTooltip = poVoidTooltip(po);
@@ -1736,7 +1762,7 @@ function _renderPOTable() {
       <td style="padding:9px 12px;text-align:center">${devCount > 0
         ? `<span style="color:#185FA5;font-weight:500;cursor:pointer;text-decoration:underline" onclick="viewDevicesForPO('${esc(po.id)}')">${devCount} device${devCount>1?'s':''}</span>`
         : `<span style="color:var(--text-3)">0</span>`}</td>
-      <td style="padding:9px 12px;white-space:nowrap">${poActionBtn(po)}</td>
+      ${showActions ? `<td style="padding:9px 12px;white-space:nowrap">${actionHtml}</td>` : ''}
     </tr>`;
   }).join('');
 }
