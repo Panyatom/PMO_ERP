@@ -595,7 +595,7 @@
   }
   function getManualExpenses() {
     return typeof window.loadActualSpendRecords === 'function'
-      ? window.loadActualSpendRecords().filter(r => r.source === 'Manual / Historical Expense')
+      ? window.loadActualSpendRecords().filter(r => r.source === 'manual_spending')
       : [];
   }
 

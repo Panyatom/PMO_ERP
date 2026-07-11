@@ -35,13 +35,13 @@ test('Full canonical transaction detail panel shows "-" for missing summary fiel
     project: 'AOA',
     // referenceNo, vendorProgram/program, startDate, endDate deliberately omitted.
   };
-  budget.showCanonicalTransactionDetail(record, { title: 'Manual Entry Detail' });
+  budget.showCanonicalTransactionDetail(record, { title: 'Manual Spending Detail' });
   const panel = global.document.body.children[global.document.body.children.length - 1];
   assert.ok(panel.innerHTML.includes('txn-field-grid'), 'summary field grid must still render');
   assert.ok(panel.innerHTML.includes('>-<'), 'missing fields must display as "-"');
 });
 
-test('Manual Entry detail does not manufacture Memo-only fields (Program/Plan) just to show "-"', () => {
+test('Manual Spending detail does not manufacture Memo-only fields (Program/Plan) just to show "-"', () => {
   const record = { source: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE, spendType: SPEND_TYPES.HARDWARE, amount: 100 };
   const html = budget.renderManualEntrySpendTypeDetail(record);
   assert.ok(!html.includes('>Program<'));

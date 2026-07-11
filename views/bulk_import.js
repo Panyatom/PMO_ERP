@@ -561,9 +561,7 @@ async function importDevices(rows) {
 // Template columns:
 // Memo No | Type | Project | Requester | Reviewer | Approver | Amount | Status | Date | Subject | Reason
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-function importBudgetMemos(rows) {
-  const existing = loadMemos();
-  const existingNos = new Set(existing.map(m => m.memoNo));
+async function importBudgetMemos(rows) {
   const now = new Date().toISOString();
   let added = 0, dupes = 0, skipped = 0;
 
@@ -575,13 +573,10 @@ function importBudgetMemos(rows) {
   rows.forEach(row => {
     const memoNo = strVal(row['Memo No'] || row['memo_no'] || row['เลข Memo']);
     if(!memoNo) { skipped++; return; }
-    if(existingNos.has(memoNo)) { dupes++; return; }
+    if(typeof historicalMemoNoConflict === 'function' && historicalMemoNoConflict(memoNo)) { dupes++; return; }
 
     const typeRaw = strVal(row['Type'] || row['type'] || row['ประเภท']).toLowerCase();
     const type = typeMap[typeRaw] || 'sl';
-
-    const statusRaw = strVal(row['Status'] || row['status'] || 'completed').toLowerCase();
-    const status = ['completed','rejected','pending','cancelled'].includes(statusRaw) ? statusRaw : 'completed';
 
     const dateStr = parseExcelDate(row['Date'] || row['date'] || row['วันที่']);
     const dateISO = dateStr ? new Date(dateStr+'T00:00:00').toISOString() : now;
@@ -590,7 +585,6 @@ function importBudgetMemos(rows) {
       memoNo,
       type,
       typeLabel: TYPE_LABELS[type] || type.toUpperCase(),
-      status,
       project:       strVal(row['Project'] || row['project'] || row['โครงการ']),
       requesterName: strVal(row['Requester'] || row['requester'] || row['ผู้ขอ']),
       reviewerName:  strVal(row['Reviewer'] || row['reviewer'] || '-'),
@@ -602,18 +596,21 @@ function importBudgetMemos(rows) {
       date:          dateStr,
       createdAt:     dateISO,
       updatedAt:     dateISO,
-      approvedAt:    status === 'completed' ? dateISO : undefined,
+      approvedAt:    dateISO,
       sections:      [],
       auditLog:      [{ actor:'Import', action:'imported from Excel', comment:'Historical data import', timestamp:now }],
-      source:        'import',
+      sourceKind:    'historical',
+      originalDocumentRef: strVal(row['Original Document Link'] || row['Document Link'] || row['reference']),
     };
-    existing.push(memo);
-    existingNos.add(memoNo);
-    added++;
+    try {
+      saveHistoricalMemo(memo);
+      added++;
+    } catch(e) {
+      dupes++;
+    }
   });
 
-  storeMemos(existing);
-  renderBudget();
+  if(typeof renderBudget === 'function') renderBudget();
   let msg = `✓ Import สำเร็จ\nเพิ่ม ${added} memo`;
   if(dupes)   msg += `\nข้าม ${dupes} รายการที่ Memo No ซ้ำ`;
   if(skipped) msg += `\nข้าม ${skipped} แถวว่าง`;

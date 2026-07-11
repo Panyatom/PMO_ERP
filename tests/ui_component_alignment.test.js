@@ -39,12 +39,12 @@ test('owned add/edit modals use the shared modal shell classes', () => {
   assert.match(budget, /<div class="pmo-modal-footer">[\s\S]*saveBudgetPool\(\)/);
 });
 
-test('manual actual spend modal keeps transaction shell and shares header/footer controls', () => {
+test('Infrastructure / Other Add Spending modal keeps transaction shell and shared controls', () => {
   const budget = read('views/budget.js');
 
   assert.match(budget, /modal\.id = 'manual-expense-modal';[\s\S]*modal\.className = 'txn-modal-backdrop';/);
   assert.match(budget, /<div class="card txn-modal-card txn-modal-card--form">/);
-  assert.match(budget, /<div class="pmo-modal-header">[\s\S]*Add'} Manual Actual Spend/);
+  assert.match(budget, /<div class="pmo-modal-header">[\s\S]*Add'} Spending/);
   assert.match(budget, /<button class="pmo-modal-close" onclick="document\.getElementById\('manual-expense-modal'\)\.remove\(\)">/);
   assert.match(budget, /<div class="pmo-modal-footer">[\s\S]*saveManualExpenseFromModal\(\)/);
 });

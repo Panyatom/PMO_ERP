@@ -1248,17 +1248,52 @@ document.addEventListener('click', e => {
 
 // ── Budget Tag Cell (inline in history table) ──
 // Default: auto-assign to memo.project — PMO can override to Company-Wide
-function getMemoActualSpend(memoNo) {
+function isHistoricalBudgetMemo(memo) {
+  return Boolean(memo && (memo.sourceKind === 'historical' || memo.isHistoricalMemo));
+}
+
+function budgetTagMemoKey(memo) {
+  if (!isHistoricalBudgetMemo(memo)) return memo?.memoNo || '';
+  return `historical:${memo.id || memo.memoNo}`;
+}
+
+function findBudgetTagMemo(ref) {
+  const value = String(ref || '');
+  const historicalId = value.replace(/^historical:/, '');
+  if (value.startsWith('historical:')) {
+    const memo = typeof loadHistoricalMemos === 'function'
+      ? loadHistoricalMemos().find(item => String(item.id || '') === historicalId || String(item.memoNo || '') === historicalId)
+      : null;
+    return memo ? { memo, historical: true } : null;
+  }
+  const approved = getHistoryMemos().find(m => m.memoNo === value) || loadMemos().find(m => m.memoNo === value);
+  if (approved) return { memo: approved, historical: false };
+  const historical = typeof loadHistoricalMemos === 'function'
+    ? loadHistoricalMemos().find(item => String(item.memoNo || '') === value || String(item.id || '') === value)
+    : null;
+  return historical ? { memo: historical, historical: true } : null;
+}
+
+function completedBudgetTagMemos() {
+  const approved = typeof loadMemos === 'function' ? loadMemos().filter(m => m.status === 'completed') : [];
+  const historical = typeof loadHistoricalMemos === 'function' ? loadHistoricalMemos().filter(m => m.status === 'completed') : [];
+  return [...approved, ...historical];
+}
+
+function getMemoActualSpend(memoOrRef) {
   if (typeof loadActualSpendRecords !== 'function') return null;
-  return loadActualSpendRecords().find(record => record.memoId === memoNo) || null;
+  const key = typeof memoOrRef === 'object' ? budgetTagMemoKey(memoOrRef) : String(memoOrRef || '');
+  return loadActualSpendRecords().find(record => record.memoId === key) || null;
 }
 
 function getEffectiveBudgetSource(memo) {
-  const actualSpend = getMemoActualSpend(memo.memoNo);
+  const actualSpend = getMemoActualSpend(memo);
   const effectivePoolId = actualSpend?.finalBudgetPoolId || memo.finalBudgetPoolId || memo.budgetPoolId;
   // If PMO directly picked a pool, show pool name (project / pool name)
   if (effectivePoolId) {
-    const pools = typeof loadBudgetPools === 'function' ? loadBudgetPools() : [];
+    const pools = typeof loadBudgetPools === 'function'
+      ? loadBudgetPools()
+      : (typeof loadBudgetPoolRecords === 'function' ? loadBudgetPoolRecords() : []);
     const pool  = pools.find(p => p.id === effectivePoolId);
     if (pool) return { source: pool.project + ' / ' + pool.name, isAuto: !actualSpend?.manualBudgetPoolId, poolId: pool.id };
     // Pool was deleted — fall back to budgetSource
@@ -1298,7 +1333,8 @@ function buildBudgetSourceBadge(memo) {
 }
 
 function openBudgetTagModal(memoNo) {
-  const memo = getHistoryMemos().find(m => m.memoNo === memoNo);
+  const target = findBudgetTagMemo(memoNo);
+  const memo = target?.memo;
   if (!memo) return;
   if (typeof isPMO === 'function' && !isPMO()) {
     alert('Tag Budget สำหรับ PMO เท่านั้น');
@@ -1317,10 +1353,11 @@ function openBudgetTagModal(memoNo) {
   // records (createBudgetPoolRecord() derives year from normalized startMonth) — not the raw
   // loadBudgetPools() result — or a legacy corrupted pool (e.g. year:"3112") would be selectable
   // here, and the year filter/pool period display would disagree with Budget Settings/BvA/Export.
-  const allPools   = typeof loadBudgetPools === 'function'
-    ? loadBudgetPools().map(pool => typeof createBudgetPoolRecord === 'function' ? createBudgetPoolRecord(pool) : pool)
-    : [];
-  const allMemos   = typeof loadMemos === 'function' ? loadMemos().filter(m => m.status === 'completed') : [];
+  const rawPools = typeof loadBudgetPools === 'function'
+    ? loadBudgetPools()
+    : (typeof loadBudgetPoolRecords === 'function' ? loadBudgetPoolRecords() : []);
+  const allPools = rawPools.map(pool => typeof createBudgetPoolRecord === 'function' ? createBudgetPoolRecord(pool) : pool);
+  const allMemos   = completedBudgetTagMemos();
 
   // Phase 7A-9C (TD-7A-02): read the canonical Actual Spend mapping result for each memo instead
   // of recomputing a match — the removed legacy pool-matching helper had its own narrowest-pool
@@ -1333,7 +1370,7 @@ function openBudgetTagModal(memoNo) {
       .map(record => [record.memoId, record])
   );
   function effectivePoolId(m) {
-    const record = actualSpendByMemo.get(m.memoNo);
+    const record = actualSpendByMemo.get(budgetTagMemoKey(m));
     return record && typeof getFinalBudgetPoolId === 'function' ? getFinalBudgetPoolId(record) : null;
   }
 
@@ -1419,7 +1456,8 @@ function openBudgetTagModal(memoNo) {
   }
 
   // ── Build modal header ──
-  const autoMatchPoolId = (actualSpendByMemo.get(memo.memoNo) || {}).autoBudgetPoolId || null;
+  const memoKey = budgetTagMemoKey(memo);
+  const autoMatchPoolId = (actualSpendByMemo.get(memoKey) || {}).autoBudgetPoolId || null;
   const autoMatch = autoMatchPoolId ? allPools.find(p => p.id === autoMatchPoolId) : null;
   const { source: curSource, isAuto } = getEffectiveBudgetSource(memo);
 
@@ -1449,7 +1487,7 @@ function openBudgetTagModal(memoNo) {
   }
 
   buildPoolOptions();
-  document.getElementById('btm-save-btn').onclick = () => saveBudgetTag(memoNo);
+  document.getElementById('btm-save-btn').onclick = () => saveBudgetTag(memoKey);
   modal.style.display = 'flex';
 }
 
@@ -1459,7 +1497,8 @@ function closeBudgetTagModal() {
 }
 
 function saveBudgetTag(memoNo) {
-  const memo = getHistoryMemos().find(m => m.memoNo === memoNo);
+  const target = findBudgetTagMemo(memoNo);
+  const memo = target?.memo;
   if (!memo) return;
   if (memo.status !== 'completed') {
     alert('Tag Budget ได้เฉพาะ Memo ที่อนุมัติแล้วเท่านั้น');
@@ -1478,7 +1517,9 @@ function saveBudgetTag(memoNo) {
     newSource = null;
   } else {
     // PMO picked a specific pool
-    const pools = typeof loadBudgetPools === 'function' ? loadBudgetPools() : [];
+    const pools = typeof loadBudgetPools === 'function'
+      ? loadBudgetPools()
+      : (typeof loadBudgetPoolRecords === 'function' ? loadBudgetPoolRecords() : []);
     const pool  = pools.find(p => p.id === selected);
     if (!pool) { alert('ไม่พบ Pool ที่เลือก'); return; }
     // Cross-year Manual Override is not allowed for Tag Budget either (Phase 7A-3): the same
@@ -1493,8 +1534,7 @@ function saveBudgetTag(memoNo) {
       alert(`Budget Pool ที่เลือกอยู่คนละ Project กับ Memo นี้ (Pool: ${canonicalPool.project}, Memo: ${memo.project})\nไม่สามารถ Tag Budget ข้าม Project ได้ กรุณาเลือก Budget Pool ของ Project เดียวกับ Memo`);
       return;
     }
-    const existingRecord = typeof loadActualSpendRecords === 'function'
-      ? loadActualSpendRecords().find(r => r.memoId === memoNo) : null;
+    const existingRecord = getMemoActualSpend(memo);
     let mappingDate = existingRecord && typeof actualSpendMappingDate === 'function'
       ? actualSpendMappingDate(existingRecord) : null;
     if (!mappingDate) {
@@ -1516,6 +1556,44 @@ function saveBudgetTag(memoNo) {
     newSource = pool.project; // derive budgetSource from pool's project
   }
 
+  const memoKey = budgetTagMemoKey(memo);
+  const canonicalPools = typeof loadBudgetPoolRecords === 'function' ? loadBudgetPoolRecords() : [];
+
+  if (target.historical) {
+    const previousPoolId = memo.budgetPoolId || null;
+    const previousLabel  = typeof getEffectiveBudgetSource === 'function'
+      ? getEffectiveBudgetSource(memo).source
+      : (memo.budgetSource || '(ไม่ระบุ)');
+    const actualSpend = typeof updateActualSpendBudgetOverride === 'function'
+      ? updateActualSpendBudgetOverride(memoKey, newPoolId, canonicalPools)
+      : null;
+    const updatedMemo = {
+      ...memo,
+      budgetPoolId: newPoolId,
+      manualBudgetPoolId: actualSpend?.manualBudgetPoolId || newPoolId || null,
+      autoBudgetPoolId: actualSpend?.autoBudgetPoolId || null,
+      finalBudgetPoolId: actualSpend?.finalBudgetPoolId || null,
+      budgetStatus: actualSpend?.budgetStatus || (newPoolId ? 'Manual Override' : 'Unbudgeted'),
+      budgetSource: newSource,
+      updatedAt: new Date().toISOString(),
+      auditLog: [
+        ...(memo.auditLog || []),
+        {
+          action: 'Budget tag changed',
+          actor: typeof currentUser === 'function' ? currentUser() : '',
+          comment: `"${previousLabel}" → "${newSource || memo.project || '(ไม่ระบุ)'}"`,
+          previousBudgetPoolId: previousPoolId,
+          newBudgetPoolId: newPoolId,
+          timestamp: new Date().toISOString(),
+        }
+      ],
+    };
+    if (typeof saveHistoricalMemo === 'function') saveHistoricalMemo(updatedMemo);
+    closeBudgetTagModal();
+    if (typeof renderBudget === 'function') renderBudget();
+    return;
+  }
+
   // ── Write to localStorage directly ──
   const memos = loadMemos();
   const idx   = memos.findIndex(m => m.memoNo === memoNo);
@@ -1525,7 +1603,6 @@ function saveBudgetTag(memoNo) {
   const previousLabel  = typeof getEffectiveBudgetSource === 'function'
     ? getEffectiveBudgetSource(memos[idx]).source
     : (memos[idx].budgetSource || '(ไม่ระบุ)');
-  const canonicalPools = typeof loadBudgetPoolRecords === 'function' ? loadBudgetPoolRecords() : [];
   let actualSpend = typeof updateActualSpendBudgetOverride === 'function'
     ? updateActualSpendBudgetOverride(memoNo, newPoolId, canonicalPools)
     : null;
@@ -1598,5 +1675,9 @@ if (typeof module !== 'undefined' && module.exports) {
     _buildMemoTypeSection,
     openHistoryDetail,
     openMemoReadOnly,
+    openBudgetTagModal,
+    saveBudgetTag,
+    getMemoActualSpend,
+    getEffectiveBudgetSource,
   };
 }

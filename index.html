@@ -1560,7 +1560,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
           <div style="display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--border)">
             <button id="as-tab-report" class="btn-sm active" onclick="switchActualSpendTab('report',this)" style="border-radius:6px 6px 0 0">Report</button>
-            <button id="as-tab-manual" class="btn-sm" onclick="switchActualSpendTab('manual',this)" style="border-radius:6px 6px 0 0">Manual Entries</button>
+            <button id="as-tab-manual" class="btn-sm" onclick="switchActualSpendTab('manual',this)" style="border-radius:6px 6px 0 0">Manual Spending</button>
           </div>
 
           <div id="as-panel-report">
@@ -1589,7 +1589,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
               <span class="filter-control"><span class="filter-label">Source</span><select id="as-source" onchange="renderActualSpend()">
                 <option value="all">ทุกแหล่งข้อมูล</option>
                 <option value="memo">จาก Memo</option>
-                <option value="manual">Manual Entry</option>
+                <option value="manual_spending">Manual Spending</option>
               </select></span>
               <select id="as-budget-status" onchange="renderActualSpend()">
                 <option value="Mapped">Mapped</option>
@@ -1621,7 +1621,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
                 <button class="btn-export" onclick="downloadActualSpendTemplate()">⬇ Download Template</button>
                 <button class="btn-export" id="as-import-button" onclick="document.getElementById('as-import-file').click()">⬆ Import Excel</button>
                 <input id="as-import-file" type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleActualSpendImport(event)">
-                <button class="btn-primary" id="as-add-manual" onclick="openManualExpenseModal()">+ Add Actual Spend</button>
+                <button class="btn-primary" id="as-add-manual" onclick="openAddSpendingTypeSelector()">+ Add Spending</button>
               </div>
             </div>
             <div id="as-manual-content"></div>
@@ -2228,16 +2228,16 @@ svg.icon { display: inline-block; vertical-align: middle; }
 <!-- Auth/session facade: mock session now, OAuth-ready later. -->
 <script src="auth.js"></script>
 <!-- Core: shared utils, storage, navigation, PDF -->
-<script src="app.js?v=0.1.8"></script>
+<script src="app.js?v=0.1.9"></script>
 <script src="views/month_year_controls.js"></script>
 <!-- Views -->
 <script src="views/create.js"></script>
 <script src="views/history.js"></script>
 <script src="views/pending.js"></script>
-<script src="views/budget.js?v=0.1.1"></script>
-<script src="views/license.js"></script>
+<script src="views/budget.js?v=0.1.2"></script>
+<script src="views/license.js?v=0.1.1"></script>
 <script src="views/device.js"></script>
-<script src="views/bulk_import.js?v=0.1.1"></script>
+<script src="views/bulk_import.js?v=0.1.2"></script>
 <script src="views/settings.js?v=0.2.1"></script>
 <script src="views/resource_flow.js"></script>
 <script src="views/resource_module.js?v=0.5.2"></script>

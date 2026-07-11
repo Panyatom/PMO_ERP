@@ -104,11 +104,18 @@ const SPEND_TYPE_TO_MEMO_TYPE = Object.freeze({
   [SPEND_TYPES.OTHERS]: 'other',
 });
 const ACTUAL_SPEND_SOURCES = Object.freeze({
-  APPROVED_MEMO: 'Approved Memo',
-  MANUAL_EXPENSE: 'Manual / Historical Expense',
-  INFRA_COST: 'Infra Cost',
+  APPROVED_MEMO: 'memo',
+  HISTORICAL_MEMO: 'manual_spending',
+  MANUAL_EXPENSE: 'manual_spending',
+  INFRA_COST: 'manual_spending',
 });
-const ACTUAL_SPEND_SOURCE_VALUES = Object.freeze(Object.values(ACTUAL_SPEND_SOURCES));
+const ACTUAL_SPEND_SOURCE_VALUES = Object.freeze([...new Set(Object.values(ACTUAL_SPEND_SOURCES))]);
+const ACTUAL_SPEND_STORAGE_KINDS = Object.freeze({
+  MEMO: 'memo',
+  HISTORICAL_MEMOS: 'historical_memos',
+  MANUAL_EXPENSE: 'manual_expense',
+  INFRA_COST: 'infra_cost',
+});
 const FINANCIAL_STORAGE_KEYS = Object.freeze({
   actualSpend: 'orbit-pmo-actual-spend-v1',
   budgetPools: 'orbit-pmo-budget-pools-v1',
@@ -180,6 +187,23 @@ function normalizeActualSpendDetailLines(detailLines) {
 
 function createActualSpendRecord(input = {}) {
   const now = new Date().toISOString();
+  const sourceAliases = {
+    'Approved Memo': ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    'approved memo': ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    'historical memo': ACTUAL_SPEND_SOURCES.HISTORICAL_MEMO,
+    'manual / historical expense': ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
+    'Infra Cost': ACTUAL_SPEND_SOURCES.INFRA_COST,
+    'infra cost': ACTUAL_SPEND_SOURCES.INFRA_COST,
+    historical_memo: ACTUAL_SPEND_SOURCES.HISTORICAL_MEMO,
+    historical: ACTUAL_SPEND_SOURCES.HISTORICAL_MEMO,
+    manual_entry: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
+    manual: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
+    manual_spending: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
+    memo: ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    infra: ACTUAL_SPEND_SOURCES.INFRA_COST,
+  };
+  const rawSource = String(input.source || '');
+  const source = sourceAliases[rawSource] || sourceAliases[rawSource.toLowerCase()] || rawSource;
   const startDate = input.startDate || null;
   const endDate = input.endDate || null;
   const coverageMonths = inclusiveCoverageMonths(startDate, endDate);
@@ -188,7 +212,8 @@ function createActualSpendRecord(input = {}) {
   const effectiveDate = startDate || input.date || null;
   return {
     id: input.id || generateFinancialRecordId('actual-spend'),
-    source: input.source || '',
+    source,
+    storageKind: input.storageKind || null,
     referenceNo: input.referenceNo || '',
     memoId: input.memoId || null,
     project: input.project || '',
@@ -489,7 +514,7 @@ function validateBudgetPoolImportBatch(rows, existingPools = []) {
   return { valid, rowResults, records: valid ? accepted : [] };
 }
 
-function budgetPoolDeletionBlockers(poolId, records = [], manualExpenses = [], memos = []) {
+function budgetPoolDeletionBlockers(poolId, records = [], manualExpenses = [], memos = [], historicalMemos = []) {
   // A cross-year Manual Override being blocked (Phase 7A-3) clears the CANONICAL Actual Spend
   // record's manualBudgetPoolId/finalBudgetPoolId — but it never touches the underlying manual
   // expense's or memo's own persisted budgetPoolId field. Deletion must still be blocked if any
@@ -498,7 +523,8 @@ function budgetPoolDeletionBlockers(poolId, records = [], manualExpenses = [], m
   const canonicalBlockers = records.filter(record => getFinalBudgetPoolId(record) === poolId);
   const manualBlockers = manualExpenses.filter(expense => expense && expense.budgetPoolId === poolId);
   const memoBlockers = memos.filter(memo => memo && memo.budgetPoolId === poolId);
-  return [...canonicalBlockers, ...manualBlockers, ...memoBlockers];
+  const historicalBlockers = historicalMemos.filter(memo => memo && memo.budgetPoolId === poolId);
+  return [...canonicalBlockers, ...manualBlockers, ...memoBlockers, ...historicalBlockers];
 }
 
 function loadFinancialRecords(storageKey) {
@@ -633,7 +659,8 @@ function mapBudgetPool(actualSpend, pools = []) {
       budgetStatus: BUDGET_STATUSES.MANUAL_OVERRIDE,
     };
   }
-  if (actualSpend.source === ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE) {
+  if (actualSpend.source === ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE &&
+      actualSpend.storageKind !== ACTUAL_SPEND_STORAGE_KINDS.HISTORICAL_MEMOS) {
     return {
       ...actualSpend,
       autoBudgetPoolId: null,
@@ -736,7 +763,7 @@ function forecastComponents(records = [], filters = {}) {
       description: record.description || '',
       recordVendorProgram: record.vendorProgram || '',
     };
-    const detailLines = record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO &&
+    const detailLines = (record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO || record.storageKind === ACTUAL_SPEND_STORAGE_KINDS.HISTORICAL_MEMOS) &&
       record.spendType === SPEND_TYPES.SOFTWARE && Array.isArray(record.detailLines)
       ? record.detailLines.filter(line => line && (line.program || line.plan || Number(line.monthlyCost) || Number(line.lineAmount) || line.coverageStart || line.coverageEnd))
       : [];
@@ -999,7 +1026,7 @@ function actualSpendOverlapsYear(record = {}, year) {
 }
 
 // Free-text search shared by the Budget vs Actual filter bar — same substring-over-lowercased-
-// fields convention as Manual Entries' search (renderManualEntries(), views/budget.js), so search
+// fields convention as Manual Spending search (renderManualEntries(), views/budget.js), so search
 // behavior stays identical across the app instead of a second implementation.
 function bvaRecordMatchesSearch(record = {}, search = '') {
   if (!search) return true;
@@ -1117,8 +1144,11 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     SPEND_TYPES,
     ACTUAL_SPEND_SOURCES,
+    ACTUAL_SPEND_STORAGE_KINDS,
     BUDGET_STATUSES,
     createActualSpendRecord,
+    validateActualSpendRecord,
+    mapActualSpendRecords,
     actualSpendMonthlyAllocations,
     forecastMonths,
     forecastComponents,
@@ -1139,13 +1169,28 @@ if (typeof module !== 'undefined' && module.exports) {
     syncLocalToSupabase,
     loadMemos,
     storeMemos,
+    normalizeHistoricalMemo,
+    historicalMemoToDb,
+    dbToHistoricalMemo,
+    loadHistoricalMemos,
+    storeHistoricalMemos,
+    saveHistoricalMemo,
+    saveHistoricalMemoAsync,
+    deleteHistoricalMemoAsync,
+    historicalMemoNoConflict,
+    checkHistoricalMemoNoConflict,
     loadActualSpendRecords,
     storeActualSpendRecords,
+    loadBudgetPoolRecords,
+    storeBudgetPoolRecords,
     getFinalBudgetPoolId,
     spendTypeFromMemoType,
+    actualSpendFromMemo,
+    updateActualSpendBudgetOverride,
     softwareMemoDetailLines,
     shortDate,
     badgeClass,
+    memoStatusKey,
     histStatusLabel,
     histStatusBadgeClass,
   };
@@ -1200,15 +1245,18 @@ function softwareMemoDetailLines(slItems) {
 
 function actualSpendFromMemo(memo, existing = null) {
   if (!memo || memo.status !== 'completed') return null;
+  const isHistorical = memo.sourceKind === 'historical' || memo.isHistoricalMemo;
   const coverage = memoCoveragePeriod(memo);
   const effectiveDate = String(memo.approvedAt || memo.updatedAt || memo.createdAt || '').slice(0, 10);
   const hasStructuredSoftwareItems = memo.type === 'sl' && Array.isArray(memo.slItems) && memo.slItems.length > 0;
+  const historicalId = memo.id || memo.memoNo;
   return createActualSpendRecord({
     ...existing,
-    id: existing?.id || `actual-spend-memo-${memo.memoNo}`,
-    source: ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    id: existing?.id || (isHistorical ? `actual-spend-historical-${historicalId}` : `actual-spend-memo-${memo.memoNo}`),
+    source: isHistorical ? ACTUAL_SPEND_SOURCES.HISTORICAL_MEMO : ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    storageKind: isHistorical ? ACTUAL_SPEND_STORAGE_KINDS.HISTORICAL_MEMOS : ACTUAL_SPEND_STORAGE_KINDS.MEMO,
     referenceNo: memo.memoNo,
-    memoId: memo.memoNo,
+    memoId: isHistorical ? `historical:${historicalId}` : memo.memoNo,
     project: memo.project,
     spendType: spendTypeFromMemoType(memo.type),
     amount: memo.total,
@@ -1600,6 +1648,296 @@ function dbToMemo(r) {
     submittedAt: r.submitted_at, approvedAt: r.approved_at, rejectedAt: r.rejected_at,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
+}
+
+const HISTORICAL_MEMO_KEY = 'orbit-pmo-historical-memos-v1';
+let _histMemoCache = null;
+
+const HISTORICAL_MEMO_TYPES = Object.freeze(['sl', 'hw', 'int', 'ent', 'dep']);
+const HISTORICAL_TYPE_LABELS = Object.freeze({
+  sl: 'Software License',
+  hw: 'Hardware',
+  int: 'Team Activity',
+  ent: 'Client Expense',
+  dep: 'Deployment',
+});
+
+function normalizeHistoricalMemo(input = {}) {
+  const type = String(input.type || '').trim().toLowerCase();
+  const now = new Date().toISOString();
+  return {
+    ...input,
+    id: input.id || input.memoNo || `hist-${Date.now().toString(36).toUpperCase()}`,
+    memoNo: String(input.memoNo || '').trim(),
+    type,
+    typeLabel: input.typeLabel || HISTORICAL_TYPE_LABELS[type] || String(type || '').toUpperCase(),
+    status: 'completed',
+    project: input.project || '',
+    subject: input.subject || '',
+    reason: input.reason || '',
+    date: input.date || null,
+    total: Number(input.total) || 0,
+    currency: 'THB',
+    sections: Array.isArray(input.sections) ? input.sections : [],
+    slItems: Array.isArray(input.slItems) ? input.slItems : [],
+    hwItems: Array.isArray(input.hwItems) ? input.hwItems : [],
+    acctCols: Array.isArray(input.acctCols) ? input.acctCols : [],
+    acctRows: Array.isArray(input.acctRows) ? input.acctRows : [],
+    intNames: Array.isArray(input.intNames) ? input.intNames : [],
+    depItems: Array.isArray(input.depItems) ? input.depItems : [],
+    auditLog: Array.isArray(input.auditLog) ? input.auditLog : [],
+    budgetPoolId: input.budgetPoolId || null,
+    budgetSource: input.budgetSource || null,
+    originalDocumentRef: input.originalDocumentRef || input.original_document_ref || '',
+    createdAt: input.createdAt || now,
+    updatedAt: input.updatedAt || now,
+    createdBy: input.createdBy || '',
+    updatedBy: input.updatedBy || '',
+    approvedAt: input.approvedAt || input.date || input.updatedAt || input.createdAt || now,
+    deleted: Boolean(input.deleted),
+    deletedAt: input.deletedAt || null,
+    deletedBy: input.deletedBy || '',
+    sourceKind: 'historical',
+    isHistoricalMemo: true,
+  };
+}
+
+function historicalMemoToDb(m) {
+  const memo = normalizeHistoricalMemo(m);
+  return {
+    id: memo.id,
+    memo_no: memo.memoNo,
+    type: memo.type,
+    type_label: memo.typeLabel,
+    project: memo.project,
+    subject: memo.subject,
+    reason: memo.reason,
+    date: memoDbDate(memo.date),
+    total: Number(memo.total) || 0,
+    currency: 'THB',
+    sections: memo.sections,
+    sl_items: memo.slItems,
+    hw_items: memo.hwItems,
+    hw_owner: memo.hwOwner || null,
+    acct_cols: memo.acctCols,
+    acct_rows: memo.acctRows,
+    int_names: memo.intNames,
+    dep_items: memo.depItems,
+    int_activity: memo.intActivity || null,
+    int_date: memoDbDate(memo.intDate),
+    int_headcount: memo.intHeadcount || null,
+    int_pp: memo.intPP || null,
+    ent_client: memo.entClient || null,
+    ent_date: memoDbDate(memo.entDate),
+    ent_time: memo.entTime || null,
+    ent_place: memo.entPlace || null,
+    ent_people: memo.entPeople || null,
+    dep_location: memo.depLocation || null,
+    dep_start: memoDbDate(memo.depStart),
+    dep_end: memoDbDate(memo.depEnd),
+    dep_emp_count: memo.depEmpCount || null,
+    budget_pool_id: memo.budgetPoolId || null,
+    budget_source: memo.budgetSource || null,
+    original_document_ref: memo.originalDocumentRef || null,
+    audit_log: memo.auditLog,
+    deleted: Boolean(memo.deleted),
+    deleted_at: memo.deletedAt || null,
+    deleted_by: memo.deletedBy || null,
+    created_at: memo.createdAt || new Date().toISOString(),
+    updated_at: memo.updatedAt || new Date().toISOString(),
+    created_by: memo.createdBy || null,
+    updated_by: memo.updatedBy || null,
+  };
+}
+
+function dbToHistoricalMemo(r) {
+  return normalizeHistoricalMemo({
+    id: r.id || r.memo_no,
+    memoNo: r.memo_no,
+    type: r.type,
+    typeLabel: r.type_label,
+    project: r.project,
+    subject: r.subject,
+    reason: r.reason,
+    date: r.date,
+    total: Number(r.total) || 0,
+    currency: r.currency || 'THB',
+    sections: r.sections || [],
+    slItems: r.sl_items || [],
+    hwItems: r.hw_items || [],
+    hwOwner: r.hw_owner || null,
+    acctCols: r.acct_cols || [],
+    acctRows: r.acct_rows || [],
+    intNames: r.int_names || [],
+    depItems: r.dep_items || [],
+    intActivity: r.int_activity || null,
+    intDate: r.int_date || null,
+    intHeadcount: r.int_headcount || null,
+    intPP: r.int_pp || null,
+    entClient: r.ent_client || null,
+    entDate: r.ent_date || null,
+    entTime: r.ent_time || null,
+    entPlace: r.ent_place || null,
+    entPeople: r.ent_people || null,
+    depLocation: r.dep_location || null,
+    depStart: r.dep_start || null,
+    depEnd: r.dep_end || null,
+    depEmpCount: r.dep_emp_count || null,
+    budgetPoolId: r.budget_pool_id || null,
+    budgetSource: r.budget_source || null,
+    originalDocumentRef: r.original_document_ref || '',
+    auditLog: r.audit_log || [],
+    deleted: r.deleted || false,
+    deletedAt: r.deleted_at || null,
+    deletedBy: r.deleted_by || '',
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    createdBy: r.created_by || '',
+    updatedBy: r.updated_by || '',
+  });
+}
+
+function _excludeDeletedHistoricalMemos(memos) {
+  return (memos || []).map(normalizeHistoricalMemo).filter(m => !m.deleted);
+}
+
+function loadHistoricalMemos() {
+  if (_histMemoCache !== null) return _excludeDeletedHistoricalMemos(_histMemoCache);
+  try {
+    const rows = JSON.parse(localStorage.getItem(HISTORICAL_MEMO_KEY) || '[]');
+    _histMemoCache = Array.isArray(rows) ? rows.map(normalizeHistoricalMemo) : [];
+  } catch(e) { _histMemoCache = []; }
+  return _excludeDeletedHistoricalMemos(_histMemoCache);
+}
+
+function storeHistoricalMemos(memos) {
+  _histMemoCache = Array.isArray(memos) ? memos.map(normalizeHistoricalMemo) : [];
+  try { localStorage.setItem(HISTORICAL_MEMO_KEY, JSON.stringify(_histMemoCache)); } catch(e) {}
+}
+
+async function loadHistoricalMemosAsync() {
+  if (await checkSupa()) {
+    try {
+      const rows = await supaFetch('historical_memos', 'GET', null, '?order=created_at.desc&limit=1000');
+      storeHistoricalMemos((rows || []).map(dbToHistoricalMemo));
+      return loadHistoricalMemos();
+    } catch(e) { console.warn('Historical memos load failed, using local backup', e.message); }
+  }
+  return loadHistoricalMemos();
+}
+
+function historicalMemoNoConflict(memoNo, currentId = '') {
+  const normalized = String(memoNo || '').trim();
+  if (!normalized) return null;
+  const approval = loadMemos().find(m => String(m.memoNo || '').trim() === normalized);
+  if (approval) return { source: 'memos', record: approval };
+  const historical = (_histMemoCache !== null ? _histMemoCache : loadHistoricalMemos())
+    .find(m => !m.deleted && String(m.memoNo || '').trim() === normalized && String(m.id || '') !== String(currentId || ''));
+  return historical ? { source: 'historical_memos', record: historical } : null;
+}
+
+async function checkHistoricalMemoNoConflict(memoNo, currentId = '') {
+  const local = historicalMemoNoConflict(memoNo, currentId);
+  if (local) return local;
+  if (await checkSupa()) {
+    const encoded = encodeURIComponent(String(memoNo || '').trim());
+    try {
+      const memos = await supaFetch('memos', 'GET', null, `?memo_no=eq.${encoded}&select=id,memo_no&limit=1`);
+      if (memos?.length) return { source: 'memos', record: memos[0] };
+      const historical = await supaFetch('historical_memos', 'GET', null, `?memo_no=eq.${encoded}&deleted=eq.false&select=id,memo_no&limit=1`);
+      const conflict = (historical || []).find(row => String(row.id || '') !== String(currentId || ''));
+      if (conflict) return { source: 'historical_memos', record: conflict };
+    } catch(e) { console.warn('Historical memo number check failed; using local cache', e.message); }
+  }
+  return null;
+}
+
+async function saveHistoricalMemoAsync(data) {
+  const now = new Date().toISOString();
+  const current = (_histMemoCache !== null ? _histMemoCache : loadHistoricalMemos());
+  const existing = current.find(m => String(m.id || '') === String(data.id || '') || String(m.memoNo || '') === String(data.memoNo || ''));
+  const saved = normalizeHistoricalMemo({
+    ...existing,
+    ...data,
+    id: data.id || existing?.id || data.memoNo,
+    createdAt: existing?.createdAt || data.createdAt || now,
+    updatedAt: now,
+    createdBy: existing?.createdBy || data.createdBy || currentUser(),
+    updatedBy: currentUser(),
+    deleted: false,
+    deletedAt: null,
+    deletedBy: '',
+  });
+  if (!HISTORICAL_MEMO_TYPES.includes(saved.type)) throw new Error('Unsupported Historical Spend Type');
+  if (!saved.memoNo || !saved.project || !saved.subject) throw new Error('Reference No, Project, and Description are required');
+  if (!(saved.total > 0)) throw new Error('Amount must be greater than zero');
+  const conflict = await checkHistoricalMemoNoConflict(saved.memoNo, saved.id);
+  if (conflict) throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  const rows = [...current.filter(m => String(m.id || '') !== String(saved.id || ''))];
+  rows.unshift(saved);
+  storeHistoricalMemos(rows);
+  if (await checkSupa()) {
+    try {
+      await supaFetch('historical_memos', 'POST', historicalMemoToDb(saved), '?on_conflict=id');
+    } catch(e) { throw normalizeMemoPersistenceError(e); }
+  }
+  if (typeof reconcileActualSpendSources === 'function') reconcileActualSpendSources();
+  return saved;
+}
+
+function saveHistoricalMemo(data) {
+  const current = (_histMemoCache !== null ? _histMemoCache : loadHistoricalMemos());
+  const existing = current.find(m => String(m.id || '') === String(data.id || '') || String(m.memoNo || '') === String(data.memoNo || ''));
+  if (historicalMemoNoConflict(data.memoNo, data.id || existing?.id || '')) throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  const now = new Date().toISOString();
+  const saved = normalizeHistoricalMemo({
+    ...existing,
+    ...data,
+    id: data.id || existing?.id || data.memoNo,
+    createdAt: existing?.createdAt || data.createdAt || now,
+    updatedAt: now,
+    createdBy: existing?.createdBy || data.createdBy || currentUser(),
+    updatedBy: currentUser(),
+    deleted: false,
+    deletedAt: null,
+    deletedBy: '',
+  });
+  const rows = current.filter(m => String(m.id || '') !== String(saved.id || ''));
+  rows.unshift(saved);
+  storeHistoricalMemos(rows);
+  saveHistoricalMemoAsync(saved).catch(e => console.warn('Background Manual Spending save failed', e));
+  return saved;
+}
+
+async function deleteHistoricalMemoAsync(id, reason = 'Deleted from Add Spending') {
+  const current = (_histMemoCache !== null ? _histMemoCache : loadHistoricalMemos());
+  const index = current.findIndex(m => String(m.id || '') === String(id || '') || String(m.memoNo || '') === String(id || ''));
+  if (index < 0) throw new Error('ไม่พบรายการ');
+  const now = new Date().toISOString();
+  const updated = normalizeHistoricalMemo({
+    ...current[index],
+    deleted: true,
+    deletedAt: now,
+    deletedBy: currentUser(),
+    updatedAt: now,
+    updatedBy: currentUser(),
+    auditLog: [...(current[index].auditLog || []), { action: 'Deleted', actor: currentUser(), comment: reason, timestamp: now }],
+  });
+  current[index] = updated;
+  storeHistoricalMemos(current);
+  if (await checkSupa()) {
+    await supaFetch('historical_memos', 'PATCH', {
+      deleted: true,
+      deleted_at: now,
+      deleted_by: updated.deletedBy,
+      updated_at: now,
+      updated_by: updated.updatedBy,
+      audit_log: updated.auditLog,
+    }, '?id=eq.' + encodeURIComponent(updated.id));
+  }
+  storeActualSpendRecords(loadActualSpendRecords().filter(record => record.memoId !== `historical:${updated.id}`));
+  if (typeof reconcileActualSpendSources === 'function') reconcileActualSpendSources();
+  return updated;
 }
 
 // ── Memo storage (async, with localStorage fallback) ──

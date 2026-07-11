@@ -60,7 +60,7 @@ test('Device: "View Source Memo" wires to the canonical route, not the full Memo
   assert.ok(!panel.innerHTML.includes('openMemoReadOnly('), 'device detail must not open the full workflow Memo History view');
 });
 
-test('Manual Entry detail also uses the canonical component (showManualEntryDetail)', () => {
+test('Manual Spending detail also uses the canonical component (showManualEntryDetail)', () => {
   assert.equal(typeof budget.showManualEntryDetail, 'function');
 });
 

@@ -153,7 +153,8 @@ function parseLicenseFromMemo(memo) {
       // idx (line position within this memo) keeps the id unique even when two lines share the
       // same name/plan/coverage — matching on those fields alone would collide, making
       // Edit/Delete silently act on the wrong line item.
-      const identity = [memo.memoNo, idx, it.name, it.plan || '', it.startMonth || '', it.endMonth || '']
+      const sourcePrefix = memo.sourceKind === 'historical' || memo.isHistoricalMemo ? `historical-${memo.id || memo.memoNo}` : memo.memoNo;
+      const identity = [sourcePrefix, idx, it.name, it.plan || '', it.startMonth || '', it.endMonth || '']
         .map(value => String(value).trim().replace(/\s+/g, '_'))
         .join('-');
       return {
@@ -220,7 +221,8 @@ function parseAccountTableFromMemo(memo) {
 
 // ── getAllLicenses: memo-derived + manual merged ─────────
 function getAllLicenses() {
-  const memoLicenses = loadMemos()
+  const historicalSoftwareMemos = typeof loadHistoricalMemos === 'function' ? loadHistoricalMemos() : [];
+  const memoLicenses = [...loadMemos(), ...historicalSoftwareMemos]
     .filter(m => m.type === 'sl' && m.status === 'completed')
     .flatMap(parseLicenseFromMemo);
   const manualAll = loadManualLicenses();
@@ -2500,4 +2502,13 @@ function loadMoreLicense() {
 }
 function resetLicensePagination() {
   window._licVisible = 20;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    parseLicenseFromMemo,
+    getAllLicenses,
+    loadManualLicenses,
+    storeManualLicenses,
+  };
 }

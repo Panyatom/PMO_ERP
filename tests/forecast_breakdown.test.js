@@ -2,7 +2,7 @@
 //
 // Covers spec items:
 //   1. Forecast cell total = breakdown (contributor) total, for Memo,
-//      Manual Entry, and Infra-as-Manual-Entry sources.
+//      Manual Spending, and Infra-as-Manual-Spending sources.
 //   2. Multiple source records landing in the same forecast month are all
 //      preserved as distinct contributors (no overwrite/merge), and a
 //      multi-detail-line Memo keeps each line's contributor identity.
@@ -89,7 +89,7 @@ test('Forecast cell total equals breakdown contributor total for a Memo-only row
   assert.equal(row.values['2026-06'], 1000 / 12);
 });
 
-test('Forecast cell total equals breakdown contributor total for a Manual Entry-only row', () => {
+test('Forecast cell total equals breakdown contributor total for a Manual Spending-only row', () => {
   const forecast = calculateForecast([manualEntryRecord({ vendorProgram: 'Manual Only Program' })], anchor);
   const row = forecast.rows.find(r => r.program === 'Manual Only Program');
   assert.equal(contributorSum(row, '2026-06'), row.values['2026-06']);
@@ -97,7 +97,7 @@ test('Forecast cell total equals breakdown contributor total for a Manual Entry-
   assert.equal(row.contributors['2026-06'][0].source, ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE);
 });
 
-test('Forecast cell total equals breakdown contributor total for an Infra Manual Entry row', () => {
+test('Forecast cell total equals breakdown contributor total for an Infra Manual Spending row', () => {
   const forecast = calculateForecast([infraManualEntryRecord()], anchor);
   const row = forecast.rows.find(r => r.spendType === SPEND_TYPES.INFRA);
   assert.equal(contributorSum(row, '2026-06'), row.values['2026-06']);
