@@ -442,7 +442,7 @@ function _renderLicMemoIndex() {
     </div>
 
     <div class="filter-toolbar">
-      <input type="text" id="lic-search" class="filter-search" placeholder="Search..."
+      <input type="text" id="lic-search" class="filter-search" placeholder="Search by software, plan, project, owner, or vendor"
         oninput="_renderLicMemoIndexRows()">
       <select id="lic-filter-status" onchange="_renderLicMemoIndexRows()">
         <option value="active">Active</option>
@@ -1583,7 +1583,7 @@ function _renderLicUsers() {
     ${_renderLicReviewQueueHtml(queueItems)}
     <div id="lic-usr-context-banner" style="margin-bottom:12px;display:none"></div>
     <div class="filter-toolbar">
-      <input id="lic-usr-search" type="text" class="filter-search" placeholder="Search..."
+      <input id="lic-usr-search" type="text" class="filter-search" placeholder="Search by email"
         oninput="_renderLicUsersRows()">
       <select id="lic-usr-proj" onchange="_renderLicUsersRows()">
         ${projects.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('')}

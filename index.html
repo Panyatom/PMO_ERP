@@ -1348,7 +1348,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
         <!-- Filters -->
         <div class="filter-toolbar">
-          <input type="text" id="pend-search" class="filter-search" placeholder="Search..."
+          <input type="text" id="pend-search" class="filter-search" placeholder="Search by memo no., subject, project, or approver"
             oninput="_pendingSearch=this.value;renderPendingContent()">
           <select id="pend-filter-type" onchange="renderPendingContent()">
             <option value="sl">SL</option><option value="hw">HW</option>
@@ -1403,7 +1403,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
           </div>
         </div>
         <div class="filter-toolbar">
-          <input type="search" id="hist-search" class="filter-search" placeholder="Search..." oninput="renderHistoryMemos()">
+          <input type="search" id="hist-search" class="filter-search" placeholder="Search by memo no., subject, project, or requester" oninput="renderHistoryMemos()">
           <select id="hist-status" onchange="renderHistoryMemos()" style="display:none">
             <option value="all">ทุกสถานะ</option>
             <option value="completed">Completed</option>
@@ -1608,7 +1608,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
           <div id="as-panel-manual" style="display:none">
             <div class="filter-toolbar">
-              <input id="as-manual-search" type="search" class="filter-search" placeholder="Search..." oninput="renderManualEntries()">
+              <input id="as-manual-search" type="search" class="filter-search" placeholder="Search by reference no., description, program, or memo no." oninput="renderManualEntries()">
               <select id="as-manual-project" onchange="renderManualEntries()"></select>
               <select id="as-manual-type" onchange="renderManualEntries()"></select>
               <span class="filter-control"><span class="filter-label">Frequency</span><select id="as-manual-frequency" onchange="renderManualEntries()"><option value="all">All frequencies</option><option value="one_time">One-time</option><option value="monthly">Monthly</option></select></span>
@@ -1634,10 +1634,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <div style="padding:10px 0 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
             <span style="font-size:11px;color:var(--text-3)">Previous 6 months Actual + current/next 6 months Forecast</span>
             <div class="filter-toolbar" style="margin-bottom:0">
-              <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3)">
-                Period
-                <input id="sl-forecast-period" type="month" class="ri" onchange="renderBudgetSLInfra()" style="width:130px;font-size:12px;padding:5px 8px">
-              </label>
+              <span class="filter-control"><span class="filter-label">Period</span>
+                <input id="sl-forecast-period" type="month" class="filter-month" onchange="renderBudgetSLInfra()"></span>
               <select id="sl-forecast-proj" onchange="renderBudgetSLInfra()">
                 <option value="all">ทุกโปรเจค</option>
               </select>
@@ -1674,7 +1672,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <div id="bgt-tab-bva" class="cost-tab-panel" style="display:none">
 
           <div class="filter-toolbar">
-            <input id="bva-search" type="search" class="filter-search" placeholder="Search records..." oninput="bvaSearchDebounced()">
+            <input id="bva-search" type="search" class="filter-search" placeholder="Search by reference no., description, project, or spend type" oninput="bvaSearchDebounced()">
             <!-- Options populated dynamically by populateBudgetYearSelect('bva-year') (views/budget.js). -->
             <span class="filter-control"><span class="filter-label">Year</span><select id="bva-year" class="filter-select" onchange="renderBudgetVsActual()"></select></span>
             <span class="filter-control"><span class="filter-label">Project</span><select id="bva-project" onchange="renderBudgetVsActual()">
@@ -1716,9 +1714,9 @@ svg.icon { display: inline-block; vertical-align: middle; }
                     <span style="font-size:11px;color:var(--text-3);margin-left:8px">ตั้งงบประมาณต่อโปรเจค แยกตาม pool และช่วงเวลา</span>
                   </div>
                   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                    <input id="bset-search" type="search" class="filter-search" placeholder="Search..." oninput="renderBudgetSettings()">
+                    <input id="bset-search" type="search" class="filter-search" placeholder="Search by project or pool name" oninput="renderBudgetSettings()">
                     <!-- Options populated dynamically by populateBudgetYearSelect('bset-year') (views/budget.js). -->
-                    <select id="bset-year" class="filter-input" aria-label="Year" onchange="renderBudgetSettings()"></select>
+                    <span class="filter-control"><span class="filter-label">Year</span><select id="bset-year" class="filter-input" aria-label="Year" onchange="renderBudgetSettings()"></select></span>
                     <div class="filter-actions">
                       <button class="btn-sm" onclick="downloadBudgetPoolTemplate()">⬇ Template</button>
                       <label class="btn-sm" style="cursor:pointer">
@@ -1819,7 +1817,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <div class="metric-card"><div class="metric-label">Fulfilled</div><div class="metric-val" id="po-kpi-fulfilled" style="color:#3B6D11">0</div></div>
           </div>
           <div class="filter-toolbar">
-            <input type="text" id="po-search" class="filter-search" placeholder="Search..." oninput="renderPurchaseOrders()">
+            <input type="text" id="po-search" class="filter-search" placeholder="Search by memo no. or item name" oninput="renderPurchaseOrders()">
             <span class="filter-control"><span class="filter-label">Status</span><select id="po-filter-status" onchange="renderPurchaseOrders()">
               <option value="pending_order">Pending Order</option>
               <option value="ordered">Ordered</option>
@@ -1830,9 +1828,10 @@ svg.icon { display: inline-block; vertical-align: middle; }
             </select></span>
             <span class="filter-control"><span class="filter-label">Project</span><select id="po-filter-project" onchange="renderPurchaseOrders()">
             </select></span>
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);white-space:nowrap">
-              <input type="checkbox" id="po-filter-remaining" onchange="renderPurchaseOrders()"> Remaining &gt; 0
-            </label>
+            <span class="filter-control"><span class="filter-label">Remaining</span>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);white-space:nowrap;height:32px;box-sizing:border-box">
+                <input type="checkbox" id="po-filter-remaining" onchange="renderPurchaseOrders()"> &gt; 0
+              </label></span>
             <div id="po-visible-count" style="font-size:11px;color:var(--text-3)"></div>
             <div class="filter-actions">
               <button class="btn-export" onclick="exportPurchaseOrdersCSV()">⬇ Export PO</button>
@@ -1900,7 +1899,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <!-- Filter row -->
         <div id="dev-registry-context-banner" style="display:none;margin-bottom:10px"></div>
         <div class="filter-toolbar">
-          <input type="text" id="dev-search" class="filter-search" placeholder="Search..." oninput="renderDevice()">
+          <input type="text" id="dev-search" class="filter-search" placeholder="Search by device name, brand, serial no., asset tag, or assignee" oninput="renderDevice()">
           <span class="filter-control"><span class="filter-label">Platform</span><select id="dev-filter-platform" onchange="renderDevice()">
             <option value="ios">iOS</option>
             <option value="android">Android</option>
