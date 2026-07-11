@@ -1200,6 +1200,21 @@ if (typeof module !== 'undefined' && module.exports) {
     deleteHistoricalMemoAsync,
     historicalMemoNoConflict,
     checkHistoricalMemoNoConflict,
+    historicalHwLineId,
+    nextHardwareLineId,
+    spendingDeviceLinkToDb,
+    dbToSpendingDeviceLink,
+    loadSpendingDeviceLinks,
+    storeSpendingDeviceLinks,
+    loadSpendingDeviceLinksAsync,
+    deviceLinksForLine,
+    deviceLinksForMemo,
+    deviceLinkForDevice,
+    allLinkedDeviceIds,
+    deviceEligibleForSpendingLink,
+    hardwareLineEditBlockMessage,
+    linkDevicesToHardwareLineAsync,
+    unlinkDeviceFromSpendingAsync,
     loadActualSpendRecords,
     storeActualSpendRecords,
     loadBudgetPoolRecords,
@@ -1214,6 +1229,9 @@ if (typeof module !== 'undefined' && module.exports) {
     memoStatusKey,
     histStatusLabel,
     histStatusBadgeClass,
+    currentUser,
+    isPMO,
+    checkSupa,
   };
 }
 
@@ -1959,6 +1977,200 @@ async function deleteHistoricalMemoAsync(id, reason = 'Deleted from Add Spending
   storeActualSpendRecords(loadActualSpendRecords().filter(record => record.memoId !== `historical:${updated.id}`));
   if (typeof reconcileActualSpendSources === 'function') reconcileActualSpendSources();
   return updated;
+}
+
+// ── Hardware Spending <-> Device Registry links (Batch 2B) ──
+// Optional linking between a historical (Manual Spending) hardware line and
+// existing Device Registry records. No Purchase Orders, no device creation —
+// this only records a relationship in its own join table. See
+// docs/specs/Batch_2B_Hardware_Device_Linking.md.
+const SPENDING_DEVICE_LINK_KEY = 'orbit-pmo-historical-spending-device-links-v1';
+let _spendDeviceLinkCache = null;
+
+// A hardware line inside historical_memos.hw_items has no id of its own until
+// the first time it's linked (see linkDevicesToHardwareLineAsync, which
+// persists item.id at that point). Until then, this positional fallback
+// stands in — safe because no link can exist yet for a line that has never
+// been linked, so there is nothing for the fallback to misattribute.
+function historicalHwLineId(memo, index) {
+  return memo?.hwItems?.[index]?.id || `${memo?.id}:hw:${index}`;
+}
+
+function nextHardwareLineId() {
+  return `hwl_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function spendingDeviceLinkToDb(link) {
+  return {
+    historical_memo_id: link.historicalMemoId,
+    hardware_line_id: link.hardwareLineId,
+    device_id: link.deviceId,
+    created_at: link.createdAt || new Date().toISOString(),
+    created_by: link.createdBy || null,
+  };
+}
+
+function dbToSpendingDeviceLink(r) {
+  return {
+    id: r.id,
+    historicalMemoId: r.historical_memo_id,
+    hardwareLineId: r.hardware_line_id,
+    deviceId: r.device_id,
+    createdAt: r.created_at,
+    createdBy: r.created_by || '',
+  };
+}
+
+function loadSpendingDeviceLinks() {
+  if (_spendDeviceLinkCache !== null) return _spendDeviceLinkCache;
+  try {
+    const rows = JSON.parse(localStorage.getItem(SPENDING_DEVICE_LINK_KEY) || '[]');
+    _spendDeviceLinkCache = Array.isArray(rows) ? rows : [];
+  } catch(e) { _spendDeviceLinkCache = []; }
+  return _spendDeviceLinkCache;
+}
+
+function storeSpendingDeviceLinks(links) {
+  _spendDeviceLinkCache = Array.isArray(links) ? links : [];
+  try { localStorage.setItem(SPENDING_DEVICE_LINK_KEY, JSON.stringify(_spendDeviceLinkCache)); } catch(e) {}
+}
+
+async function loadSpendingDeviceLinksAsync() {
+  if (await checkSupa()) {
+    try {
+      const rows = await supaFetch('historical_spending_device_links', 'GET', null, '?order=created_at.desc&limit=5000');
+      storeSpendingDeviceLinks((rows || []).map(dbToSpendingDeviceLink));
+      return loadSpendingDeviceLinks();
+    } catch(e) { console.warn('Spending/device links load failed, using local backup', e.message); }
+  }
+  return loadSpendingDeviceLinks();
+}
+
+function deviceLinksForLine(historicalMemoId, hardwareLineId) {
+  if (!hardwareLineId) return [];
+  return loadSpendingDeviceLinks().filter(l => l.historicalMemoId === historicalMemoId && l.hardwareLineId === hardwareLineId);
+}
+
+function deviceLinksForMemo(historicalMemoId) {
+  return loadSpendingDeviceLinks().filter(l => l.historicalMemoId === historicalMemoId);
+}
+
+function deviceLinkForDevice(deviceId) {
+  return loadSpendingDeviceLinks().find(l => String(l.deviceId) === String(deviceId)) || null;
+}
+
+function allLinkedDeviceIds() {
+  return new Set(loadSpendingDeviceLinks().map(l => String(l.deviceId)));
+}
+
+// Batch 2B.1 — single source of truth for "can this Device be linked to a
+// Manual Spending hardware line right now". A Device already linked to an
+// approved Memo/PO (device.memoNo) is a completely separate relationship
+// (see views/device.js's legacy sourceMemoCell) and must never be treated as
+// available here — that link can only ever be viewed, never unlinked, from
+// this flow. Used both to filter the device picker (views/device.js) and to
+// re-validate every selection before save (defense in depth against a stale
+// picker render).
+function deviceEligibleForSpendingLink(device, linkedElsewhere = allLinkedDeviceIds()) {
+  if (!device || device.deleted) return false;
+  if (device.status === 'retired') return false;
+  if (device.memoNo) return false;
+  if (linkedElsewhere.has(String(device.id))) return false;
+  return true;
+}
+
+// Editing a historical hw memo (see saveHistoricalSpendingFromModal in
+// views/budget.js) must not silently orphan a linked device — a line that
+// still has linked devices can't be removed, and its Quantity can't drop
+// below its current linked count (spec: "Require unlink first"). Returns a
+// user-facing Thai message for the first violation found, or null if the
+// edit is safe to save as-is. Pure/DOM-free so it's directly unit-testable.
+function hardwareLineEditBlockMessage(existingMemo, newHwItems) {
+  if (!existingMemo?.id) return null;
+  const originalItems = existingMemo.hwItems || [];
+  const nextItems = newHwItems || [];
+  for (let i = 0; i < originalItems.length; i++) {
+    const origItem = originalItems[i];
+    const lineId = origItem.id || historicalHwLineId(existingMemo, i);
+    const links = deviceLinksForLine(existingMemo.id, lineId);
+    if (!links.length) continue;
+    const match = nextItems.find(item => item.id && item.id === origItem.id);
+    if (!match) return `ไม่สามารถลบ "${origItem.name}" ได้ เนื่องจากมี Device เชื่อมโยงอยู่ ${links.length} เครื่อง กรุณายกเลิกการเชื่อมโยงก่อน`;
+    const newQty = Math.max(1, Number(match.qty) || 1);
+    if (newQty < links.length) return `จำนวนของ "${origItem.name}" ต้องไม่น้อยกว่าจำนวน Device ที่เชื่อมโยงอยู่ (${links.length}) กรุณายกเลิกการเชื่อมโยงบางส่วนก่อน`;
+  }
+  return null;
+}
+
+// Links a set of existing Device Registry records to one hardware line of one
+// historical Manual Spending memo. Never creates devices — only rejects when
+// a device doesn't exist, is deleted/retired, is already linked elsewhere, or
+// when linking would push the line's linked count past its Quantity.
+async function linkDevicesToHardwareLineAsync(historicalMemoId, lineIndex, deviceIds) {
+  const memos = (_histMemoCache !== null ? _histMemoCache : loadHistoricalMemos());
+  let memo = memos.find(m => String(m.id) === String(historicalMemoId));
+  if (!memo) throw new Error('ไม่พบรายการ Spending');
+  const line = memo.hwItems?.[lineIndex];
+  if (!line) throw new Error('ไม่พบรายการ Hardware line');
+  const qty = Math.max(1, Number(line.qty) || 1);
+
+  let lineId = line.id;
+  if (!lineId) {
+    // First time this line is linked — mint and persist its id so future
+    // edits/reorders of hwItems can never shift which line these links point at.
+    lineId = historicalHwLineId(memo, lineIndex);
+    const hwItems = memo.hwItems.map((item, i) => (i === lineIndex ? { ...item, id: lineId } : item));
+    memo = await saveHistoricalMemoAsync({ ...memo, hwItems });
+  }
+
+  const uniqueDeviceIds = [...new Set((deviceIds || []).map(String))];
+  if (!uniqueDeviceIds.length) return { memo, links: [] };
+  const existingLinks = deviceLinksForLine(historicalMemoId, lineId);
+  if (existingLinks.length + uniqueDeviceIds.length > qty) {
+    throw new Error(`เชื่อมโยง Device ได้ไม่เกินจำนวนที่ระบุ (${qty}) ต่อรายการ — ปัจจุบันเชื่อมโยงแล้ว ${existingLinks.length} เครื่อง`);
+  }
+  const devices = typeof loadDevices === 'function' ? loadDevices() : [];
+  const globallyLinked = allLinkedDeviceIds();
+  const now = new Date().toISOString();
+  const newLinks = [];
+  for (const deviceId of uniqueDeviceIds) {
+    const device = devices.find(d => String(d.id) === deviceId);
+    const label = device ? (device.brand || device.name || 'Device') : 'Device';
+    if (!device) throw new Error('ไม่พบ Device ที่เลือก');
+    if (device.deleted) throw new Error(`${label} ถูกลบแล้ว ไม่สามารถเชื่อมโยงได้`);
+    if (device.status === 'retired') throw new Error(`${label} ถูก Retire แล้ว ไม่สามารถเชื่อมโยงได้`);
+    if (device.memoNo) throw new Error(`${label} เชื่อมโยงกับ Memo/PO ที่อนุมัติแล้วอยู่ ไม่สามารถเชื่อมโยงกับ Manual Spending ได้`);
+    if (globallyLinked.has(deviceId)) throw new Error(`${label} ถูกเชื่อมโยงกับรายการอื่นอยู่แล้ว`);
+    newLinks.push({ historicalMemoId, hardwareLineId: lineId, deviceId: device.id, createdAt: now, createdBy: currentUser() });
+  }
+  const current = loadSpendingDeviceLinks();
+  storeSpendingDeviceLinks([...current, ...newLinks]);
+  if (await checkSupa()) {
+    try {
+      await supaFetch('historical_spending_device_links', 'POST', newLinks.map(spendingDeviceLinkToDb));
+    } catch(e) {
+      storeSpendingDeviceLinks(current); // roll back local cache — the link never made it to the server
+      throw e;
+    }
+  }
+  return { memo, links: newLinks };
+}
+
+async function unlinkDeviceFromSpendingAsync(deviceId) {
+  const current = loadSpendingDeviceLinks();
+  const link = current.find(l => String(l.deviceId) === String(deviceId));
+  if (!link) return null;
+  const remaining = current.filter(l => l !== link);
+  storeSpendingDeviceLinks(remaining);
+  if (await checkSupa()) {
+    try {
+      await supaFetch('historical_spending_device_links', 'DELETE', null, `?device_id=eq.${encodeURIComponent(String(deviceId))}`);
+    } catch(e) {
+      storeSpendingDeviceLinks(current); // roll back — deletion didn't reach the server
+      throw e;
+    }
+  }
+  return link;
 }
 
 // ── Memo storage (async, with localStorage fallback) ──

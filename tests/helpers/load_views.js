@@ -27,6 +27,21 @@ function loadViews() {
   const budget = require('../../views/budget.js');
   const device = require('../../views/device.js');
 
+  // Batch 2B — views/budget.js's Hardware Spending Detail renderer calls
+  // device.js's renderHardwareDeviceLinkSection/openDeviceLinkPicker/
+  // unlinkDeviceFromLine as bare globals (same cross-file pattern already
+  // used for history.js's _buildMemoTypeSection above), and device.js's
+  // openDeviceDetail calls budget.js's showSpendingDetail the same way.
+  global.loadDevices = device.loadDevices;
+  global.renderHardwareDeviceLinkSection = device.renderHardwareDeviceLinkSection;
+  global.openDeviceLinkPicker = device.openDeviceLinkPicker;
+  global.filterDeviceLinkPickerRows = device.filterDeviceLinkPickerRows;
+  global.confirmDeviceLinkPicker = device.confirmDeviceLinkPicker;
+  global.unlinkDeviceFromLine = device.unlinkDeviceFromLine;
+  global.openDeviceDetail = device.openDeviceDetail;
+  global.showSpendingDetail = budget.showSpendingDetail;
+  global.refreshSpendingDetailAfterDeviceLink = budget.refreshSpendingDetailAfterDeviceLink;
+
   return { app, history, budget, device };
 }
 

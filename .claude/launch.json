@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "pmo-erp-static",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/static-serve.mjs", "8123"],
+      "port": 8123
+    }
+  ]
+}

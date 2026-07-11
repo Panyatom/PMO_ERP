@@ -229,6 +229,9 @@ async function deleteDeviceAsync(id) {
   appendDeviceAuditLog(updated, 'Deleted');
   devices[idx] = updated;
   storeDevices(devices); // soft delete — row stays in cache/localStorage, just hidden from normal reads
+  // Batch 2B — a deleted device can't stay "linked" to a Hardware Spending
+  // line; remove the join row so the line's linked count drops immediately.
+  try { await unlinkDeviceFromSpendingAsync(updated.id); } catch(e) { console.warn('Failed to remove spending/device link on device delete', e.message); }
   if (await checkSupa()) {
     try {
       // devices table uses BIGINT id — use _supaId stored after INSERT
@@ -1320,6 +1323,25 @@ function openDeviceDetail(id) {
       </div>`
     : infoCell('Source Memo Number', '—');
 
+  // Batch 2B — optional link to a Hardware Manual Spending record (separate
+  // join table, historical_spending_device_links; never duplicates device
+  // data, never touches the memo_ref/PO-arrival path above).
+  const spendLink = deviceLinkForDevice(d.id);
+  const spendMemo = spendLink ? loadHistoricalMemos().find(m => String(m.id) === String(spendLink.historicalMemoId)) : null;
+  const sourceTypeLabel = memoNo ? 'Memo' : spendMemo ? 'Manual Spending (Historical)' : (d.source === 'bulk-import' ? 'Bulk Import' : 'Manual Entry');
+  const sourceSpendingCell = spendMemo
+    ? `<div style="background:var(--bg);border-radius:var(--r-sm);padding:8px 10px">
+        <div style="font-size:9px;color:var(--text-3);margin-bottom:2px">Source Spending No.</div>
+        <div style="display:flex;gap:6px;align-items:center;justify-content:space-between">
+          <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis">${esc(spendMemo.memoNo)}</div>
+          <div style="display:flex;gap:4px">
+            <button class="btn-sm" style="font-size:10px;padding:2px 7px;white-space:nowrap" onclick="document.getElementById('dev-detail-modal').style.display='none';typeof showSpendingDetail==='function'&&showSpendingDetail('historical','${esc(spendMemo.id)}')">View Source Spending</button>
+            <button class="btn-sm" style="font-size:10px;padding:2px 7px;color:var(--red)" onclick="unlinkDeviceFromLine('${idStr}')">Unlink</button>
+          </div>
+        </div>
+      </div>`
+    : '';
+
   let panel = document.getElementById('dev-detail-modal');
   if(!panel) {
     panel = document.createElement('div');
@@ -1382,7 +1404,9 @@ function openDeviceDetail(id) {
       <div>
         <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Source and audit</div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+          ${infoCell('Source Type', sourceTypeLabel)}
           ${sourceMemoCell}
+          ${sourceSpendingCell}
           ${infoCell('Created By', d.createdBy||'—')}
           ${infoCell('Created Date', d.createdAt ? shortDate(d.createdAt) : '—')}
           ${infoCell('Updated By', d.updatedBy||'—')}
@@ -1862,10 +1886,176 @@ document.addEventListener('click', e => {
   if (e.target === document.getElementById('mark-arrived-modal')) closeMarkArrivedModal();
 });
 
+// ─────────────────────────────────────────
+// Batch 2B — Hardware Spending <-> Device Registry linking
+// Optional link between an existing Device and one hardware line of a
+// historical (Manual Spending) memo. No Purchase Orders, no device creation —
+// see docs/specs/Batch_2B_Hardware_Device_Linking.md.
+// ─────────────────────────────────────────
+
+// Rendered inside the Hardware Spending Detail modal (views/budget.js's
+// renderMemoSpendTypeDetail), right after the shared _buildMemoTypeSection()
+// hw table. Only ever called for historical hw memos — approved-Memo hw
+// detail (the PO/arrival workflow) is untouched.
+function renderHardwareDeviceLinkSection(memo) {
+  if (!memo || memo.type !== 'hw' || !(memo.isHistoricalMemo || memo.sourceKind === 'historical')) return '';
+  const hwItems = memo.hwItems || [];
+  if (!hwItems.length) return '';
+  const devices = loadDevices();
+  const rows = hwItems.map((item, index) => {
+    const lineId = item.id || historicalHwLineId(memo, index);
+    const links = deviceLinksForLine(memo.id, lineId);
+    const qty = Math.max(1, Number(item.qty) || 1);
+    const linkedDevices = links
+      .map(l => devices.find(d => String(d.id) === String(l.deviceId)))
+      .filter(Boolean);
+    const chips = linkedDevices.map(d => `
+      <span class="badge badge-gray" style="display:inline-flex;align-items:center;gap:5px;margin:2px 4px 2px 0;padding:3px 7px">
+        <a href="javascript:void(0)" onclick="document.getElementById('actual-spend-record-detail')?.remove();openDeviceDetail('${esc(String(d.id))}')" style="color:inherit;text-decoration:underline">${esc(devicePrimaryLabel(d))}</a>
+        <button type="button" title="Unlink" style="border:none;background:none;cursor:pointer;color:var(--red);font-size:11px;line-height:1;padding:0" onclick="unlinkDeviceFromLine('${esc(String(d.id))}')">✕</button>
+      </span>`).join('');
+    const countColor = linkedDevices.length >= qty ? 'var(--green,#2e7d32)' : 'var(--amber,#b26a00)';
+    return `<tr>
+      <td style="padding:6px 9px;font-size:11px">${index + 1}</td>
+      <td style="padding:6px 9px;font-size:11px">${esc(item.name || '—')}</td>
+      <td style="padding:6px 9px;font-size:11px;text-align:center">${qty}</td>
+      <td style="padding:6px 9px;font-size:11px;text-align:center;color:${countColor};font-weight:600">${linkedDevices.length} / ${qty}</td>
+      <td style="padding:6px 9px;font-size:11px">${chips || '<span style="color:var(--text-3)">— none —</span>'}</td>
+      <td style="padding:6px 9px;text-align:right">
+        <button class="btn-sm" type="button" style="font-size:10px;padding:3px 8px" ${linkedDevices.length >= qty ? 'disabled title="ครบจำนวนแล้ว"' : ''} onclick="openDeviceLinkPicker('${esc(memo.id)}',${index})">+ Link Devices</button>
+      </td>
+    </tr>`;
+  }).join('');
+  return `<div style="margin-top:14px">
+    <div style="font-size:9px;font-weight:500;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px">Linked Devices</div>
+    <div style="border:0.5px solid var(--border);border-radius:var(--r-sm);overflow:hidden">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--bg-2)">
+          <th style="text-align:left;padding:5px 9px;font-size:10px;color:var(--text-3)">#</th>
+          <th style="text-align:left;padding:5px 9px;font-size:10px;color:var(--text-3)">Item</th>
+          <th style="padding:5px 9px;font-size:10px;color:var(--text-3)">Qty</th>
+          <th style="padding:5px 9px;font-size:10px;color:var(--text-3)">Linked</th>
+          <th style="text-align:left;padding:5px 9px;font-size:10px;color:var(--text-3)">Devices</th>
+          <th style="padding:5px 9px"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+// Device selector dialog (Batch 2B.1) — shows ONLY eligible devices (active,
+// not deleted, no approved-Memo/PO source, not linked to any other hardware
+// line — see deviceEligibleForSpendingLink() in app.js). Ineligible devices
+// are not listed at all, not shown-disabled: there is nothing useful the
+// user can do with them from this dialog, so surfacing them just adds noise
+// (and, for Memo-sourced devices, risks implying they could be unlinked here).
+function _deviceLinkPickerSearchKey(d) {
+  return `${devicePrimaryLabel(d)} ${d.assetIt || ''} ${d.serial || ''}`.toLowerCase();
+}
+
+function openDeviceLinkPicker(historicalMemoId, lineIndex) {
+  if (!isPMO()) { alert('เฉพาะ PMO เท่านั้นที่เชื่อมโยง Device ได้'); return; }
+  const memo = loadHistoricalMemos().find(m => String(m.id) === String(historicalMemoId));
+  if (!memo) return;
+  const item = memo.hwItems?.[lineIndex];
+  if (!item) return;
+  const qty = Math.max(1, Number(item.qty) || 1);
+  const lineId = item.id || historicalHwLineId(memo, lineIndex);
+  const currentLinks = deviceLinksForLine(historicalMemoId, lineId);
+  const remaining = Math.max(qty - currentLinks.length, 0);
+  const linkedElsewhere = allLinkedDeviceIds();
+  const eligible = loadDevices()
+    .filter(d => deviceEligibleForSpendingLink(d, linkedElsewhere))
+    .sort((a, b) => devicePrimaryLabel(a).localeCompare(devicePrimaryLabel(b)));
+
+  document.getElementById('device-link-picker-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'device-link-picker-modal';
+  modal.className = 'txn-modal-backdrop';
+  modal.style.zIndex = '450';
+  modal.innerHTML = `<div class="card txn-modal-card txn-modal-card--form" style="width:560px">
+    <div class="pmo-modal-header">
+      <div>
+        <div class="txn-title">Link Devices — ${esc(item.name || '')}</div>
+        <div class="txn-form-subtitle">เลือกได้อีก ${remaining} เครื่อง (จากทั้งหมด ${qty})</div>
+      </div>
+      <button class="pmo-modal-close" onclick="document.getElementById('device-link-picker-modal').remove()">✕</button>
+    </div>
+    ${eligible.length ? `
+    <div style="margin-bottom:8px">
+      <input type="text" id="device-link-search" class="ri" placeholder="Search by Brand/Model, Asset IT, or Serial No." oninput="filterDeviceLinkPickerRows(this.value)">
+    </div>
+    <div style="max-height:360px;overflow-y:auto">
+      <table style="width:100%;border-collapse:collapse" id="device-link-picker-table">
+        <thead><tr style="background:var(--bg-2)">
+          <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text-3)">Brand / Model</th>
+          <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text-3)">Asset IT</th>
+          <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text-3)">Serial Number</th>
+          <th style="padding:5px 8px;font-size:10px;color:var(--text-3)">Select</th>
+        </tr></thead>
+        <tbody>
+          ${eligible.map(d => `<tr class="dev-link-row" data-search="${esc(_deviceLinkPickerSearchKey(d))}">
+            <td style="padding:6px 8px;font-size:12px">${esc(devicePrimaryLabel(d))}</td>
+            <td style="padding:6px 8px;font-size:12px">${esc(d.assetIt || '—')}</td>
+            <td style="padding:6px 8px;font-size:12px">${esc(d.serial || '—')}</td>
+            <td style="padding:6px 8px;text-align:center"><input type="checkbox" class="dev-link-pick" value="${esc(String(d.id))}"></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : `
+    <div style="padding:16px;text-align:center;font-size:12px;color:var(--text-3);line-height:1.5">
+      No available devices found. If the device is linked to another source, unlink it there first before linking it to this spending record.
+    </div>`}
+    <div class="pmo-modal-footer">
+      <button class="btn-ghost" onclick="document.getElementById('device-link-picker-modal').remove()">Cancel</button>
+      <button class="btn-primary" onclick="confirmDeviceLinkPicker('${esc(historicalMemoId)}', ${lineIndex})">Link Selected</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+function filterDeviceLinkPickerRows(query) {
+  const q = String(query || '').toLowerCase().trim();
+  document.querySelectorAll('#device-link-picker-table .dev-link-row').forEach(row => {
+    row.style.display = !q || (row.dataset.search || '').includes(q) ? '' : 'none';
+  });
+}
+
+async function confirmDeviceLinkPicker(historicalMemoId, lineIndex) {
+  const modal = document.getElementById('device-link-picker-modal');
+  const checked = [...(modal?.querySelectorAll('.dev-link-pick:checked') || [])].map(el => el.value);
+  if (!checked.length) { modal?.remove(); return; }
+  try {
+    await linkDevicesToHardwareLineAsync(historicalMemoId, lineIndex, checked);
+    modal?.remove();
+    if (typeof refreshSpendingDetailAfterDeviceLink === 'function') refreshSpendingDetailAfterDeviceLink(historicalMemoId);
+  } catch(e) { alert('เชื่อมโยงไม่สำเร็จ: ' + e.message); }
+}
+
+function unlinkDeviceFromLine(deviceId) {
+  if (!isPMO()) { alert('เฉพาะ PMO เท่านั้นที่ยกเลิกการเชื่อมโยงได้'); return; }
+  const link = deviceLinkForDevice(deviceId);
+  if (!link) return;
+  if (!confirm('ยกเลิกการเชื่อมโยง Device นี้กับ Hardware Spending?')) return;
+  unlinkDeviceFromSpendingAsync(deviceId).then(() => {
+    if (typeof refreshSpendingDetailAfterDeviceLink === 'function') refreshSpendingDetailAfterDeviceLink(link.historicalMemoId);
+    const panel = document.getElementById('dev-detail-modal');
+    if (panel && panel.style.display !== 'none') openDeviceDetail(deviceId);
+  }).catch(e => alert('ยกเลิกไม่สำเร็จ: ' + e.message));
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     openDeviceDetail,
     storeDevices,
     loadDevices,
+    deleteDeviceAsync,
+    renderHardwareDeviceLinkSection,
+    openDeviceLinkPicker,
+    filterDeviceLinkPickerRows,
+    confirmDeviceLinkPicker,
+    unlinkDeviceFromLine,
   };
 }

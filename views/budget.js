@@ -2129,7 +2129,7 @@ function historicalLineRow(type, item = {}) {
       <button class="rm-btn" type="button" onclick="this.closest('.hist-sp-line').remove();recalculateHistoricalSpendingTotal()">✕</button>
     </div>`;
   }
-  return `<div class="item-row hist-sp-line" data-line-id="${id}" style="grid-template-columns:1fr .8fr .8fr .9fr 30px">
+  return `<div class="item-row hist-sp-line" data-line-id="${id}" data-hw-id="${esc(item.id || '')}" style="grid-template-columns:1fr .8fr .8fr .9fr 30px">
     <input class="ri hs-name" value="${esc(item.name || '')}" placeholder="Item name" oninput="recalculateHistoricalSpendingTotal()">
     <input class="ri hs-qty" type="number" min="1" step="1" value="${esc(item.qty || item.quantity || 1)}" oninput="recalculateHistoricalSpendingTotal()">
     <input class="ri hs-price" type="number" min="0" step="0.01" value="${esc(item.price || item.unitPrice || 0)}" oninput="recalculateHistoricalSpendingTotal()">
@@ -2228,7 +2228,11 @@ function collectHistoricalLineItems(type) {
       const months = inclusiveCoverageMonths(startMonth, endMonth) || 0;
       return { name:value('.hs-name'), plan:value('.hs-plan'), qty, price, startMonth, endMonth, months, lineTotal: price * qty * months, index };
     }
-    return { name:value('.hs-name'), qty, price, lineTotal: price * qty, index };
+    // Batch 2B — preserve the stable per-line id (see historicalHwLineId() in
+    // app.js) so Hardware Spending <-> Device Registry links keep pointing at
+    // the same line across edits, even if lines above it are added/removed.
+    const hwId = row.dataset.hwId || '';
+    return { ...(hwId ? { id: hwId } : {}), name:value('.hs-name'), qty, price, lineTotal: price * qty, index };
   });
 }
 
@@ -2306,6 +2310,13 @@ async function saveHistoricalSpendingFromModal() {
   if (type === 'hw' && (!memo.hwItems.length || memo.hwItems.some(item => !item.name || !(item.price > 0)))) {
     alert('กรุณากรอก Hardware lines ให้ถูกต้อง'); return;
   }
+  // Batch 2B — a hardware line that already has linked devices can't be
+  // removed, and its Quantity can't drop below its current linked count.
+  // Devices must be unlinked first (spec: "Require unlink first").
+  if (type === 'hw') {
+    const blockMessage = hardwareLineEditBlockMessage(existing, memo.hwItems);
+    if (blockMessage) { alert(blockMessage); return; }
+  }
   if (!(memo.total > 0)) { alert('Amount ต้องมากกว่า 0'); return; }
   try {
     await saveHistoricalMemoAsync(memo);
@@ -2349,6 +2360,15 @@ function editSpending(kind, id) {
 async function deleteSpending(kind, id) {
   if (kind === 'historical') {
     if (!isPMO()) { alert('เฉพาะ PMO เท่านั้นที่ลบรายการได้'); return; }
+    // Batch 2B — block delete outright (no confirm) while any hardware line
+    // still has linked devices, matching the budgetPoolDeletionBlockers()
+    // hard-block pattern used for Budget Pool deletion.
+    const memo = historicalMemoSourceRows().find(item => item.id === id || item.memoNo === id);
+    const links = memo ? deviceLinksForMemo(memo.id) : [];
+    if (links.length) {
+      alert(`ไม่สามารถลบรายการนี้ได้ เนื่องจากมี Device เชื่อมโยงอยู่ ${links.length} เครื่อง\nกรุณายกเลิกการเชื่อมโยงทั้งหมดก่อน`);
+      return;
+    }
     if (!confirm('การดำเนินการนี้จะลบรายการออกจากรายงาน แต่ยังคงประวัติไว้\nต้องการดำเนินการต่อหรือไม่?')) return;
     try {
       await deleteHistoricalMemoAsync(id);
@@ -2907,9 +2927,24 @@ function renderMemoSpendTypeDetail(record) {
   const memo = canonicalTransactionMemo(record);
   if (memo && typeof _buildMemoTypeSection === 'function') {
     const html = _buildMemoTypeSection(memo);
-    if (html) return `<div class="txn-section">${html}</div>`;
+    // Batch 2B — optional Hardware Spending <-> Device Registry linking is
+    // only surfaced for historical (Manual Spending) hw memos; the approved
+    // Memo hw detail (PO/arrival workflow) renders exactly as before.
+    const deviceLinkHtml = memo.type === 'hw' && (memo.isHistoricalMemo || memo.sourceKind === 'historical') && typeof renderHardwareDeviceLinkSection === 'function'
+      ? renderHardwareDeviceLinkSection(memo)
+      : '';
+    if (html || deviceLinkHtml) return `<div class="txn-section">${html}${deviceLinkHtml}</div>`;
   }
   return renderMemoFallbackDetail(record);
+}
+
+// Batch 2B — re-renders an already-open Spending Detail modal after a device
+// link/unlink so the "Linked" counts and device chips reflect the change
+// immediately, without the user closing and reopening the dialog.
+function refreshSpendingDetailAfterDeviceLink(historicalMemoId) {
+  const memo = historicalMemoSourceRows().find(item => item.id === historicalMemoId);
+  if (!memo) return;
+  showSpendingDetail('historical', memo.id);
 }
 
 function renderCanonicalDetailSection(record) {
@@ -4380,6 +4415,12 @@ if (typeof module !== 'undefined' && module.exports) {
     openAddSpendingTypeSelector,
     openHistoricalSpendingModal,
     saveHistoricalSpendingFromModal,
+    collectHistoricalLineItems,
+    historicalLineRow,
+    showSpendingDetail,
+    editSpending,
+    deleteSpending,
+    refreshSpendingDetailAfterDeviceLink,
     assignBudgetPoolFromWorkspace,
     budgetAssignmentRowsTable,
   };
