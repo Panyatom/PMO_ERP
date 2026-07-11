@@ -609,7 +609,7 @@ function collectMemoData() {
   if(data.type==='ent') {
     const inp = document.querySelectorAll('#fs-ent input');
     data.entClient   = inp[0]?.value.trim() || '';
-    data.entDate     = dateInput(inp[1]?.value) || '';
+    data.entDate     = dateInput(document.getElementById('ent-date')?.value) || '';
     data.entPlace    = inp[2]?.value.trim() || '';
     data.entPeople   = inp[3]?.value || '';
     data.total       = Number(inp[4]?.value)||0;
@@ -762,7 +762,7 @@ function validateMemo(data) {
   if(data.type==='ent') {
     const entInp = document.querySelectorAll('#fs-ent input');
     if(!entInp[0]?.value?.trim()) missing.push('ชื่อลูกค้า / บริษัท');
-    if(!entInp[1]?.value?.trim()) missing.push('วันที่จัดงาน');
+    if(!document.getElementById('ent-date')?.value?.trim()) missing.push('วันที่จัดงาน');
     if(!entInp[2]?.value?.trim()) missing.push('สถานที่จัดงาน');
     if(!(parseInt(entInp[3]?.value) > 0))    missing.push('จำนวนผู้เข้าร่วม');
     if(!(parseFloat(entInp[4]?.value) > 0))  missing.push('วงเงินรวม');
@@ -1800,8 +1800,9 @@ function populateMemoTypeDetail(memo) {
 
   if (memo.type === 'ent') {
     const entInp = document.querySelectorAll('#fs-ent input');
+    const entDate = document.getElementById('ent-date');
     if (entInp[0]) entInp[0].value = memo.entClient || '';
-    if (entInp[1]) entInp[1].value = thaiDateToISO(memo.entDate);
+    if (entDate) entDate.value = thaiDateToISO(memo.entDate);
     if (entInp[2]) entInp[2].value = memo.entPlace || '';
     if (entInp[3]) entInp[3].value = memo.entPeople || '';
     if (entInp[4]) entInp[4].value = memo.total || '';
