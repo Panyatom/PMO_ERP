@@ -5,6 +5,7 @@
 let selectedType = null;
 let _editingSourceMemoNo = null;
 let _editingDraftMemoNo = null;
+let _editingDraftMemoId = null;
 let _approverRowsInitTimer = null;
 
 // collectMemoData() stores dates via dateInput() as print-ready Thai Buddhist-
@@ -516,6 +517,7 @@ function collectMemoData() {
   const requesterTitle = (typeof currentUserProfile === 'function' ? currentUserProfile()?.title : '') || '';
 
   const data = {
+    id: _editingDraftMemoId,
     type: selectedType, typeLabel: TYPE_LABELS[selectedType]||'-',
     memoNo: val('#f-memo-no'), date: dateInput(val('#f-date')),
     project: val('#f-project')==='other' ? val('#f-project-other') : val('#f-project'),
@@ -850,7 +852,12 @@ async function saveDraft() {
     return;
   }
   // If editing existing draft, keep same memoNo
-  saveMemo(data);
+  try {
+    await saveMemoAsync(data);
+  } catch(e) {
+    alert(e?.message || 'บันทึก Draft ไม่สำเร็จ');
+    return;
+  }
   renderPendingMemos();
   alert(`✓ บันทึก Draft แล้ว — ${data.memoNo}`);
   resetMemoForm();
@@ -888,14 +895,14 @@ async function submitMemo() {
   )) return;
   try {
     const prepared = prepareMemoForSubmission(data);
-    const saved = saveMemo(prepared);
+    const saved = await saveMemoAsync(prepared);
     renderPendingMemos();
     const destination = selfA1 ? `A2: ${a2?.name || '—'}` : `A1: ${a1?.name || '—'}`;
     alert(`✓ Submit ${saved.memoNo} แล้ว — ส่งต่อไปยัง ${destination}`);
     swView('pending', document.querySelector('.sb-sub-item[onclick*="pending"]'), 'Pending Approval');
   } catch(e) {
     console.error(e);
-    alert('เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง');
+    alert(e?.message || 'เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง');
   }
 }
 // Backward-compatible alias for older buttons/bookmarks.
@@ -918,6 +925,7 @@ function resetMemoForm() {
   selectedType = null;
   _editingSourceMemoNo = null;
   _editingDraftMemoNo = null;
+  _editingDraftMemoId = null;
   document.querySelectorAll('.type-btn').forEach(btn => btn.classList.remove('selected'));
   document.querySelectorAll('.fs').forEach(section => section.classList.remove('active'));
   const body = document.getElementById('form-body');
@@ -1584,6 +1592,7 @@ async function applyDraftEdit() {
     localStorage.removeItem('orbit-pmo-edit-draft');
     _editingSourceMemoNo = memo.sourceMemoNo || null;
     _editingDraftMemoNo = memo.memoNo || null;
+    _editingDraftMemoId = memo.id || memo.memoNo || null;
 
     // Select type
     const typeBtn = document.querySelector(`.type-btn[onclick*="selectType('${memo.type}"]`) ||

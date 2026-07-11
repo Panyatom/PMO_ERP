@@ -39,6 +39,40 @@ async function supaFetch(table, method='GET', body=null, query='') {
   }
 }
 
+const DUPLICATE_MEMO_NO_MESSAGE = 'Memo No. already exists. Please generate or enter a different Memo No.';
+
+function isDuplicateMemoNoError(error) {
+  const message = String(error?.message || error || '');
+  return message.includes('23505') || /duplicate key|unique constraint|memos_memo_no/i.test(message);
+}
+
+function normalizeMemoPersistenceError(error) {
+  if (isDuplicateMemoNoError(error)) return new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  return error;
+}
+
+function isSameMemoRecord(existing, data) {
+  if (!existing || !data) return false;
+  const existingId = String(existing.id || existing.memoNo || '').trim();
+  const dataId = String(data.id || '').trim();
+  return !!existingId && !!dataId && existingId === dataId;
+}
+
+function findMemoByRecordIdentity(memos, data) {
+  const dataId = String(data?.id || '').trim();
+  if (dataId) {
+    const match = (memos || []).find(m => String(m.id || m.memoNo || '').trim() === dataId);
+    if (match) return match;
+  }
+  return (memos || []).find(m => String(m.memoNo || '').trim() === String(data?.memoNo || '').trim()) || null;
+}
+
+function findMemoNumberCollision(memos, data) {
+  const memoNo = String(data?.memoNo || '').trim();
+  if (!memoNo) return null;
+  return (memos || []).find(m => String(m.memoNo || '').trim() === memoNo && !isSameMemoRecord(m, data)) || null;
+}
+
 // ── Memo field mapping: JS camelCase ↔ DB snake_case ──
 // ── Shared financial models (Phase 1A — local storage only) ──
 const SPEND_TYPES = Object.freeze({
@@ -1092,6 +1126,17 @@ if (typeof module !== 'undefined' && module.exports) {
     forecastExportDataset,
     esc,
     money,
+    DUPLICATE_MEMO_NO_MESSAGE,
+    isDuplicateMemoNoError,
+    normalizeMemoPersistenceError,
+    isSameMemoRecord,
+    findMemoByRecordIdentity,
+    findMemoNumberCollision,
+    memoToDb,
+    dbToMemo,
+    saveMemo,
+    saveMemoAsync,
+    syncLocalToSupabase,
     loadMemos,
     storeMemos,
     loadActualSpendRecords,
@@ -1542,7 +1587,7 @@ function memoToDb(m) {
 }
 function dbToMemo(r) {
   return {
-    id: r.memo_no, memoNo: r.memo_no,
+    id: r.id || r.memo_no, memoNo: r.memo_no,
     type: r.type, typeLabel: r.type_label,
     status: r.status, project: r.project, subject: r.subject, reason: r.reason,
     to: r.to, date: r.date, total: Number(r.total)||0, amountWords: r.amount_words,
@@ -1593,21 +1638,34 @@ async function loadMemosAsync() {
 
 async function saveMemoAsync(data) {
   const now = new Date().toISOString();
-  const existing = (await loadMemosAsync()).find(m => m.memoNo === data.memoNo);
-  const saved = { ...data, id:data.memoNo, status:data.status||'pending',
+  const loadedMemos = await loadMemosAsync();
+  const existing = findMemoByRecordIdentity(loadedMemos, data);
+  if (findMemoNumberCollision(loadedMemos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const saved = { ...data, id:data.id || data.memoNo, status:data.status||'pending',
     createdAt: existing ? existing.createdAt : now, updatedAt: now };
 
   if(await checkSupa()) {
     try {
       const db = memoToDb(saved);
-      await supaFetch('memos', 'POST', db, '?on_conflict=memo_no');
+      if (existing) {
+        await supaFetch('memos', 'PATCH', db, '?id=eq.' + encodeURIComponent(existing.id || saved.id));
+      } else {
+        await supaFetch('memos', 'POST', db);
+      }
       _memCache = null; // invalidate cache
       return saved;
-    } catch(e) { console.warn('Supabase save failed', e.message); }
+    } catch(e) { throw normalizeMemoPersistenceError(e); }
   }
   // localStorage fallback
   const memos = loadMemos();
-  const idx = memos.findIndex(m => m.memoNo === data.memoNo);
+  if(findMemoNumberCollision(memos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const idx = existing
+    ? memos.findIndex(m => isSameMemoRecord(m, saved))
+    : memos.findIndex(m => m.memoNo === data.memoNo);
   if(idx>=0) memos[idx]=saved; else memos.push(saved);
   storeMemos(memos);
   return saved;
@@ -1651,7 +1709,7 @@ async function syncLocalToSupabase() {
   let pushed = 0;
   for(const m of local) {
     try {
-      await supaFetch('memos', 'POST', memoToDb(m), '?on_conflict=memo_no');
+      await saveMemoAsync(m);
       pushed++;
     } catch(e) { console.warn('Sync failed for', m.memoNo, e.message); }
   }
@@ -1829,8 +1887,14 @@ function saveMemo(data) {
   // Sync version for backward compat — also triggers async save to Supabase
   const now = new Date().toISOString();
   const memos = loadMemos();
-  const idx = memos.findIndex(m => m.memoNo === data.memoNo);
-  const saved = { ...data, id:data.memoNo, status:data.status||'pending',
+  if (findMemoNumberCollision(memos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const existing = findMemoByRecordIdentity(memos, data);
+  const idx = existing
+    ? memos.findIndex(m => isSameMemoRecord(m, { id: existing.id || existing.memoNo }))
+    : memos.findIndex(m => m.memoNo === data.memoNo);
+  const saved = { ...data, id:data.id || data.memoNo, status:data.status||'pending',
     createdAt: idx>=0 ? memos[idx].createdAt : now, updatedAt: now };
   if(idx>=0) memos[idx]=saved; else memos.push(saved);
   storeMemos(memos);
@@ -1930,7 +1994,7 @@ function memoToDb(m) {
 }
 function dbToMemo(r) {
   return {
-    id: r.memo_no, memoNo: r.memo_no,
+    id: r.id || r.memo_no, memoNo: r.memo_no,
     type: r.type, typeLabel: r.type_label,
     status: r.status, project: r.project, subject: r.subject, reason: r.reason,
     to: r.to, date: r.date, total: Number(r.total)||0, amountWords: r.amount_words,
@@ -2021,8 +2085,12 @@ async function loadMemosAsync() {
 
 async function saveMemoAsync(data) {
   const now = new Date().toISOString();
-  const existing = loadMemos().find(m => m.memoNo === data.memoNo);
-  const saved = { ...data, id:data.memoNo, status:data.status||'pending',
+  const currentMemos = loadMemos();
+  const existing = findMemoByRecordIdentity(currentMemos, data);
+  if (findMemoNumberCollision(currentMemos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const saved = { ...data, id:data.id || data.memoNo, status:data.status||'pending',
     createdAt: existing ? existing.createdAt : now, updatedAt: now,
     // Milestone 2 Task 2.3 — Created By / Updated By metadata.
     createdBy: existing ? existing.createdBy : (data.createdBy || currentUser()),
@@ -2031,7 +2099,11 @@ async function saveMemoAsync(data) {
   if(await checkSupa()) {
     try {
       const db = memoToDb(saved);
-      await supaFetch('memos', 'POST', db, '?on_conflict=memo_no');
+      if (existing) {
+        await supaFetch('memos', 'PATCH', db, '?id=eq.' + encodeURIComponent(existing.id || saved.id));
+      } else {
+        await supaFetch('memos', 'POST', db);
+      }
       // update cache directly — no need to re-fetch
       if (_memCache) {
         const ci = _memCache.findIndex(m => m.memoNo === saved.memoNo);
@@ -2049,11 +2121,16 @@ async function saveMemoAsync(data) {
         });
       }
       return saved;
-    } catch(e) { console.warn('Supabase save failed', e.message); }
+    } catch(e) { throw normalizeMemoPersistenceError(e); }
   }
   // Offline fallback: localStorage
   const memos = loadMemos();
-  const idx = memos.findIndex(m => m.memoNo === data.memoNo);
+  if(findMemoNumberCollision(memos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const idx = existing
+    ? memos.findIndex(m => isSameMemoRecord(m, saved))
+    : memos.findIndex(m => m.memoNo === data.memoNo);
   if(idx>=0) memos[idx]=saved; else memos.push(saved);
   storeMemos(memos);
   if (saved.status === 'completed') {
@@ -2315,7 +2392,7 @@ async function syncLocalToSupabase() {
   let pushed = 0;
   for(const m of local) {
     try {
-      await supaFetch('memos', 'POST', memoToDb(m), '?on_conflict=memo_no');
+      await saveMemoAsync(m);
       pushed++;
     } catch(e) { console.warn('Sync failed for', m.memoNo, e.message); }
   }
@@ -2519,11 +2596,17 @@ function saveMemo(data) {
   // Sync version for backward compat — pushes to Supabase async in background
   const now = new Date().toISOString();
   const memos = loadMemos();
-  const idx = memos.findIndex(m => m.memoNo === data.memoNo);
+  if (findMemoNumberCollision(memos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const existingByIdentity = findMemoByRecordIdentity(memos, data);
+  const idx = existingByIdentity
+    ? memos.findIndex(m => isSameMemoRecord(m, { id: existingByIdentity.id || existingByIdentity.memoNo }))
+    : memos.findIndex(m => m.memoNo === data.memoNo);
   const existing = idx >= 0 ? memos[idx] : null;
   const saved = {
     ...data,
-    id:          data.memoNo,
+    id:          data.id || data.memoNo,
     status:      data.status || 'pending',
     createdAt:   existing?.createdAt || data.createdAt || now,
     updatedAt:   now,
