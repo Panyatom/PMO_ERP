@@ -135,55 +135,62 @@ function renderedCanonicalPanel(record) {
   return global.document.body.children[global.document.body.children.length - 1].innerHTML;
 }
 
-test('Client Expense memo summary shows Event Date and existing customer/venue instead of empty Coverage fields', () => {
+test('Client Expense memo summary shows Event Date and Memo Request Date, without duplicating Customer/Venue from the detail section', () => {
   const memo = {
-    memoNo: 'MEMO-ENT-SUMMARY', type: 'ent', status: 'completed', project: 'AOA', total: 9000, subject: 'Client dinner',
+    memoNo: 'MEMO-ENT-SUMMARY', type: 'ent', status: 'completed', project: 'AOA', total: 9000, subject: 'Client dinner', date: '2026-03-20',
     entClient: 'Acme Corp', entDate: '2026-04-01', entPlace: 'Bangkok', entPeople: 6,
   };
   app.storeMemos([memo]);
   const html = renderedCanonicalPanel(budget.canonicalTransactionRecordFromMemo(memo));
   assert.ok(html.includes('Event Date'));
   assert.ok(html.includes('2026-04-01'));
-  assert.ok(html.includes('Customer'));
-  assert.ok(html.includes('Acme Corp'));
-  assert.ok(html.includes('Venue'));
-  assert.ok(html.includes('Bangkok'));
+  assert.ok(html.includes('Memo Request Date'));
+  assert.ok(html.includes('2026-03-20'));
+  assert.ok(!html.includes('Customer'), 'Customer is now shown only in the spend-type detail section, not the summary');
+  assert.ok(!html.includes('Venue'), 'Venue is now shown only in the spend-type detail section, not the summary');
+  assert.ok(html.includes('Acme Corp'), 'Customer value should still appear inside the spend-type detail section');
+  assert.ok(html.includes('Bangkok'), 'Venue value should still appear inside the spend-type detail section');
   assert.ok(!html.includes('Coverage Start'));
   assert.ok(!html.includes('Coverage End'));
 });
 
-test('Team Activity memo summary shows activity fields instead of empty Coverage fields', () => {
+test('Team Activity memo summary shows Activity Date and Memo Request Date, without duplicating Activity Name/Headcount from the detail section', () => {
   const memo = {
-    memoNo: 'MEMO-INT-SUMMARY', type: 'int', status: 'completed', project: 'AOA', total: 15000, subject: 'Team outing',
+    memoNo: 'MEMO-INT-SUMMARY', type: 'int', status: 'completed', project: 'AOA', total: 15000, subject: 'Team outing', date: '2026-02-15',
     intActivity: 'Year-end party', intDate: '2026-03-01', intHeadcount: 30, intPP: 500,
   };
   app.storeMemos([memo]);
   const html = renderedCanonicalPanel(budget.canonicalTransactionRecordFromMemo(memo));
   assert.ok(html.includes('Activity Date'));
   assert.ok(html.includes('2026-03-01'));
-  assert.ok(html.includes('Activity Name'));
-  assert.ok(html.includes('Year-end party'));
-  assert.ok(html.includes('Headcount'));
+  assert.ok(html.includes('Memo Request Date'));
+  assert.ok(html.includes('2026-02-15'));
+  assert.ok(!html.includes('Activity Name'), 'Activity Name is now shown only in the spend-type detail section, not the summary');
+  assert.ok(!html.includes('Headcount'), 'Headcount is now shown only in the spend-type detail section, not the summary');
+  assert.ok(html.includes('Year-end party'), 'Activity name value should still appear inside the spend-type detail section');
   assert.ok(!html.includes('Coverage Start'));
   assert.ok(!html.includes('Coverage End'));
 });
 
-test('Hardware memo summary does not display meaningless empty Coverage fields', () => {
+test('Hardware memo summary shows Purchase Date and Memo Request Date, and does not display meaningless empty Coverage fields', () => {
   const memo = {
-    memoNo: 'MEMO-HW-SUMMARY', type: 'hw', status: 'completed', project: 'AOA', total: 80000, subject: 'Laptops',
+    memoNo: 'MEMO-HW-SUMMARY', type: 'hw', status: 'completed', project: 'AOA', total: 80000, subject: 'Laptops', date: '2026-01-10',
     hwItems: [{ name: 'Dell Laptop', price: 40000, qty: 2 }],
   };
   app.storeMemos([memo]);
   const html = renderedCanonicalPanel(budget.canonicalTransactionRecordFromMemo(memo));
   assert.ok(html.includes('รายการ Hardware'));
   assert.ok(html.includes('Dell Laptop'));
+  assert.ok(html.includes('Purchase Date'));
+  assert.ok(html.includes('Memo Request Date'));
+  assert.ok(html.includes('2026-01-10'));
   assert.ok(!html.includes('Coverage Start'));
   assert.ok(!html.includes('Coverage End'));
 });
 
-test('Deployment memo summary shows deployment-specific dates instead of generic Coverage labels', () => {
+test('Deployment memo summary shows Deployment Start/End and Memo Request Date, without duplicating Deployment Location/Headcount from the detail section', () => {
   const memo = {
-    memoNo: 'MEMO-DEP-SUMMARY', type: 'dep', status: 'completed', project: 'AOA', total: 12000, subject: 'Deployment',
+    memoNo: 'MEMO-DEP-SUMMARY', type: 'dep', status: 'completed', project: 'AOA', total: 12000, subject: 'Deployment', date: '2026-04-20',
     depStart: '2026-05-01', depEnd: '2026-05-03', depLocation: 'Bangkok HQ', depEmpCount: 4,
   };
   app.storeMemos([memo]);
@@ -192,8 +199,18 @@ test('Deployment memo summary shows deployment-specific dates instead of generic
   assert.ok(html.includes('2026-05-01'));
   assert.ok(html.includes('Deployment End'));
   assert.ok(html.includes('2026-05-03'));
-  assert.ok(html.includes('Deployment Location'));
-  assert.ok(html.includes('Bangkok HQ'));
+  assert.ok(html.includes('Memo Request Date'));
+  assert.ok(html.includes('2026-04-20'));
+  assert.ok(!html.includes('Deployment Location'), 'Deployment Location is now shown only in the spend-type detail section, not the summary');
+  assert.ok(!html.includes('Headcount'), 'Headcount is now shown only in the spend-type detail section, not the summary');
+  assert.ok(html.includes('Bangkok HQ'), 'Deployment location value should still appear inside the spend-type detail section');
   assert.ok(!html.includes('Coverage Start'));
   assert.ok(!html.includes('Coverage End'));
+});
+
+test('Manual Entry / Infra Cost records never show a Memo Request Date (no memo backs them)', () => {
+  for (const spendType of [SPEND_TYPES.SOFTWARE, SPEND_TYPES.TEAM_ACTIVITY, SPEND_TYPES.CLIENT_EXPENSE, SPEND_TYPES.HARDWARE, SPEND_TYPES.INFRA]) {
+    const html = renderedCanonicalPanel(manualRecord(spendType));
+    assert.ok(!html.includes('Memo Request Date'));
+  }
 });

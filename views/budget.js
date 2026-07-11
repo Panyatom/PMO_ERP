@@ -2261,29 +2261,6 @@ function canonicalTransactionSummaryDateFields(record, memo, expense) {
       ];
 }
 
-function canonicalMemoBusinessSummaryFields(record, memo) {
-  if (!memo) return [];
-  if (record.spendType === SPEND_TYPES.CLIENT_EXPENSE) {
-    return [
-      ...(memo.entClient ? [['Customer', memo.entClient]] : []),
-      ...(memo.entPlace ? [['Venue', memo.entPlace]] : []),
-    ];
-  }
-  if (record.spendType === SPEND_TYPES.TEAM_ACTIVITY) {
-    return [
-      ...(memo.intActivity ? [['Activity Name', memo.intActivity]] : []),
-      ...(memo.intHeadcount ? [['Headcount', memo.intHeadcount]] : []),
-    ];
-  }
-  if (record.spendType === SPEND_TYPES.DEPLOYMENT) {
-    return [
-      ...(memo.depLocation ? [['Deployment Location', memo.depLocation]] : []),
-      ...(memo.depEmpCount ? [['Headcount', memo.depEmpCount]] : []),
-    ];
-  }
-  return [];
-}
-
 function renderLinkedSpendTypeItems(record) {
   const linkedItems = Array.isArray(record.linkedItems) ? record.linkedItems.filter(Boolean) : [];
   if (!linkedItems.length) return '';
@@ -2434,7 +2411,6 @@ function showCanonicalTransactionDetail(record, options = {}) {
   const pool = loadBudgetPools().find(item => item.id === poolId);
   const expense = manualExpenseForRecord(record);
   const memo = canonicalTransactionMemo(record);
-  const expenseDate = expense?.expenseDate || (record.startDate && record.startDate === record.endDate ? record.startDate : '');
   const summaryFields = [
     ['Source', canonicalActualSpendSourceLabel(record.source)],
     ['Reference No.', record.referenceNo || record.memoId],
@@ -2443,9 +2419,8 @@ function showCanonicalTransactionDetail(record, options = {}) {
     ...(record.plan ? [['Plan', record.plan]] : []),
     ['Spend Type', record.spendType],
     ['Amount', record.amount, money],
-    ...(expenseDate && (record.spendType === SPEND_TYPES.SOFTWARE || record.spendType === SPEND_TYPES.INFRA) ? [['Expense Date', expenseDate]] : []),
+    ...(memo ? [['Memo Request Date', memo.date]] : []),
     ...canonicalTransactionSummaryDateFields(record, memo, expense),
-    ...canonicalMemoBusinessSummaryFields(record, memo),
     ['Budget Pool', pool?.name || pool?.poolName || poolId],
   ];
   const summaryHtml = canonicalFieldGrid(summaryFields);
