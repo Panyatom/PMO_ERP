@@ -44,7 +44,7 @@ test('[PMO-DATE-002] Client Expense date has a stable id and save/restore code u
   assert.doesNotMatch(createJs, /if \(entInp\[1\]\) entInp\[1\]\.value = thaiDateToISO\(memo\.entDate\)/);
 });
 
-test('[PMO-DATE-003] Month-only fields remain unchanged for the later batch', () => {
+test('[PMO-DATE-003] Month-only fields remain native month inputs before month-year enhancement', () => {
   ['sl-start', 'sl-end'].forEach(className => {
     const pattern = new RegExp(`<input\\b(?=[^>]*\\bclass="[^"]*${className}[^"]*"[^>]*)([^>]*)>`, 'i');
     const match = indexHtml.match(pattern);

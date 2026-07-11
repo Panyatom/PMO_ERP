@@ -785,19 +785,20 @@ function _ovBuildMonths() {
   _ov.allMonths = [];
   for (let i = 23; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
     _ov.allMonths.push({
-      key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`,
-      label: d.toLocaleString('th-TH', { month:'short', year:'2-digit' }),
+      key,
+      label: typeof PMO_MONTH_YEAR === 'object' ? PMO_MONTH_YEAR.label(key) : d.toLocaleString('en-US', { month:'long', year:'numeric' }),
     });
   }
   const fromSel = document.getElementById('ov-from-sel');
   const toSel   = document.getElementById('ov-to-sel');
-  if (fromSel && !fromSel.options.length) {
-    _ov.allMonths.forEach((m, i) => {
-      const o1 = document.createElement('option'); o1.value = i; o1.textContent = m.label; fromSel.appendChild(o1);
-      const o2 = document.createElement('option'); o2.value = i; o2.textContent = m.label; toSel.appendChild(o2);
-    });
-    toSel.value = _ov.allMonths.length - 1;
+  if (fromSel && toSel && !fromSel.value && !toSel.value) {
+    const from = _ov.allMonths[Math.max(0, _ov.allMonths.length - 12)];
+    const to = _ov.allMonths[_ov.allMonths.length - 1];
+    if (from) fromSel.value = from.key;
+    if (to) toSel.value = to.key;
+    if (typeof PMO_MONTH_YEAR === 'object') PMO_MONTH_YEAR.enhance(document.getElementById('ov-custom-range') || document);
   }
 }
 
@@ -845,8 +846,8 @@ function ovSetPreset(n) {
     // multi-year-old default unrelated to the period actually shown on screen.
     const fromSel = document.getElementById('ov-from-sel');
     const toSel = document.getElementById('ov-to-sel');
-    if (fromSel) fromSel.value = _ov.fromIdx;
-    if (toSel) toSel.value = _ov.toIdx;
+    if (fromSel) fromSel.value = _ov.allMonths[_ov.fromIdx]?.key || '';
+    if (toSel) toSel.value = _ov.allMonths[_ov.toIdx]?.key || '';
   } else {
     if (cr) cr.style.display = 'none';
     // Cap at 12 months
@@ -858,15 +859,22 @@ function ovSetPreset(n) {
 }
 
 function ovApplyCustomRange() {
-  const f = parseInt(document.getElementById('ov-from-sel')?.value ?? 0);
-  const t = Math.max(f, parseInt(document.getElementById('ov-to-sel')?.value ?? _ov.allMonths.length - 1));
+  const normalizeMonth = typeof PMO_MONTH_YEAR === 'object'
+    ? PMO_MONTH_YEAR.normalize
+    : value => String(value || '').slice(0, 7);
+  const fromValue = normalizeMonth(document.getElementById('ov-from-sel')?.value || '') || '';
+  const toValue = normalizeMonth(document.getElementById('ov-to-sel')?.value || '') || '';
+  const rawF = _ov.allMonths.findIndex(month => month.key === fromValue);
+  const rawT = _ov.allMonths.findIndex(month => month.key === toValue);
+  const f = rawF >= 0 ? rawF : 0;
+  const t = Math.max(f, rawT >= 0 ? rawT : _ov.allMonths.length - 1);
   const span = t - f + 1;
   // A range over 12 months must be blocked with a clear message, not silently truncated to 12
   // months while the selectors keep showing the wider range the user actually picked.
   if (span > 12) {
     alert('เลือกช่วงเวลาได้สูงสุด 12 เดือนเท่านั้น กรุณาเลือกช่วงใหม่ (You can select a maximum of 12 months only)');
     const toSel = document.getElementById('ov-to-sel');
-    if (toSel) toSel.value = _ov.toIdx;
+    if (toSel) toSel.value = _ov.allMonths[_ov.toIdx]?.key || '';
     return;
   }
   _ov.fromIdx = f;
@@ -2506,10 +2514,7 @@ async function renderActualSpend() {
       return Array.from({ length:Math.max(1, Math.min(20, (end || start) - start + 1)) }, (_, i) => String(start + i));
     }))].sort((a,b) => b.localeCompare(a));
     if (!years.length) years.push(String(new Date().getFullYear()));
-    // Phase 7A-9B: label displays Buddhist Era; `value` stays Gregorian since
-    // actualSpendRecordInYear()/filteredActualSpendRecords() compare it against record.startDate's
-    // Gregorian year — only the visible text changes, same pattern as populateBudgetYearSelect().
-    yearSel.innerHTML = years.map(year => `<option value="${year}">ปี ${gregorianYearToBuddhistEra(year)}</option>`).join('');
+    yearSel.innerHTML = years.map(year => `<option value="${year}">${year}</option>`).join('');
     yearSel.value = years.includes(current) ? current : years[0];
   }
 
@@ -2527,11 +2532,9 @@ async function renderActualSpend() {
     refreshMultiSelectUI('as-project');
   }
 
-  // Display-only (Phase 7A-9B): every use below is a label, never a filter value, so it's safe to
-  // show Buddhist Era here even though the underlying `as-year` <option value> stays Gregorian.
-  const selectedYear = gregorianYearToBuddhistEra(yearSel?.value || String(new Date().getFullYear()));
+  const selectedYear = yearSel?.value || String(new Date().getFullYear());
   const labelEl = document.getElementById('as-period-label');
-  if (labelEl) labelEl.textContent = fromVal && toVal ? `ปี ${selectedYear} · ${fromVal} – ${toVal}` : fromVal ? `ปี ${selectedYear} · ตั้งแต่ ${fromVal}` : toVal ? `ปี ${selectedYear} · ถึง ${toVal}` : `แสดงข้อมูลปี ${selectedYear}`;
+  if (labelEl) labelEl.textContent = fromVal && toVal ? `Year ${selectedYear} · ${fromVal} – ${toVal}` : fromVal ? `Year ${selectedYear} · From ${fromVal}` : toVal ? `Year ${selectedYear} · To ${toVal}` : `Showing ${selectedYear}`;
 
   const records = filteredActualSpendRecords(canonical);
   if (!records.length) {
@@ -2839,32 +2842,30 @@ function closeBudgetAssignmentWorkspace() {
   return renderBudgetVsActual();
 }
 
-// Shared BE year options for the Budget Pool year selects (`bva-year`, `bset-year`). Replaces the
-// two independently hardcoded 2568/2569/2570 option lists that used to live in index.html — those
-// would have silently run out of "current year" past BE 2570 (Phase 7A-9A, closing
-// docs/BvA_REQUIREMENT.md "Phase 7A-1" §2 Known Issue #2 at the UI layer). Populated once per page
-// load (guarded by an empty `<select>`), not re-derived on every render.
-// `extraYear` (Phase 7A-9B): when provided, guarantees that year is present in the option list and
-// pre-selected, even if it falls outside the current±1 range — needed so the Budget Pool Add/Edit
-// modal's now-selectable Budget Year always shows an existing pool's own (possibly older/newer)
-// year instead of silently defaulting to the nearest option and changing the pool's year on save.
+// Shared CE year options for owned Budget year controls. Canonical Budget Pool records still keep
+// their legacy BE `year` internally; callers that feed Budget matching convert this UI value at the
+// boundary so the calculation model is unchanged.
 function populateBudgetYearSelect(id, extraYear) {
   const el = document.getElementById(id);
   if (!el || el.options.length) return;
-  const current = Number(getCurrentBuddhistYear());
-  const selected = extraYear ? Number(extraYear) : current;
-  const years = new Set([current - 1, current, current + 1, selected]);
+  const current = new Date().getFullYear();
+  const selected = extraYear ? Number(financialYearToGregorian(extraYear)) : current;
+  const years = new Set([selected]);
+  for (let year = current - 5; year <= current + 10; year++) years.add(year);
   const sorted = [...years].sort((a, b) => a - b);
   el.innerHTML = sorted.map(y => `<option value="${y}" ${y === selected ? 'selected' : ''}>${y}</option>`).join('');
 }
 
-// Phase 7A-9B: populates a Start/End Month select with the 12 Thai month names (value = 1-12).
+// Populates a Start/End Month select with English month names (value = 1-12).
 // Always re-renders (unlike populateBudgetYearSelect()'s "populate once" guard) since the Budget
 // Pool modal deliberately resets these when Budget Year changes (see _onBpoolYearChange()).
 function populateMonthSelect(id, selectedMonth) {
   const el = document.getElementById(id);
   if (!el) return;
-  el.innerHTML = MONTHS_TH.map((name, i) => `<option value="${i + 1}" ${i + 1 === selectedMonth ? 'selected' : ''}>${esc(name)}</option>`).join('');
+  const monthNames = typeof PMO_MONTH_YEAR === 'object'
+    ? PMO_MONTH_YEAR.months
+    : ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  el.innerHTML = monthNames.map((name, i) => `<option value="${i + 1}" ${i + 1 === selectedMonth ? 'selected' : ''}>${esc(name)}</option>`).join('');
 }
 
 // BvA search (`bva-search`) previously called _renderBvaWith() directly on every keystroke, which
@@ -2880,7 +2881,8 @@ function bvaSearchDebounced() {
 
 function _renderBvaWith(pools) {
   populateBudgetYearSelect('bva-year');
-  const yearVal   = document.getElementById('bva-year')?.value || getCurrentBuddhistYear();
+  const yearValCE = document.getElementById('bva-year')?.value || String(new Date().getFullYear());
+  const yearVal   = gregorianYearToBuddhistEra(yearValCE);
   const projVal   = document.getElementById('bva-project')?.value || 'all';
   const typeVal   = document.getElementById('bva-type')?.value || 'all';
   const searchVal = document.getElementById('bva-search')?.value || '';
@@ -2940,7 +2942,7 @@ function _renderBvaWith(pools) {
         <div style="font-size:12px;color:var(--text-3)">Try clearing the Project, Type, or search filters above.</div>
       </div>` : `
       <div class="card" style="padding:32px;text-align:center">
-        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px">No budget pools found for ${yearVal}.</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px">No budget pools found for ${yearValCE}.</div>
         <div style="font-size:12px;color:var(--text-3);margin-bottom:16px">Go to Settings → Budget Pools to set a budget first.</div>
         <button class="btn-primary" onclick="switchBudgetTab('bgt-settings')" style="font-size:12px">Go to Settings →</button>
       </div>`;
@@ -3366,7 +3368,7 @@ async function handlePoolBulkUpload(input) {
 
   if (!rows.length) { alert('ไม่พบข้อมูลในไฟล์'); return; }
 
-  const defaultYear = document.getElementById('bset-year')?.value || '2569';
+  const defaultYear = gregorianYearToBuddhistEra(document.getElementById('bset-year')?.value || String(new Date().getFullYear()));
   const parsed = rows.map(row => {
     const keys = Object.keys(row);
     const findKey = prefix => keys.find(k => k.toLowerCase().replace(/[\s(]/g,'').startsWith(prefix.toLowerCase().replace(/[\s(]/g,'')));
@@ -3567,7 +3569,8 @@ async function _confirmPoolImport() {
 // raw stored `year` — otherwise this list can disagree with the Edit modal (which already derives
 // from normalized Start Month) for any legacy/mismatched pool.
 function visibleBudgetSettingsPools() {
-  const year = document.getElementById('bset-year')?.value || getCurrentBuddhistYear();
+  const yearCE = document.getElementById('bset-year')?.value || String(new Date().getFullYear());
+  const year = gregorianYearToBuddhistEra(yearCE);
   const search = (document.getElementById('bset-search')?.value || '').trim().toLowerCase();
   return loadBudgetPools().map(createBudgetPoolRecord)
     .filter(p => p.year === year)
@@ -3584,11 +3587,12 @@ async function renderBudgetSettings() {
   if (!body) return;
   await loadBudgetPoolsAsync();
   populateBudgetYearSelect('bset-year');
-  const year  = document.getElementById('bset-year')?.value || getCurrentBuddhistYear();
+  const yearCE = document.getElementById('bset-year')?.value || String(new Date().getFullYear());
+  const year  = gregorianYearToBuddhistEra(yearCE);
   const pools = visibleBudgetSettingsPools();
 
   if (!pools.length) {
-    body.innerHTML = `<div class="hist-empty">No budget pools found for ${year} — click "+ Add Pool" to get started.</div>`;
+    body.innerHTML = `<div class="hist-empty">No budget pools found for ${yearCE} — click "+ Add Pool" to get started.</div>`;
     return;
   }
 
@@ -3654,7 +3658,7 @@ function openBudgetPoolModal(editId) {
   // date/year contract and unchanged in behavior.
   const canonicalPool = pool ? createBudgetPoolRecord(pool) : null;
   populateBudgetYearSelect('bset-year');
-  const year    = document.getElementById('bset-year')?.value || getCurrentBuddhistYear();
+  const year    = document.getElementById('bset-year')?.value || String(new Date().getFullYear());
 
   const g = (f, def = '') => pool ? (pool[f] ?? def) : def;
   const projects = getCanonicalProjectList();
@@ -3695,7 +3699,7 @@ function openBudgetPoolModal(editId) {
         <div class="fg"><label>Budget (฿) *</label>
           <input id="bpool-budget" class="ri" type="number" min="0.01" step="0.01" required value="${g('budget')}">
         </div>
-        <div class="fg"><label>Budget Year (พ.ศ.) *</label>
+        <div class="fg"><label>Budget Year (CE) *</label>
           <select id="bpool-year" class="ri" required onchange="_onBpoolYearChange()"></select>
         </div>
         <div class="fg"><label>Start Month *</label>
@@ -3734,15 +3738,15 @@ async function saveBudgetPool() {
   const project = g('bpool-project');
   const name    = g('bpool-name');
   const budget  = parseFloat(g('bpool-budget')) || 0;
-  const yearBE  = g('bpool-year');
+  const yearCE  = financialYearToGregorian(g('bpool-year'));
+  const yearBE  = gregorianYearToBuddhistEra(yearCE);
   const startMonthNum = g('bpool-start-month');
   const endMonthNum   = g('bpool-end-month');
-  // Phase 7A-9B: Start/End are now Year(BE)-select + Month-select, so there is no free-text BE/CE
-  // ambiguity left to normalize here — the "3112" bug's root cause (a typed BE string treated as
-  // Gregorian) is structurally impossible once the value always comes from a controlled dropdown.
+  // Start/End are Year(CE)-select + Month-select, so there is no free-text BE/CE ambiguity left
+  // to normalize here. Save adapts back to the existing BE payload while constructing the same
+  // Gregorian start/end month keys used by Budget Pool matching.
   // createBudgetPoolRecord() still re-derives `year` from the constructed startMonth below, so the
   // derived-year contract is enforced the same way regardless of how the UI collected the input.
-  const yearCE  = financialYearToGregorian(yearBE);
   const start   = (yearCE && startMonthNum) ? `${yearCE}-${String(startMonthNum).padStart(2, '0')}` : null;
   const end     = (yearCE && endMonthNum)   ? `${yearCE}-${String(endMonthNum).padStart(2, '0')}`   : null;
   const editId  = g('bpool-edit-id');

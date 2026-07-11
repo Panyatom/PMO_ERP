@@ -277,6 +277,46 @@ body {
 .pmo-modal-footer {
   display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
 }
+.pmo-month-control { display: inline-flex; width: 160px; min-width: 160px; }
+.pmo-month-trigger {
+  width: 100%; height: 32px; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
+  font-size: 12px; padding: 6px 10px;
+  border: 1px solid var(--border-md); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+.pmo-month-trigger:hover { border-color: var(--blue-100); }
+.pmo-month-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmo-month-trigger b { color: var(--text-3); font-size: 10px; }
+.pmo-month-picker {
+  position: fixed; z-index: 950; width: 286px;
+  background: var(--surface); border: 1px solid var(--border-md); border-radius: var(--r);
+  box-shadow: 0 20px 60px rgba(0,0,0,.22); padding: 12px; display: none;
+}
+.pmo-month-picker.is-open { display: block; }
+.pmo-month-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px;
+}
+.pmo-month-year { font-size: 14px; font-weight: 700; color: var(--text); }
+.pmo-month-nav {
+  width: 30px; height: 30px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text-2); cursor: pointer; font-size: 18px; line-height: 1;
+}
+.pmo-month-nav:hover { background: var(--bg); color: var(--text); }
+.pmo-month-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.pmo-month-option {
+  height: 34px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: 12px;
+}
+.pmo-month-option:hover { background: var(--blue-50); border-color: var(--blue-100); }
+.pmo-month-option.is-selected { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 700; }
+.pmo-month-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+.pmo-month-cancel {
+  border: 0; background: transparent; color: var(--text-2); cursor: pointer;
+  font: inherit; font-size: 12px; padding: 4px 6px;
+}
+.pmo-month-cancel:hover { color: var(--text); }
 .txn-title {
   font-size: 14px; font-weight: 500; color: var(--text-1,var(--color-text-primary));
   margin-bottom: 4px;
@@ -1455,9 +1495,9 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <div id="ov-custom-range" style="display:none;align-items:center;gap:6px">
               <!-- Validation (12-month limit) and the resulting graph/KPI update must only happen
                    on Apply, not while the user is still freely picking start/end months. -->
-              <select id="ov-from-sel" class="ri" style="font-size:11px;padding:3px 6px;width:auto"></select>
+              <input id="ov-from-sel" class="ri" type="month" style="font-size:11px;padding:3px 6px;width:auto">
               <span style="font-size:11px;color:var(--text-3)">→</span>
-              <select id="ov-to-sel" class="ri" style="font-size:11px;padding:3px 6px;width:auto"></select>
+              <input id="ov-to-sel" class="ri" type="month" style="font-size:11px;padding:3px 6px;width:auto">
               <button class="btn-sm" onclick="ovApplyCustomRange()" style="font-size:11px">Apply</button>
             </div>
             <span style="font-size:11px;color:var(--text-3)" id="ov-period-label"></span>
@@ -1527,7 +1567,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
             <div class="filter-toolbar">
               <span class="filter-control"><span class="filter-label">Year</span><select id="as-year" onchange="renderActualSpend()" aria-label="ปีข้อมูล Actual Spend">
-                <option value="2026">ปี 2026</option>
+                <option value="2026">2026</option>
               </select></span>
               <span class="filter-range">
                 <span class="filter-control"><span class="filter-label">Month From</span>
@@ -1631,8 +1671,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
           <div class="filter-toolbar">
             <input id="bva-search" type="search" class="filter-search" placeholder="Search records..." oninput="bvaSearchDebounced()">
-            <!-- Options populated dynamically by populateBudgetYearSelect('bva-year') (views/budget.js)
-                 from getCurrentBuddhistYear() — never hardcode a BE year list here (Phase 7A-9A). -->
+            <!-- Options populated dynamically by populateBudgetYearSelect('bva-year') (views/budget.js). -->
             <span class="filter-control"><span class="filter-label">Year</span><select id="bva-year" class="filter-select" onchange="renderBudgetVsActual()"></select></span>
             <span class="filter-control"><span class="filter-label">Project</span><select id="bva-project" onchange="renderBudgetVsActual()">
               <option value="all">ทุกโปรเจค</option>
@@ -1674,8 +1713,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
                   </div>
                   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                     <input id="bset-search" type="search" class="filter-search" placeholder="Search..." oninput="renderBudgetSettings()">
-                    <!-- Options populated dynamically by populateBudgetYearSelect('bset-year')
-                         (views/budget.js) from getCurrentBuddhistYear() (Phase 7A-9A). -->
+                    <!-- Options populated dynamically by populateBudgetYearSelect('bset-year') (views/budget.js). -->
                     <select id="bset-year" class="filter-input" aria-label="Year" onchange="renderBudgetSettings()"></select>
                     <div class="filter-actions">
                       <button class="btn-sm" onclick="downloadBudgetPoolTemplate()">⬇ Template</button>
@@ -2191,6 +2229,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 <script src="auth.js"></script>
 <!-- Core: shared utils, storage, navigation, PDF -->
 <script src="app.js?v=0.1.8"></script>
+<script src="views/month_year_controls.js"></script>
 <!-- Views -->
 <script src="views/create.js"></script>
 <script src="views/history.js"></script>
