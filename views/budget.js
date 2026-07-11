@@ -1877,12 +1877,12 @@ function openManualExpenseModal(editId = null) {
   modal.style.zIndex = '400';
   modal.innerHTML = `
     <div class="card txn-modal-card txn-modal-card--form">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div class="pmo-modal-header">
         <div>
           <div class="txn-title">${expense ? 'Edit' : 'Add'} Manual Actual Spend</div>
           <div class="txn-form-subtitle">บันทึกรายการ Actual Spend ที่เพิ่มเองสำหรับทุก Spend Type</div>
         </div>
-        <button class="btn-sm" onclick="document.getElementById('manual-expense-modal').remove()">✕</button>
+        <button class="pmo-modal-close" onclick="document.getElementById('manual-expense-modal').remove()">✕</button>
       </div>
       <input type="hidden" id="me-id" value="${esc(g('id'))}">
       <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px">
@@ -1945,7 +1945,7 @@ function openManualExpenseModal(editId = null) {
       <div class="fg" style="margin-top:10px"><label>Notes</label>
         <textarea id="me-notes" class="ri" rows="2" placeholder="เหตุผลหรือรายละเอียดเพิ่มเติม">${esc(g('notes'))}</textarea>
       </div>
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+      <div class="pmo-modal-footer">
         <button class="btn-ghost" onclick="document.getElementById('manual-expense-modal').remove()">Cancel</button>
         <button class="btn-primary" onclick="saveManualExpenseFromModal()">💾 Save Actual Spend</button>
       </div>
@@ -3676,12 +3676,13 @@ function openBudgetPoolModal(editId) {
 
   const modal = document.createElement('div');
   modal.id = 'bpool-modal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:300;display:flex;align-items:center;justify-content:center';
+  modal.className = 'pmo-modal-backdrop';
+  modal.style.zIndex = '300';
   modal.innerHTML = `
-    <div class="card" style="width:500px;max-width:95vw;max-height:90vh;overflow-y:auto;padding:24px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
-        <span style="font-size:15px;font-weight:700">${editId ? 'Edit' : 'New'} Budget Pool</span>
-        <button class="btn-sm" onclick="document.getElementById('bpool-modal').remove()" style="padding:4px 10px">✕</button>
+    <div class="pmo-modal-card">
+      <div class="pmo-modal-header">
+        <span class="pmo-modal-title">${editId ? 'Edit' : 'New'} Budget Pool</span>
+        <button class="pmo-modal-close" onclick="document.getElementById('bpool-modal').remove()">✕</button>
       </div>
       <input type="hidden" id="bpool-edit-id" value="${editId || ''}">
       <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px">
@@ -3714,7 +3715,7 @@ function openBudgetPoolModal(editId) {
             </label>`).join('')}
         </div>
       </div>
-      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+      <div class="pmo-modal-footer">
         <button class="btn-ghost" onclick="document.getElementById('bpool-modal').remove()">Cancel</button>
         <button class="btn-primary" onclick="saveBudgetPool()">💾 Save</button>
       </div>
