@@ -129,3 +129,71 @@ test('Manual Entry canonical routing always shows Source as "Manual Entry", neve
     assert.equal(budget.canonicalActualSpendSourceLabel(record.source), 'Manual Entry');
   }
 });
+
+function renderedCanonicalPanel(record) {
+  budget.showCanonicalTransactionDetail(record, { title: 'Transaction Detail' });
+  return global.document.body.children[global.document.body.children.length - 1].innerHTML;
+}
+
+test('Client Expense memo summary shows Event Date and existing customer/venue instead of empty Coverage fields', () => {
+  const memo = {
+    memoNo: 'MEMO-ENT-SUMMARY', type: 'ent', status: 'completed', project: 'AOA', total: 9000, subject: 'Client dinner',
+    entClient: 'Acme Corp', entDate: '2026-04-01', entPlace: 'Bangkok', entPeople: 6,
+  };
+  app.storeMemos([memo]);
+  const html = renderedCanonicalPanel(budget.canonicalTransactionRecordFromMemo(memo));
+  assert.ok(html.includes('Event Date'));
+  assert.ok(html.includes('2026-04-01'));
+  assert.ok(html.includes('Customer'));
+  assert.ok(html.includes('Acme Corp'));
+  assert.ok(html.includes('Venue'));
+  assert.ok(html.includes('Bangkok'));
+  assert.ok(!html.includes('Coverage Start'));
+  assert.ok(!html.includes('Coverage End'));
+});
+
+test('Team Activity memo summary shows activity fields instead of empty Coverage fields', () => {
+  const memo = {
+    memoNo: 'MEMO-INT-SUMMARY', type: 'int', status: 'completed', project: 'AOA', total: 15000, subject: 'Team outing',
+    intActivity: 'Year-end party', intDate: '2026-03-01', intHeadcount: 30, intPP: 500,
+  };
+  app.storeMemos([memo]);
+  const html = renderedCanonicalPanel(budget.canonicalTransactionRecordFromMemo(memo));
+  assert.ok(html.includes('Activity Date'));
+  assert.ok(html.includes('2026-03-01'));
+  assert.ok(html.includes('Activity Name'));
+  assert.ok(html.includes('Year-end party'));
+  assert.ok(html.includes('Headcount'));
+  assert.ok(!html.includes('Coverage Start'));
+  assert.ok(!html.includes('Coverage End'));
+});
+
+test('Hardware memo summary does not display meaningless empty Coverage fields', () => {
+  const memo = {
+    memoNo: 'MEMO-HW-SUMMARY', type: 'hw', status: 'completed', project: 'AOA', total: 80000, subject: 'Laptops',
+    hwItems: [{ name: 'Dell Laptop', price: 40000, qty: 2 }],
+  };
+  app.storeMemos([memo]);
+  const html = renderedCanonicalPanel(budget.canonicalTransactionRecordFromMemo(memo));
+  assert.ok(html.includes('รายการ Hardware'));
+  assert.ok(html.includes('Dell Laptop'));
+  assert.ok(!html.includes('Coverage Start'));
+  assert.ok(!html.includes('Coverage End'));
+});
+
+test('Deployment memo summary shows deployment-specific dates instead of generic Coverage labels', () => {
+  const memo = {
+    memoNo: 'MEMO-DEP-SUMMARY', type: 'dep', status: 'completed', project: 'AOA', total: 12000, subject: 'Deployment',
+    depStart: '2026-05-01', depEnd: '2026-05-03', depLocation: 'Bangkok HQ', depEmpCount: 4,
+  };
+  app.storeMemos([memo]);
+  const html = renderedCanonicalPanel(budget.canonicalTransactionRecordFromMemo(memo));
+  assert.ok(html.includes('Deployment Start'));
+  assert.ok(html.includes('2026-05-01'));
+  assert.ok(html.includes('Deployment End'));
+  assert.ok(html.includes('2026-05-03'));
+  assert.ok(html.includes('Deployment Location'));
+  assert.ok(html.includes('Bangkok HQ'));
+  assert.ok(!html.includes('Coverage Start'));
+  assert.ok(!html.includes('Coverage End'));
+});

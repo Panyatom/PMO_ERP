@@ -2229,6 +2229,61 @@ function canonicalFieldGrid(fields) {
   </div>`;
 }
 
+function canonicalTransactionSummaryDateFields(record, memo, expense) {
+  const expenseDate = expense?.expenseDate || (record.startDate && record.startDate === record.endDate ? record.startDate : '');
+  if (record.spendType === SPEND_TYPES.SOFTWARE || record.spendType === SPEND_TYPES.INFRA) {
+    return [
+      ['Coverage Start', record.startDate],
+      ['Coverage End', record.endDate],
+    ];
+  }
+  if (record.spendType === SPEND_TYPES.CLIENT_EXPENSE) {
+    return [['Event Date', memo?.entDate || expenseDate || record.startDate]];
+  }
+  if (record.spendType === SPEND_TYPES.TEAM_ACTIVITY) {
+    return [['Activity Date', memo?.intDate || expenseDate || record.startDate]];
+  }
+  if (record.spendType === SPEND_TYPES.DEPLOYMENT) {
+    return [
+      ['Deployment Start', memo?.depStart || record.startDate],
+      ['Deployment End', memo?.depEnd || record.endDate],
+    ];
+  }
+  if (record.spendType === SPEND_TYPES.HARDWARE) {
+    const purchaseDate = expenseDate || record.purchaseDate || record.date;
+    return purchaseDate ? [['Purchase Date', purchaseDate]] : [];
+  }
+  return expenseDate
+    ? [['Expense Date', expenseDate]]
+    : [
+        ['Coverage Start', record.startDate],
+        ['Coverage End', record.endDate],
+      ];
+}
+
+function canonicalMemoBusinessSummaryFields(record, memo) {
+  if (!memo) return [];
+  if (record.spendType === SPEND_TYPES.CLIENT_EXPENSE) {
+    return [
+      ...(memo.entClient ? [['Customer', memo.entClient]] : []),
+      ...(memo.entPlace ? [['Venue', memo.entPlace]] : []),
+    ];
+  }
+  if (record.spendType === SPEND_TYPES.TEAM_ACTIVITY) {
+    return [
+      ...(memo.intActivity ? [['Activity Name', memo.intActivity]] : []),
+      ...(memo.intHeadcount ? [['Headcount', memo.intHeadcount]] : []),
+    ];
+  }
+  if (record.spendType === SPEND_TYPES.DEPLOYMENT) {
+    return [
+      ...(memo.depLocation ? [['Deployment Location', memo.depLocation]] : []),
+      ...(memo.depEmpCount ? [['Headcount', memo.depEmpCount]] : []),
+    ];
+  }
+  return [];
+}
+
 function renderLinkedSpendTypeItems(record) {
   const linkedItems = Array.isArray(record.linkedItems) ? record.linkedItems.filter(Boolean) : [];
   if (!linkedItems.length) return '';
@@ -2378,6 +2433,7 @@ function showCanonicalTransactionDetail(record, options = {}) {
   const poolId = getFinalBudgetPoolId(record);
   const pool = loadBudgetPools().find(item => item.id === poolId);
   const expense = manualExpenseForRecord(record);
+  const memo = canonicalTransactionMemo(record);
   const expenseDate = expense?.expenseDate || (record.startDate && record.startDate === record.endDate ? record.startDate : '');
   const summaryFields = [
     ['Source', canonicalActualSpendSourceLabel(record.source)],
@@ -2387,9 +2443,9 @@ function showCanonicalTransactionDetail(record, options = {}) {
     ...(record.plan ? [['Plan', record.plan]] : []),
     ['Spend Type', record.spendType],
     ['Amount', record.amount, money],
-    ...(expenseDate ? [['Expense Date', expenseDate]] : []),
-    ['Coverage Start', record.startDate],
-    ['Coverage End', record.endDate],
+    ...(expenseDate && (record.spendType === SPEND_TYPES.SOFTWARE || record.spendType === SPEND_TYPES.INFRA) ? [['Expense Date', expenseDate]] : []),
+    ...canonicalTransactionSummaryDateFields(record, memo, expense),
+    ...canonicalMemoBusinessSummaryFields(record, memo),
     ['Budget Pool', pool?.name || pool?.poolName || poolId],
   ];
   const summaryHtml = canonicalFieldGrid(summaryFields);
