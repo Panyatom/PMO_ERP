@@ -36,7 +36,7 @@ test('shared month-year helper is loaded separately from the full-date picker', 
 });
 
 test('standardized month controls retain YYYY-MM raw inputs', () => {
-  ['ov-from-sel', 'ov-to-sel', 'as-from', 'as-to', 'as-manual-from', 'as-manual-to'].forEach(id => {
+  ['ov-from-sel', 'ov-to-sel', 'as-from', 'as-to', 'as-manual-from', 'as-manual-to', 'sl-forecast-period'].forEach(id => {
     assert.match(inputById(id), /\btype="month"/i, `#${id} should remain a raw month input`);
   });
   ['sl-start', 'sl-end'].forEach(className => {

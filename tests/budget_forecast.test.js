@@ -8,6 +8,7 @@ const {
   SPEND_TYPES,
   ACTUAL_SPEND_SOURCES,
   forecastComponents,
+  forecastMonths,
   calculateForecast,
 } = require('../app.js');
 
@@ -41,6 +42,35 @@ function completedSoftwareMemo(overrides = {}) {
   };
 }
 
+function actualSpendRecord(overrides = {}) {
+  return {
+    id: 'actual-spend-record',
+    source: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
+    referenceNo: 'AS-1',
+    project: 'AOA',
+    spendType: SPEND_TYPES.HARDWARE,
+    amount: 12000,
+    currency: 'THB',
+    startDate: '2026-02',
+    endDate: '2026-02',
+    coverageMonths: 1,
+    coverageStatus: 'Complete',
+    vendorProgram: 'One-time item',
+    detailLines: [],
+    ...overrides,
+  };
+}
+
+test('Forecast period window is previous six Actual months plus current and next six Forecast months', () => {
+  const months = forecastMonths(anchor);
+  assert.equal(months.length, 13);
+  assert.deepEqual(months.map(month => month.key), [
+    '2025-12','2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2026-12',
+  ]);
+  assert.deepEqual(months.slice(0, 6).map(month => month.kind), ['actual','actual','actual','actual','actual','actual']);
+  assert.deepEqual(months.slice(6).map(month => month.kind), ['forecast','forecast','forecast','forecast','forecast','forecast','forecast']);
+});
+
 test('Forecast splits one software memo into one component per detail line', () => {
   const components = forecastComponents([completedSoftwareMemo()]);
   assert.equal(components.length, 2);
@@ -72,7 +102,27 @@ test('Covered future Forecast month is fully source-supported', () => {
   assert.equal(isEligible(row, '2026-07'), true);
 });
 
-test('Future month after detail-line coverage displays carry-forward but is unsupported', () => {
+test('Historical software manual spending follows the same active-coverage forecast rule', () => {
+  const forecast = calculateForecast([completedSoftwareMemo({
+    id: 'actual-spend-historical-HIST-SW',
+    source: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
+    storageKind: 'historical_memos',
+    referenceNo: 'HIST-SW',
+    memoId: 'historical:HIST-SW',
+    amount: 6000,
+    endDate: '2026-06',
+    coverageMonths: 6,
+    detailLines: [
+      { program: 'Historical Program', plan: 'Legacy', quantity: 1, unitCost: 1000, monthlyCost: 1000, coverageStart: '2026-01', coverageEnd: '2026-06', coverageMonths: 6, lineAmount: 6000 },
+    ],
+  })], anchor);
+  const row = forecast.rows.find(item => item.program === 'Historical Program');
+  assert.equal(row.values['2026-06'], 1000);
+  assert.equal(row.values['2026-07'], 0);
+  assert.equal(row.contributors['2026-07'].length, 0);
+});
+
+test('Future month after detail-line coverage expires to zero', () => {
   const memo = completedSoftwareMemo({
     amount: 15000,
     endDate: '2026-06',
@@ -83,13 +133,13 @@ test('Future month after detail-line coverage displays carry-forward but is unsu
   });
   const forecast = calculateForecast([memo], anchor);
   const row = forecast.rows[0];
-  assert.equal(row.values['2026-07'], 1000);
+  assert.equal(row.values['2026-07'], 0);
   assert.equal(row.supportedValues['2026-07'], 0);
   assert.equal(row.contributors['2026-07'].length, 0);
   assert.equal(isEligible(row, '2026-07'), false);
 });
 
-test('Mixed supported plus carry-forward aggregate is not fully supported', () => {
+test('Expired detail-line coverage does not carry into supported forecast aggregate', () => {
   const supported = completedSoftwareMemo({
     id: 'actual-spend-memo-SUP',
     referenceNo: 'SUP',
@@ -111,19 +161,19 @@ test('Mixed supported plus carry-forward aggregate is not fully supported', () =
     ],
   });
   const row = calculateForecast([supported, projected], anchor).rows[0];
-  assert.equal(row.values['2026-07'], 150);
+  assert.equal(row.values['2026-07'], 100);
   assert.equal(row.supportedValues['2026-07'], 100);
-  assert.notEqual(row.values['2026-07'], row.supportedValues['2026-07']);
-  assert.equal(isEligible(row, '2026-07'), false);
+  assert.equal(row.values['2026-07'], row.supportedValues['2026-07']);
+  assert.equal(isEligible(row, '2026-07'), true);
 });
 
 test('Historical actual month with source contribution is eligible for drill-down', () => {
   const forecast = calculateForecast([completedSoftwareMemo()], anchor);
   const row = forecast.rows.find(item => item.program === 'Program A');
-  assert.equal(row.values['2026-06'], 1000);
-  assert.equal(row.supportedValues['2026-06'], 1000);
-  assert.equal(row.contributors['2026-06'].length, 1);
-  assert.equal(isEligible(row, '2026-06'), true);
+  assert.equal(row.values['2026-05'], 1000);
+  assert.equal(row.supportedValues['2026-05'], 1000);
+  assert.equal(row.contributors['2026-05'].length, 1);
+  assert.equal(isEligible(row, '2026-05'), true);
 });
 
 test('Manual and Infra records remain record-level components', () => {
@@ -160,6 +210,85 @@ test('Manual and Infra records remain record-level components', () => {
   const components = forecastComponents(records);
   assert.deepEqual(components.map(item => item.componentType), ['record', 'record']);
   assert.deepEqual(components.map(item => item.parentRecordId), ['actual-spend-manual-1', 'actual-spend-infra-1']);
+});
+
+test('Infrastructure repeats only inside its Start-End range', () => {
+  const forecast = calculateForecast([actualSpendRecord({
+    id: 'actual-spend-infra-range',
+    source: ACTUAL_SPEND_SOURCES.INFRA_COST,
+    storageKind: 'infra_cost',
+    spendType: SPEND_TYPES.INFRA,
+    amount: 3000,
+    startDate: '2026-01',
+    endDate: '2026-03',
+    coverageMonths: 3,
+    vendorProgram: 'Cloud Range',
+  })], anchor);
+  const row = forecast.rows[0];
+  assert.equal(row.values['2026-01'], 1000);
+  assert.equal(row.values['2026-03'], 1000);
+  assert.equal(row.values['2026-04'], 0);
+  assert.equal(row.values['2026-07'], 0);
+});
+
+test('One-time spending appears only in its Actual month and never repeats into Forecast', () => {
+  const forecast = calculateForecast([actualSpendRecord({
+    id: 'actual-spend-hardware-once',
+    spendType: SPEND_TYPES.HARDWARE,
+    amount: 12000,
+    startDate: '2026-02',
+    endDate: '2026-02',
+    coverageMonths: 1,
+    vendorProgram: 'Laptop',
+  })], anchor);
+  const row = forecast.rows[0];
+  assert.equal(row.values['2026-02'], 12000);
+  assert.equal(row.values['2026-03'], 0);
+  assert.equal(row.values['2026-06'], 0);
+  assert.equal(row.values['2026-07'], 0);
+});
+
+test('One-time spending outside the Actual lookback window does not create an empty Forecast row', () => {
+  const forecast = calculateForecast([actualSpendRecord({
+    id: 'actual-spend-future-hardware',
+    spendType: SPEND_TYPES.HARDWARE,
+    startDate: '2026-07',
+    endDate: '2026-07',
+  })], anchor);
+  assert.equal(forecast.rows.length, 0);
+});
+
+test('12-month lookback excludes obsolete recurring records without active future coverage', () => {
+  const forecast = calculateForecast([completedSoftwareMemo({
+    id: 'actual-spend-old-software',
+    referenceNo: 'OLD-SW',
+    memoId: 'OLD-SW',
+    startDate: '2024-01',
+    endDate: '2025-05',
+    coverageMonths: 17,
+    amount: 17000,
+    detailLines: [
+      { program: 'Old Program', plan: '', quantity: 1, unitCost: 1000, monthlyCost: 1000, coverageStart: '2024-01', coverageEnd: '2025-05', coverageMonths: 17, lineAmount: 17000 },
+    ],
+  })], anchor);
+  assert.equal(forecast.rows.length, 0);
+});
+
+test('12-month lookback keeps recurring records with active future coverage', () => {
+  const forecast = calculateForecast([completedSoftwareMemo({
+    id: 'actual-spend-active-old-software',
+    referenceNo: 'ACTIVE-OLD-SW',
+    memoId: 'ACTIVE-OLD-SW',
+    startDate: '2024-01',
+    endDate: '2026-08',
+    coverageMonths: 32,
+    amount: 32000,
+    detailLines: [
+      { program: 'Active Old Program', plan: '', quantity: 1, unitCost: 1000, monthlyCost: 1000, coverageStart: '2024-01', coverageEnd: '2026-08', coverageMonths: 32, lineAmount: 32000 },
+    ],
+  })], anchor);
+  const row = forecast.rows.find(item => item.program === 'Active Old Program');
+  assert.equal(row.values['2026-07'], 1000);
 });
 
 test('Legacy software memo without detail lines falls back to record-level behavior', () => {

@@ -1600,7 +1600,14 @@ function _renderForecastTable() {
   const thead  = document.getElementById('sl-forecast-thead');
   if(!body || !thead) return;
 
-  const forecast = calculateForecast(loadActualSpendRecords(), new Date());
+  const periodInput = document.getElementById('sl-forecast-period');
+  if (periodInput && !periodInput.value) {
+    const now = new Date();
+    periodInput.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }
+  const selectedPeriod = periodInput?.value || '';
+  const anchorDate = selectedPeriod ? new Date(`${selectedPeriod}-01T00:00:00`) : new Date();
+  const forecast = calculateForecast(loadActualSpendRecords(), anchorDate);
   const allProjects = [...new Set(forecast.rows.map(row => row.project))].sort();
 
   // Project dropdown — Part 8 (UX consistency pass): multi-select filter.

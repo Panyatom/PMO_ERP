@@ -1632,8 +1632,12 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <!-- ── TAB: FORECAST ── -->
         <div id="bgt-tab-forecast" class="cost-tab-panel" style="display:none">
           <div style="padding:10px 0 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <span style="font-size:11px;color:var(--text-3)">Rolling 6 months Actual + 6 months Forecast · Software และ Infra</span>
+            <span style="font-size:11px;color:var(--text-3)">Previous 6 months Actual + current/next 6 months Forecast</span>
             <div class="filter-toolbar" style="margin-bottom:0">
+              <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3)">
+                Period
+                <input id="sl-forecast-period" type="month" class="ri" onchange="renderBudgetSLInfra()" style="width:130px;font-size:12px;padding:5px 8px">
+              </label>
               <select id="sl-forecast-proj" onchange="renderBudgetSLInfra()">
                 <option value="all">ทุกโปรเจค</option>
               </select>

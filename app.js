@@ -720,16 +720,34 @@ function calculateActualSpendInRange(records = [], fromMonth, toMonth, filters =
   }, 0);
 }
 
-function forecastMonths(asOfDate = new Date()) {
+function forecastAnchorDate(asOfDate = new Date()) {
   const anchor = new Date(asOfDate);
+  if (Number.isNaN(anchor.getTime())) return new Date();
+  return anchor;
+}
+
+function forecastMonthKey(asOfDate = new Date()) {
+  const anchor = forecastAnchorDate(asOfDate);
+  return `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function addMonthsToKey(monthKey, offset) {
+  const [year, month] = String(monthKey || '').split('-').map(Number);
+  if (!year || !month) return '';
+  const date = new Date(year, month - 1 + offset, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function forecastMonths(asOfDate = new Date()) {
+  const anchor = forecastAnchorDate(asOfDate);
   const anchorYear = anchor.getFullYear();
   const anchorMonth = anchor.getMonth();
   const months = [];
-  for (let offset = -5; offset <= 6; offset++) {
+  for (let offset = -6; offset <= 6; offset++) {
     const date = new Date(anchorYear, anchorMonth + offset, 1);
     months.push({
       key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
-      kind: offset <= 0 ? 'actual' : 'forecast',
+      kind: offset < 0 ? 'actual' : 'forecast',
     });
   }
   return months;
@@ -743,10 +761,7 @@ function forecastComponentMonthlyAmount(component = {}) {
 }
 
 function forecastComponents(records = [], filters = {}) {
-  const eligible = queryActualSpend(filters, records).filter(record =>
-    (record.spendType === SPEND_TYPES.SOFTWARE || record.spendType === SPEND_TYPES.INFRA) &&
-    record.coverageStatus === 'Complete'
-  );
+  const eligible = queryActualSpend(filters, records).filter(record => record.coverageStatus === 'Complete');
   const components = [];
   eligible.forEach(record => {
     const recordProgram = record.vendorProgram || record.description || record.referenceNo || record.spendType;
@@ -758,6 +773,7 @@ function forecastComponents(records = [], filters = {}) {
       memoId: record.memoId || null,
       referenceNo: record.referenceNo || '',
       source: record.source || '',
+      storageKind: record.storageKind || null,
       project: record.project || '',
       spendType: record.spendType || '',
       description: record.description || '',
@@ -812,8 +828,15 @@ function forecastComponents(records = [], filters = {}) {
 
 function calculateForecast(records = [], asOfDate = new Date(), filters = {}) {
   const months = forecastMonths(asOfDate);
+  const referenceMonth = forecastMonthKey(asOfDate);
+  const lookbackStart = addMonthsToKey(referenceMonth, -12);
+  const windowEnd = months[months.length - 1]?.key || referenceMonth;
   const grouped = new Map();
   forecastComponents(records, filters).forEach(component => {
+    const recurring = component.spendType === SPEND_TYPES.SOFTWARE || component.spendType === SPEND_TYPES.INFRA;
+    const coverageStart = String(component.coverageStart || '').slice(0, 7);
+    const coverageEnd = String(component.coverageEnd || coverageStart).slice(0, 7);
+    if (recurring && (!coverageStart || !coverageEnd || coverageEnd < lookbackStart || coverageStart > windowEnd)) return;
     const program = component.program || component.referenceNo || component.spendType;
     const plan = component.plan || '';
     const key = [component.project, program, plan, component.spendType].join('\u0000');
@@ -827,14 +850,12 @@ function calculateForecast(records = [], asOfDate = new Date(), filters = {}) {
       contributors: Object.fromEntries(months.map(month => [month.key, []])),
     });
     const row = grouped.get(key);
-    const coverageStart = String(component.coverageStart || '').slice(0, 7);
-    const coverageEnd = String(component.coverageEnd || '').slice(0, 7);
     const monthlyCost = forecastComponentMonthlyAmount(component);
     months.forEach(month => {
       const covered = coverageStart && coverageEnd && month.key >= coverageStart && month.key <= coverageEnd;
-      const supportedAmount = covered ? monthlyCost : 0;
-      const carriedForecast = month.kind === 'forecast' && coverageEnd && month.key > coverageEnd ? monthlyCost : 0;
-      const displayAmount = supportedAmount || carriedForecast;
+      const actualOneTime = !recurring && month.kind === 'actual' && month.key === coverageStart;
+      const supportedAmount = recurring ? (covered ? monthlyCost : 0) : (actualOneTime ? Number(component.amount) || 0 : 0);
+      const displayAmount = supportedAmount;
       if (displayAmount <= 0) return;
       row.values[month.key] += displayAmount;
       if (supportedAmount > 0) {
@@ -847,14 +868,14 @@ function calculateForecast(records = [], asOfDate = new Date(), filters = {}) {
       }
     });
   });
-  const rows = [...grouped.values()].sort((a, b) =>
-    a.project.localeCompare(b.project) || a.spendType.localeCompare(b.spendType) ||
-    a.program.localeCompare(b.program) || String(a.plan || '').localeCompare(String(b.plan || ''))
-  ).map(row => ({
+  const rows = [...grouped.values()].map(row => ({
     ...row,
     total: months.reduce((sum, month) => sum + row.values[month.key], 0),
     supportedTotal: months.reduce((sum, month) => sum + row.supportedValues[month.key], 0),
-  }));
+  })).filter(row => row.total > 0).sort((a, b) =>
+    a.project.localeCompare(b.project) || a.spendType.localeCompare(b.spendType) ||
+    a.program.localeCompare(b.program) || String(a.plan || '').localeCompare(String(b.plan || ''))
+  );
   return { months, rows };
 }
 
