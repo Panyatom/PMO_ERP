@@ -1237,6 +1237,9 @@ if (typeof module !== 'undefined' && module.exports) {
     applyAuthoritySnapshotsOnApproval,
     renderConfiguredClosingParagraph,
     renderMemoPdf,
+    loadUserSignatureForPdfAsync,
+    getSignatureFromCache,
+    _preloadSignatures,
     getAuthorityLimit,
     currentUser,
     isPMO,
@@ -3786,7 +3789,33 @@ function _signaturePdfKey(name) {
   return 'sig-' + String(name || (typeof currentUser === 'function' ? currentUser() : '') || '').trim();
 }
 
-async function loadUserSignatureForPdfAsync(name) {
+function _signatureProfilePdfKey(profileId) {
+  const id = Number(profileId);
+  return Number.isFinite(id) && id > 0 ? `sig-profile-${id}` : '';
+}
+
+function _signatureCacheKey(approver={}) {
+  const id = Number(approver.profileId ?? approver.profile_id);
+  return Number.isFinite(id) && id > 0 ? `profile:${id}` : `name:${String(approver.name || '').trim()}`;
+}
+
+function _signatureProfileAliases(profile={}) {
+  const aliases = profile.name_aliases ?? profile.aliases ?? [];
+  if(Array.isArray(aliases)) return aliases.map(String).map(item => item.trim()).filter(Boolean);
+  return String(aliases || '').split(/[,\n]/).map(item => item.trim()).filter(Boolean);
+}
+
+function _signatureProfileForApprover(approver={}) {
+  if(typeof _userProfilesCache === 'undefined' || !_userProfilesCache) return null;
+  const profileId = Number(approver.profileId ?? approver.profile_id);
+  if(Number.isFinite(profileId) && profileId > 0) {
+    const byId = _userProfilesCache.find(u => Number(u.id) === profileId);
+    if(byId) return byId;
+  }
+  return typeof findUserByName === 'function' ? findUserByName(approver.name) : null;
+}
+
+async function _readLegacySignatureDataUrl(name) {
   const key = _signaturePdfKey(name);
   if(!key || key === 'sig-') return null;
   try {
@@ -3809,32 +3838,74 @@ async function loadUserSignatureForPdfAsync(name) {
   return null;
 }
 
+async function loadUserSignatureForPdfAsync(approverOrName) {
+  const approver = typeof approverOrName === 'object' && approverOrName
+    ? approverOrName
+    : { name: approverOrName };
+  const profileId = approver.profileId ?? approver.profile_id;
+  const profileKey = _signatureProfilePdfKey(profileId);
+  if(profileKey) {
+    try {
+      const raw = localStorage.getItem(profileKey);
+      if(raw) {
+        const parsed = JSON.parse(raw);
+        if(parsed?.signatureDataUrl) return parsed.signatureDataUrl;
+      }
+    } catch(e) {}
+  }
+  const profile = _signatureProfileForApprover(approver);
+  if(profile?.signature_data_url) {
+    if(profileKey) {
+      try { localStorage.setItem(profileKey, JSON.stringify({ signatureDataUrl: profile.signature_data_url })); } catch(e) {}
+    }
+    return profile.signature_data_url;
+  }
+  if(profileKey && typeof checkSupa === 'function' && await checkSupa()) {
+    try {
+      const rows = await supaFetch('user_profiles', 'GET', null, `?id=eq.${encodeURIComponent(profileId)}`);
+      const dataUrl = rows?.[0]?.signature_data_url || null;
+      if(dataUrl) {
+        try { localStorage.setItem(profileKey, JSON.stringify({ signatureDataUrl: dataUrl })); } catch(e) {}
+        return dataUrl;
+      }
+    } catch(e) {}
+  }
+  const names = [
+    approver.name,
+    profile?.full_name,
+    ..._signatureProfileAliases(profile || {}),
+  ].filter(Boolean);
+  for(const name of [...new Set(names)]) {
+    const dataUrl = await _readLegacySignatureDataUrl(name);
+    if(dataUrl) return dataUrl;
+  }
+  return null;
+}
+
 async function _preloadSignatures(approvers) {
   if(typeof loadUserProfilesAsync === 'function') {
     try { await loadUserProfilesAsync(); } catch(e) {}
   }
-  const byName = new Map();
-  (approvers || []).forEach(a => { if(a?.name && !byName.has(a.name)) byName.set(a.name, a); });
+  const byKey = new Map();
+  (approvers || []).forEach(a => {
+    if(!a?.name && a?.profileId == null && a?.profile_id == null) return;
+    const key = _signatureCacheKey(a);
+    if(!byKey.has(key)) byKey.set(key, a);
+  });
 
-  await Promise.all([...byName.entries()].map(async ([name, approver]) => {
-    if(_sigCache[name] !== undefined) return;
-    let sig = await loadUserSignatureForPdfAsync(name);
-    if(!sig) {
-      const profile = approver.profileId != null && typeof _userProfilesCache !== 'undefined' && _userProfilesCache
-        ? _userProfilesCache.find(u => Number(u.id) === Number(approver.profileId))
-        : (typeof findUserByName === 'function' ? findUserByName(name) : null);
-      const candidates = profile ? [profile.full_name, ...(profile.name_aliases || [])].filter(n => n && n !== name) : [];
-      for(const candidate of candidates) {
-        sig = await loadUserSignatureForPdfAsync(candidate);
-        if(sig) break;
-      }
-    }
-    _sigCache[name] = sig || null;
+  await Promise.all([...byKey.entries()].map(async ([key, approver]) => {
+    if(_sigCache[key] !== undefined) return;
+    const sig = await loadUserSignatureForPdfAsync(approver);
+    _sigCache[key] = sig || null;
+    if(approver.name && _sigCache[approver.name] === undefined) _sigCache[approver.name] = sig || null;
   }));
 }
 
-function getSignatureFromCache(name) {
-  return _sigCache[name] || null;
+function getSignatureFromCache(approverOrName) {
+  const approver = typeof approverOrName === 'object' && approverOrName
+    ? approverOrName
+    : { name: approverOrName };
+  return _sigCache[_signatureCacheKey(approver)] || _sigCache[approver.name] || null;
 }
 
 function renderMemoPdf(data) {
@@ -4372,7 +4443,7 @@ function renderMemoPdf(data) {
           // 'overridden' step never had its own in-system signature captured either
           // before or after this change, so it's intentionally excluded here.
           const isApproved = a.status === 'approved' || a.status === 'bypassed';
-          const sigImgUrl  = isApproved ? getSignatureFromCache(a.name) : null;
+          const sigImgUrl  = isApproved ? getSignatureFromCache(a) : null;
           const sigHtml    = sigImgUrl
             ? `<div style="text-align:center;height:54px;display:flex;align-items:center;justify-content:center">` +
               `<img src="${sigImgUrl}" style="max-width:170px;max-height:52px;object-fit:contain"></div>`
