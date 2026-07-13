@@ -7,7 +7,7 @@ const SUPA_URL = String(PMO_CONFIG.supabaseUrl || '').replace(/\/$/, '');
 const SUPA_KEY = String(PMO_CONFIG.supabaseAnonKey || '');
 
 // ── Supabase REST helper ──
-const SUPA_FETCH_TIMEOUT_MS = 6000;
+const SUPA_FETCH_TIMEOUT_MS = 15000;
 
 async function supaFetch(table, method='GET', body=null, query='') {
   if(!SUPA_URL || !SUPA_KEY) {
@@ -2938,7 +2938,7 @@ async function loadMemosAsync() {
       _memCache = (rows||[]).map(dbToMemo);
       return _excludeDeletedMemos(_memCache);
     } catch(e) {
-      console.warn('Supabase read failed, using cache');
+      console.warn('Supabase read failed, using cache', e?.message || e);
       if (_memCache) return _excludeDeletedMemos(_memCache);
     }
   }
