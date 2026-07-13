@@ -1229,6 +1229,10 @@ if (typeof module !== 'undefined' && module.exports) {
     memoStatusKey,
     histStatusLabel,
     histStatusBadgeClass,
+    normalizeAuthorityTitle,
+    normalizeAuthorityLimitRow,
+    resolveAuthorityLimit,
+    getAuthorityLimit,
     currentUser,
     isPMO,
     checkSupa,
@@ -1345,6 +1349,126 @@ function updateActualSpendBudgetOverride(memoNo, manualBudgetPoolId, pools = loa
 // ══════════════════════════════════════════════════════════════════
 let _userProfilesCache = null;
 let _authorityCache    = null;
+let _authorityTitleCache = null;
+let _memoClosingTemplateCache = null;
+
+const AUTHORITY_LIMIT_FALLBACKS = Object.freeze({
+  'ประธานเจ้าหน้าที่บริหาร':          {sl:2000000,hw:2000000,int:0,ent:150000,dep:2000000},
+  'ประธานเจ้าหน้าที่สายการเงิน (CFO)':{sl:1000000,hw:500000, int:0,ent:50000, dep:500000},
+  'ผู้อำนวยการ (Team Director)':       {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
+  'ผู้อำนวยการโครงการ':                {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
+  'Senior Manager / Manager':          {sl:50000,  hw:50000,  int:0,ent:10000, dep:50000},
+  'Team Leader':                       {sl:30000,  hw:30000,  int:0,ent:5000,  dep:30000},
+});
+
+function normalizeAuthorityTitle(row = {}, index = 0) {
+  const titleTh = String(row.title_th || row.titleTh || row.title_name || row.title || '').trim();
+  return {
+    id: row.id != null ? Number(row.id) : null,
+    titleTh,
+    titleEn: String(row.title_en || row.titleEn || '').trim(),
+    sortOrder: Math.max(1, Math.floor(Number(row.sort_order || row.sortOrder || index + 1))),
+    isActive: row.is_active != null ? row.is_active !== false : row.active !== false,
+  };
+}
+
+async function loadAuthorityTitlesAsync() {
+  if(_authorityTitleCache) return _authorityTitleCache;
+  try {
+    const rows = await supaFetch('authority_titles','GET',null,'?order=sort_order.asc,title_th.asc');
+    if(Array.isArray(rows) && rows.length) {
+      _authorityTitleCache = rows.map(normalizeAuthorityTitle).filter(row => row.titleTh);
+      return _authorityTitleCache;
+    }
+  } catch(e){ console.warn('authority_titles load failed', e.message); }
+  _authorityTitleCache = Object.keys(AUTHORITY_LIMIT_FALLBACKS).map((title, index) => normalizeAuthorityTitle({
+    id: null,
+    title_th: title,
+    sort_order: (index + 1) * 10,
+    is_active: true,
+  }, index));
+  return _authorityTitleCache;
+}
+
+function findAuthorityTitle(value) {
+  const id = Number(value);
+  const titles = _authorityTitleCache || [];
+  if(Number.isFinite(id) && id > 0) {
+    const byId = titles.find(title => Number(title.id) === id);
+    if(byId) return byId;
+  }
+  const text = String(value || '').trim().toLowerCase();
+  return text ? titles.find(title => title.titleTh.toLowerCase() === text || title.titleEn.toLowerCase() === text) || null : null;
+}
+
+function normalizeAuthorityLimitRow(row = {}) {
+  return {
+    ...row,
+    authority_title_id: row.authority_title_id != null ? Number(row.authority_title_id) : null,
+    title: String(row.title || row.title_th || '').trim(),
+    memo_type: String(row.memo_type || row.memoType || '').trim().toLowerCase(),
+    limit_thb: Number(row.limit_thb) || 0,
+    is_unlimited: row.is_unlimited === true,
+  };
+}
+
+function resolveAuthorityLimit(authorityTitleOrId, memoType) {
+  const type = String(memoType || '').trim().toLowerCase();
+  const title = findAuthorityTitle(authorityTitleOrId);
+  const titleText = title?.titleTh || String(authorityTitleOrId || '').trim();
+  if(_authorityCache){
+    const normalizedRows = _authorityCache.map(normalizeAuthorityLimitRow);
+    const byId = title?.id != null
+      ? normalizedRows.find(row => row.authority_title_id != null && Number(row.authority_title_id) === Number(title.id) && row.memo_type === type)
+      : null;
+    const byTitle = normalizedRows.find(row => row.title === titleText && row.memo_type === type);
+    const row = byId || byTitle;
+    if(row) {
+      return {
+        authorityTitleId: row.authority_title_id || title?.id || null,
+        titleTh: titleText || row.title,
+        titleEn: title?.titleEn || '',
+        memoType: type,
+        limitThb: row.limit_thb,
+        isUnlimited: row.is_unlimited,
+        configured: true,
+      };
+    }
+  }
+  if(Object.prototype.hasOwnProperty.call(AUTHORITY_LIMIT_FALLBACKS, titleText) && Object.prototype.hasOwnProperty.call(AUTHORITY_LIMIT_FALLBACKS[titleText], type)) {
+    return {
+      authorityTitleId: title?.id || null,
+      titleTh: titleText,
+      titleEn: title?.titleEn || '',
+      memoType: type,
+      limitThb: AUTHORITY_LIMIT_FALLBACKS[titleText][type],
+      isUnlimited: false,
+      configured: true,
+    };
+  }
+  return {
+    authorityTitleId: title?.id || null,
+    titleTh: titleText,
+    titleEn: title?.titleEn || '',
+    memoType: type,
+    limitThb: 0,
+    isUnlimited: false,
+    configured: false,
+  };
+}
+
+async function loadMemoClosingTemplatesAsync() {
+  if(_memoClosingTemplateCache) return _memoClosingTemplateCache;
+  try {
+    const rows = await supaFetch('memo_closing_templates','GET',null,'?is_active=eq.true&order=memo_type.asc');
+    if(Array.isArray(rows)) {
+      _memoClosingTemplateCache = rows;
+      return rows;
+    }
+  } catch(e){ console.warn('memo_closing_templates load failed', e.message); }
+  _memoClosingTemplateCache = [];
+  return _memoClosingTemplateCache;
+}
 
 async function loadUserProfilesAsync() {
   if(_userProfilesCache) return _userProfilesCache;
@@ -1361,9 +1485,10 @@ async function loadUserProfilesAsync() {
 }
 async function loadAuthorityAsync() {
   if(_authorityCache) return _authorityCache;
+  try { await loadAuthorityTitlesAsync(); } catch(e) {}
   try {
     const rows = await supaFetch('authority_limits','GET',null,'?order=title.asc');
-    if(rows && rows.length){ _authorityCache = rows; return rows; }
+    if(rows && rows.length){ _authorityCache = rows.map(normalizeAuthorityLimitRow); return _authorityCache; }
   } catch(e){ console.warn('authority_limits load failed',e.message); }
   return null;
 }
@@ -1415,19 +1540,8 @@ function resolvedCurrentUserProfile() {
   return legacyName && typeof findUserByName === 'function' ? findUserByName(legacyName) : null;
 }
 function getAuthorityLimit(title, memoType) {
-  if(_authorityCache){
-    const r = _authorityCache.find(r=>r.title===title&&r.memo_type===memoType);
-    if(r) return Number(r.limit_thb)||0;
-  }
-  const fb={
-    'ประธานเจ้าหน้าที่บริหาร':          {sl:2000000,hw:2000000,int:0,ent:150000,dep:2000000},
-    'ประธานเจ้าหน้าที่สายการเงิน (CFO)':{sl:1000000,hw:500000, int:0,ent:50000, dep:500000},
-    'ผู้อำนวยการ (Team Director)':       {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
-    'ผู้อำนวยการโครงการ':                {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
-    'Senior Manager / Manager':          {sl:50000,  hw:50000,  int:0,ent:10000, dep:50000},
-    'Team Leader':                       {sl:30000,  hw:30000,  int:0,ent:5000,  dep:30000},
-  };
-  return fb[title]?.[memoType]??0;
+  const resolved = resolveAuthorityLimit(title, memoType);
+  return resolved.isUnlimited ? Infinity : Number(resolved.limitThb) || 0;
 }
 
 // isPMO — single source of truth (moved from budget.js)
@@ -4738,7 +4852,9 @@ function initApp() {
     loadMemosAsync(),
     typeof loadOrganizationProjectsAsync === 'function' ? loadOrganizationProjectsAsync() : Promise.resolve(),
     loadUserProfilesAsync(),
+    typeof loadAuthorityTitlesAsync === 'function' ? loadAuthorityTitlesAsync() : Promise.resolve(),
     loadAuthorityAsync(),
+    typeof loadMemoClosingTemplatesAsync === 'function' ? loadMemoClosingTemplatesAsync() : Promise.resolve(),
     typeof loadDevicesAsync === 'function' ? loadDevicesAsync() : Promise.resolve(),
     typeof loadPurchaseOrdersAsync === 'function' ? loadPurchaseOrdersAsync() : Promise.resolve(),
     typeof initSettings === 'function' ? initSettings() : Promise.resolve(),
