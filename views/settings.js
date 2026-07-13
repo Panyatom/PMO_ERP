@@ -5,6 +5,8 @@ let SETTINGS_ACTIVE_TAB = 'general';
 let SETTINGS_DIRTY_BASELINE = '';
 let SETTINGS_SIGNATURE_PENDING_DATA_URL = null;
 let SETTINGS_AUTHORITY_LIMITS_BASELINE = '';
+let SETTINGS_MEMO_CLOSING_BASELINE = '';
+let SETTINGS_MEMO_CLOSING_CACHE = null;
 
 const DEFAULT_PROJECTS = ['AOA-MP', 'TTB', 'Geo9', 'Release 2.1', 'Release 3'];
 const DEFAULT_PROJECT_MASTER = DEFAULT_PROJECTS.map((name, index) => ({
@@ -61,6 +63,61 @@ const AUTHORITY_FALLBACK_LIMITS = {
   'ผู้อำนวยการโครงการ':                {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
   'Senior Manager / Manager':          {sl:50000,  hw:50000,  int:0,ent:10000, dep:50000},
   'Team Leader':                       {sl:30000,  hw:30000,  int:0,ent:5000,  dep:30000},
+};
+
+const MEMO_CLOSING_PLACEHOLDERS = [
+  'amount',
+  'amount_text',
+  'project_name',
+  'seat_count',
+  'duration_months',
+  'authority_title_th',
+  'authority_title_en',
+  'authority_limit',
+  'policy_ref',
+];
+
+const DEFAULT_MEMO_CLOSING_TEMPLATES = {
+  sl: {
+    memo_type: 'sl',
+    policy_ref: 'คู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงินที่มี (การตั้งงบประมาณไว้) หมวดการชำระค่าบริการ',
+    has_authority_clause: true,
+    template_th: 'ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณสำหรับค่าใช้จ่ายดังกล่าว รวมเป็นจำนวนเงินไม่เกิน {{amount}} {{seat_count}} {{duration_months}} อ้างอิงอำนาจอนุมัติจาก{{policy_ref}} ซึ่งให้อำนาจแก่{{authority_title_th}}{{authority_limit}}',
+    supported_placeholders: ['amount','amount_text','project_name','seat_count','duration_months','authority_title_th','authority_limit','policy_ref'],
+    is_active: true,
+  },
+  hw: {
+    memo_type: 'hw',
+    policy_ref: 'คู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงินที่มี (การตั้งงบประมาณไว้) หมวดการชำระเงินค่าสวัสดิการพนักงาน',
+    has_authority_clause: true,
+    template_th: 'จึงขอความกรุณาโปรดพิจารณาอนุมัติค่าใช้จ่ายสำหรับรายการจัดซื้อข้างต้น ในวงเงิน {{amount}} อ้างอิงอำนาจอนุมัติจาก{{policy_ref}} ซึ่งให้อำนาจแก่{{authority_title_th}}{{authority_limit}}',
+    supported_placeholders: ['amount','amount_text','project_name','authority_title_th','authority_limit','policy_ref'],
+    is_active: true,
+  },
+  int: {
+    memo_type: 'int',
+    policy_ref: '',
+    has_authority_clause: false,
+    template_th: 'ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณสำหรับค่ากิจกรรมทีม {{project_name}} เพื่อใช้จัดกิจกรรมดังกล่าว เป็นวงเงินจำนวนไม่เกิน {{amount}}',
+    supported_placeholders: ['amount','amount_text','project_name'],
+    is_active: true,
+  },
+  ent: {
+    memo_type: 'ent',
+    policy_ref: 'คู่มืออำนาจอนุมัติ พ.ศ. 2564 ข้อ 3.2 หมวดค่าเลี้ยงรับรอง',
+    has_authority_clause: true,
+    template_th: 'ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณค่ารับรองลูกค้าจาก {{project_name}} ในช่วงเวลาดังกล่าว อ้างอิงอำนาจอนุมัติจาก{{policy_ref}} {{authority_limit}} ซึ่งให้อำนาจแก่{{authority_title_th}}ในการอนุมัติงบประมาณ',
+    supported_placeholders: ['amount','amount_text','project_name','authority_title_th','authority_limit','policy_ref'],
+    is_active: true,
+  },
+  dep: {
+    memo_type: 'dep',
+    policy_ref: 'คู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงินที่มี (การตั้งงบประมาณไว้) หมวดการชำระเงินค่าสวัสดิการพนักงาน',
+    has_authority_clause: true,
+    template_th: 'จึงขอความอนุเคราะห์อนุมัติการจัดซื้อสำหรับรายการจัดซื้อข้างต้น ในวงเงิน {{amount}} อ้างอิงอำนาจอนุมัติจาก{{policy_ref}} ซึ่งให้อำนาจแก่{{authority_title_th}}{{authority_limit}}',
+    supported_placeholders: ['amount','amount_text','project_name','authority_title_th','authority_limit','policy_ref'],
+    is_active: true,
+  },
 };
 
 const SETTINGS_PERMISSIONS = [
@@ -915,6 +972,103 @@ function renderAuthorityLimitsPanel(s) {
     </section>`;
 }
 
+function normalizeMemoClosingTemplate(row={}, index=0) {
+  const type = String(row.memo_type || row.memoType || '').trim().toLowerCase();
+  const fallback = DEFAULT_MEMO_CLOSING_TEMPLATES[type] || {};
+  const placeholders = Array.isArray(row.supported_placeholders)
+    ? row.supported_placeholders
+    : String(row.supported_placeholders || fallback.supported_placeholders || '').split(/[,\s]+/);
+  return {
+    id: row.id != null ? Number(row.id) : null,
+    memo_type: type,
+    policy_ref: String(row.policy_ref ?? row.policyRef ?? fallback.policy_ref ?? '').trim(),
+    has_authority_clause: row.has_authority_clause != null ? row.has_authority_clause === true : row.hasAuthorityClause ?? fallback.has_authority_clause ?? false,
+    template_th: String(row.template_th || row.templateTh || fallback.template_th || '').trim(),
+    supported_placeholders: placeholders.map(String).map(item => item.trim()).filter(Boolean),
+    is_active: row.is_active != null ? row.is_active !== false : row.active !== false,
+    source: row.source || 'configured',
+    sort_order: MEMO_APPROVAL_TYPES.findIndex(([memoType]) => memoType === type) + 1 || index + 1,
+  };
+}
+
+function memoClosingTemplateRows(sourceRows=SETTINGS_MEMO_CLOSING_CACHE) {
+  const rows = Array.isArray(sourceRows) ? sourceRows : [];
+  const byType = new Map(rows.map((row, index) => {
+    const normalized = normalizeMemoClosingTemplate(row, index);
+    return normalized.memo_type ? [normalized.memo_type, normalized] : null;
+  }).filter(Boolean));
+  return MEMO_APPROVAL_TYPES.map(([type], index) => {
+    const configured = byType.get(type);
+    if(configured) return configured;
+    return normalizeMemoClosingTemplate({ ...DEFAULT_MEMO_CLOSING_TEMPLATES[type], source: 'fallback' }, index);
+  });
+}
+
+function memoClosingPlaceholderHelp() {
+  return MEMO_CLOSING_PLACEHOLDERS.map(name => `<code>{{${esc(name)}}}</code>`).join(' ');
+}
+
+function renderMemoClosingTemplateCard(template) {
+  const row = normalizeMemoClosingTemplate(template);
+  const meta = MEMO_APPROVAL_TYPES.find(([type]) => type === row.memo_type) || [row.memo_type, row.memo_type.toUpperCase(), row.memo_type];
+  const fallbackBadge = row.source === 'fallback' ? '<span class="settings-closing-badge">Fallback</span>' : '';
+  return `
+    <section class="settings-closing-card" data-closing-template="${esc(row.memo_type)}" data-closing-id="${esc(row.id || '')}" data-closing-source="${esc(row.source)}">
+      <div class="settings-type-head">
+        <strong>${esc(meta[1])}</strong>
+        <span>${esc(meta[2])} ${fallbackBadge}</span>
+      </div>
+      <div class="settings-closing-grid">
+        <div class="fg">
+          <label>Policy Reference</label>
+          <input class="ri" data-closing-field="policy_ref" value="${esc(row.policy_ref)}" placeholder="คู่มืออำนาจอนุมัติ...">
+        </div>
+        <div class="settings-closing-toggles">
+          <label class="settings-switch" title="Has Authority Clause" data-settings-toggle>
+            <input data-closing-field="has_authority_clause" type="checkbox" ${row.has_authority_clause ? 'checked' : ''}>
+            <span aria-hidden="true"></span>
+          </label>
+          <strong>Authority clause</strong>
+          <label class="settings-switch" title="Active template" data-settings-toggle>
+            <input data-closing-field="is_active" type="checkbox" ${row.is_active ? 'checked' : ''}>
+            <span aria-hidden="true"></span>
+          </label>
+          <strong>Active</strong>
+        </div>
+      </div>
+      <div class="fg">
+        <label>Thai Closing Paragraph Template</label>
+        <textarea class="ri settings-closing-template" data-closing-field="template_th" rows="5">${esc(row.template_th)}</textarea>
+      </div>
+      <div class="settings-closing-error" data-closing-error="${esc(row.memo_type)}" role="alert"></div>
+    </section>`;
+}
+
+function renderMemoClosingTemplatesPanel() {
+  const rows = memoClosingTemplateRows();
+  return `
+    <section class="settings-card" id="settings-closing-templates-panel">
+      <div class="settings-panel-head">
+        <div><h3>Closing Paragraph Configuration</h3><p>Configure future memo closing text by memo type. PDF rendering still uses the current hardcoded fallback in this batch.</p></div>
+      </div>
+      <div class="settings-closing-help">
+        <strong>Supported placeholders</strong>
+        <span>${memoClosingPlaceholderHelp()}</span>
+      </div>
+      <div id="settings-memo-closing-status" class="settings-inline-status">Loading closing templates...</div>
+      <div id="settings-memo-closing-list" class="settings-closing-list">
+        ${rows.map(renderMemoClosingTemplateCard).join('')}
+      </div>
+    </section>`;
+}
+
+function memoClosingTemplatesSnapshot() {
+  const rows = typeof document !== 'undefined' && document.querySelector?.('[data-closing-template]')
+    ? readMemoClosingTemplatesFromDom()
+    : memoClosingTemplateRows();
+  return JSON.stringify(rows.map(row => normalizeMemoClosingTemplate(row)));
+}
+
 function renderReasonManagementPanel(s) {
   const reasons = memoReasonMasterRows(s);
   return `
@@ -1077,16 +1231,18 @@ function renderMemoProfilesPanel() {
 function renderMemoApprovalPanel(s) {
   const reasonCount = memoReasonMasterRows(s).filter(row => row.active !== false).length;
   const titleCount = authorityTitleMasterRows(s).filter(row => row.active !== false).length;
+  const closingCount = memoClosingTemplateRows().filter(row => row.is_active !== false).length;
   return `
     <div class="settings-summary-row settings-summary-row-3">
       <div class="settings-summary"><div class="settings-summary-mark">${reasonCount}</div><div><strong>${reasonCount}</strong><span>Active reasons</span></div></div>
       <div class="settings-summary"><div class="settings-summary-mark">${titleCount}</div><div><strong>${titleCount}</strong><span>Active titles</span></div></div>
-      <div class="settings-summary"><div class="settings-summary-mark">${memoApprovalTitleRows(s).length}</div><div><strong>${memoApprovalTitleRows(s).length}</strong><span>Matrix rows</span></div></div>
+      <div class="settings-summary"><div class="settings-summary-mark">${closingCount}</div><div><strong>${closingCount}</strong><span>Closing templates</span></div></div>
     </div>
     ${renderReasonManagementPanel(s)}
     ${renderMemoProfilesPanel()}
     ${renderAuthorityTitleManagementPanel(s)}
     ${renderAuthorityLimitsPanel(s)}
+    ${renderMemoClosingTemplatesPanel()}
     ${renderSignaturePanel(s)}`;
 }
 
@@ -1479,11 +1635,12 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
       .settings-transition-grid{display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px;align-items:center;margin-top:8px}.settings-transition-grid label{font-size:11px;font-weight:700;color:var(--text-2)}
       .settings-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.settings-preview{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-preview-title{font-size:13px;font-weight:800;color:var(--text);margin-bottom:8px}.settings-preview-line{display:grid;grid-template-columns:58px 1fr;gap:8px;font-size:11px;padding:5px 0;border-top:1px solid var(--border)}.settings-preview-line strong{color:var(--text-3)}.settings-preview-line span{color:var(--text-2);line-height:1.4}
       .settings-memo-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.settings-memo-table{width:100%;min-width:840px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}.settings-memo-table th,.settings-memo-table td{border-bottom:1px solid var(--border);padding:9px;text-align:right}.settings-memo-table th:first-child,.settings-memo-table td:first-child{text-align:left;width:260px;background:var(--surface)}.settings-memo-table tr:last-child td{border-bottom:0}.settings-limit-cell{display:grid;grid-template-columns:minmax(82px,1fr) 32px;gap:6px;align-items:center}.settings-limit-input{width:100%;min-width:0;text-align:right}.settings-limit-unlimited{height:34px;display:grid;place-items:center;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);cursor:pointer;color:var(--text-3);font-weight:800}.settings-limit-unlimited input{position:absolute;opacity:0;pointer-events:none}.settings-limit-unlimited:has(input:checked){border-color:var(--blue-100);background:var(--blue-50);color:var(--blue-800)}.settings-muted-label{display:inline-block;margin-left:6px;font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase}.settings-order-input{width:72px;min-width:72px;text-align:right}.settings-profile-help{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px}.settings-profile-help div{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:9px 10px;font-size:11px;color:var(--text-2);line-height:1.45}.settings-inline-status{font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:8px}.settings-inline-status.ok{color:var(--green)}.settings-inline-status.error{color:var(--red)}.settings-profile-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.settings-profile-table{width:100%;min-width:1080px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}.settings-profile-table th,.settings-profile-table td{border-bottom:1px solid var(--border);padding:8px;vertical-align:top;text-align:left}.settings-profile-table th{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;background:var(--surface-2)}.settings-profile-table th:nth-child(1),.settings-profile-table td:nth-child(1){width:58px}.settings-profile-table th:nth-child(6),.settings-profile-table th:nth-child(7),.settings-profile-table th:nth-child(8),.settings-profile-table th:nth-child(9),.settings-profile-table td:nth-child(6),.settings-profile-table td:nth-child(7),.settings-profile-table td:nth-child(8),.settings-profile-table td:nth-child(9){width:74px;text-align:center}.settings-profile-table th:last-child,.settings-profile-table td:last-child{width:76px;text-align:right}.settings-profile-table tr:last-child td{border-bottom:0}.settings-profile-id{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3);font-weight:700}.settings-profile-aliases{min-height:38px;resize:vertical}.settings-profile-check{min-height:34px;display:inline-flex;align-items:center;justify-content:center}.settings-type-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}.settings-type-card{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-type-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}.settings-type-head strong{font-size:14px;color:var(--text)}.settings-type-head span{font-size:11px;color:var(--text-3)}.settings-reason-head,.settings-memo-reason-row{display:grid;grid-template-columns:minmax(0,1fr) 72px 58px 34px;gap:8px;align-items:center}.settings-title-head,.settings-title-row{display:grid;grid-template-columns:minmax(160px,1.2fr) minmax(140px,1fr) 72px 58px 34px;gap:8px;align-items:center}.settings-reason-head,.settings-title-head{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px}.settings-memo-reasons,.settings-title-list{display:grid;gap:8px;margin:8px 0}.settings-title-row,.settings-memo-reason-row{padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.settings-empty-note{font-size:11px;color:var(--text-3);padding:10px;border:1px dashed var(--border-md);border-radius:8px;background:var(--surface)}.settings-signature-grid{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;gap:12px;align-items:end}.settings-signature-actions{display:flex;gap:8px;align-items:center}.settings-signature-preview{grid-column:1/-1;min-height:86px;border:1px dashed var(--border-md);border-radius:8px;background:var(--surface-2);display:grid;place-items:center;padding:12px;color:var(--text-3);font-size:12px;text-align:center}.settings-signature-preview img{max-width:260px;max-height:76px;object-fit:contain}
+      .settings-closing-help{display:grid;gap:6px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:10px 12px;margin-bottom:12px}.settings-closing-help strong{font-size:11px;color:var(--text);text-transform:uppercase;letter-spacing:.06em}.settings-closing-help span{display:flex;gap:6px;flex-wrap:wrap}.settings-closing-help code{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--blue-800);background:var(--blue-50);border:1px solid var(--blue-100);border-radius:6px;padding:3px 5px}.settings-closing-list{display:grid;gap:12px}.settings-closing-card{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-closing-grid{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:end}.settings-closing-toggles{display:grid;grid-template-columns:auto auto auto auto;gap:8px;align-items:center;min-height:38px}.settings-closing-toggles strong{font-size:11px;color:var(--text-2);white-space:nowrap}.settings-closing-template{min-height:132px;resize:vertical;line-height:1.55}.settings-closing-badge{display:inline-block;margin-left:6px;padding:2px 5px;border-radius:999px;border:1px solid var(--amber-200);color:var(--amber);font-size:9px;font-weight:800;text-transform:uppercase}.settings-closing-error{display:none;margin-top:8px;border:1px solid var(--red-200);border-radius:8px;background:color-mix(in srgb,var(--red) 8%,var(--surface));color:var(--red);font-size:11px;font-weight:700;padding:8px 10px}.settings-closing-error.is-visible{display:block}
       .settings-placeholder-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.settings-placeholder-grid div{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:14px}.settings-placeholder-grid strong{display:block;color:var(--text);font-size:13px}.settings-placeholder-grid span{display:block;color:var(--text-3);font-size:11px;margin-top:4px;line-height:1.45}
       .settings-actions{display:flex;justify-content:flex-end;gap:8px;position:sticky;bottom:0;margin:18px -22px -78px;padding:12px 22px;background:color-mix(in srgb,var(--surface) 92%,transparent);border-top:1px solid var(--border);backdrop-filter:blur(18px)}.settings-icon-btn{width:30px;height:30px;justify-content:center;padding:0}.settings-toast{position:fixed;right:22px;bottom:22px;z-index:1500;background:var(--surface);color:var(--text);border:1px solid var(--border-md);box-shadow:var(--shadow);border-radius:8px;padding:10px 12px;font-size:12px;font-weight:700;opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;transition:opacity .18s,transform .18s cubic-bezier(.22,1,.36,1)}.settings-toast.is-open{opacity:1;transform:translateY(0) scale(1)}.settings-toast-error{border-color:var(--red-200);color:var(--red)}.settings-toast-ok{border-color:var(--green-200);color:var(--green)}
       .settings-pop{animation:settings-control-pop .2s cubic-bezier(.22,1,.36,1)}@keyframes settings-card-in{from{opacity:0;transform:translateY(7px) scale(.995)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes settings-check-pop{0%{transform:scale(.82)}62%{transform:scale(1.13)}100%{transform:scale(1)}}@keyframes settings-control-pop{0%{transform:scale(.985)}65%{transform:scale(1.018)}100%{transform:scale(1)}}@keyframes settings-dirty-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.settings-card,.settings-summary,.settings-role-card,.settings-check-input:checked,.settings-pop,.settings-dirty.is-visible{animation:none!important}.settings-nav-item,.settings-check,.settings-member-row,.settings-card{transition-duration:.01ms!important}}
       @media(max-width:1080px){.settings-shell{grid-template-columns:188px minmax(0,1fr)}.settings-summary-row,.settings-summary-row-3{grid-template-columns:repeat(2,minmax(0,1fr))}.settings-grid{grid-template-columns:1fr}.settings-grid-tight{grid-template-columns:1fr}.settings-member-head,.settings-project-head{display:none}.settings-member-row,.settings-project-row{grid-template-columns:1fr 1fr}.settings-member-status{grid-column:1/-1}.settings-signature-grid{grid-template-columns:1fr 1fr}}
-      @media(max-width:760px){.settings-shell{display:block;min-height:0}.settings-rail{border-right:0;border-bottom:1px solid var(--border)}.settings-main{padding:16px 14px 76px}.settings-top,.settings-panel-head{display:block}.settings-top-actions{justify-content:flex-start;margin-top:12px}.settings-summary-row,.settings-summary-row-3{grid-template-columns:1fr}.settings-route-grid,.settings-placeholder-grid,.settings-inline-fields,.settings-code-format-grid,.settings-signature-grid,.settings-profile-help{grid-template-columns:1fr}.settings-member-row,.settings-project-row,.settings-health-row,.settings-memo-reason-row,.settings-title-row{grid-template-columns:1fr}.settings-reason-head,.settings-title-head{display:none}.settings-health-badge{justify-self:start}.settings-scope{width:100%;min-width:0;margin-top:10px}.settings-actions{margin-left:-14px;margin-right:-14px;padding-left:14px;padding-right:14px}}
+      @media(max-width:760px){.settings-shell{display:block;min-height:0}.settings-rail{border-right:0;border-bottom:1px solid var(--border)}.settings-main{padding:16px 14px 76px}.settings-top,.settings-panel-head{display:block}.settings-top-actions{justify-content:flex-start;margin-top:12px}.settings-summary-row,.settings-summary-row-3{grid-template-columns:1fr}.settings-route-grid,.settings-placeholder-grid,.settings-inline-fields,.settings-code-format-grid,.settings-signature-grid,.settings-profile-help,.settings-closing-grid{grid-template-columns:1fr}.settings-closing-toggles{grid-template-columns:auto 1fr}.settings-member-row,.settings-project-row,.settings-health-row,.settings-memo-reason-row,.settings-title-row{grid-template-columns:1fr}.settings-reason-head,.settings-title-head{display:none}.settings-health-badge{justify-self:start}.settings-scope{width:100%;min-width:0;margin-top:10px}.settings-actions{margin-left:-14px;margin-right:-14px;padding-left:14px;padding-right:14px}}
     </style>
     <div class="settings-shell">
       <aside class="settings-rail" aria-label="Settings navigation">
@@ -1530,6 +1687,7 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
   SETTINGS_DIRTY_BASELINE = settingsSnapshot();
   root.oninput = event => {
     markSettingsDirty();
+    if(event.target?.dataset?.closingField) showMemoClosingValidationErrors();
     if(event.target?.dataset?.titleField) syncAuthorityMatrixFromTitles();
     if(event.target?.id === 'set-resource-row-no-format' || event.target?.id === 'set-resource-row-no-start') updateResourceNoPreview();
     if(event.target?.id?.startsWith('set-resource-emp-')) updateEmployeeCodePreviews();
@@ -1537,6 +1695,7 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
   };
   root.onchange = event => {
     markSettingsDirty();
+    if(event.target?.dataset?.closingField) showMemoClosingValidationErrors();
     if(event.target?.dataset?.titleField) syncAuthorityMatrixFromTitles();
     if(event.target?.dataset?.authorityUnlimited) syncAuthorityLimitUnlimited(event.target);
     animateSettingsControl(event);
@@ -1688,6 +1847,9 @@ function validateMemoApprovalDraft() {
   readAuthorityLimitsFromDom().forEach(row => {
     if(row.limit_thb < 0) errors.push(`Authority limit for ${row.title} must be non-negative.`);
   });
+  if(document.querySelector('[data-closing-template]')) {
+    errors.push(...showMemoClosingValidationErrors());
+  }
   return [...new Set(errors)];
 }
 
@@ -1771,6 +1933,150 @@ async function saveAuthorityLimitsFromDom() {
       await loadAuthorityAsync();
     } catch(e) {}
   }
+}
+
+function readMemoClosingTemplatesFromDom() {
+  return [...document.querySelectorAll('[data-closing-template]')].map((row, index) => {
+    const get = field => row.querySelector(`[data-closing-field="${field}"]`);
+    return normalizeMemoClosingTemplate({
+      id: row.dataset.closingId || null,
+      memo_type: row.dataset.closingTemplate,
+      policy_ref: get('policy_ref')?.value || '',
+      has_authority_clause: !!get('has_authority_clause')?.checked,
+      template_th: get('template_th')?.value || '',
+      supported_placeholders: MEMO_CLOSING_PLACEHOLDERS,
+      is_active: !!get('is_active')?.checked,
+      source: row.dataset.closingSource || 'configured',
+    }, index);
+  });
+}
+
+function memoClosingTemplatePlaceholders(template) {
+  const text = String(template || '');
+  const malformed = [];
+  const placeholders = [];
+  const validPattern = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
+  let match;
+  while((match = validPattern.exec(text))) placeholders.push(match[1]);
+  const remainder = text.replace(validPattern, '');
+  const tokenLike = remainder.match(/\{[^{}]*\}|\{\{[^{}]*$|^[^{}]*\}\}/g) || [];
+  tokenLike.forEach(token => {
+    if(!/^\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}$/.test(token)) malformed.push(token);
+  });
+  if((text.match(/\{\{/g) || []).length !== (text.match(/\}\}/g) || []).length) malformed.push('Unbalanced {{ }}');
+  return { placeholders: [...new Set(placeholders)], malformed: [...new Set(malformed)] };
+}
+
+function validateMemoClosingTemplate(row) {
+  const normalized = normalizeMemoClosingTemplate(row);
+  const label = (MEMO_APPROVAL_TYPES.find(([type]) => type === normalized.memo_type) || [normalized.memo_type, normalized.memo_type.toUpperCase()])[1];
+  const errors = [];
+  const parsed = memoClosingTemplatePlaceholders(normalized.template_th);
+  if(!normalized.template_th.trim()) errors.push(`${label} closing template cannot be blank.`);
+  parsed.malformed.forEach(token => errors.push(`${label} has malformed placeholder syntax: ${token}`));
+  parsed.placeholders.filter(name => !MEMO_CLOSING_PLACEHOLDERS.includes(name)).forEach(name => {
+    errors.push(`${label} has unknown placeholder: {{${name}}}`);
+  });
+  if(normalized.has_authority_clause && !parsed.placeholders.includes('authority_title_th') && !parsed.placeholders.includes('authority_limit')) {
+    errors.push(`${label} authority clause needs {{authority_title_th}} or {{authority_limit}}.`);
+  }
+  if(normalized.has_authority_clause && !normalized.policy_ref.trim()) {
+    errors.push(`${label} policy reference is blank while authority clause is enabled.`);
+  }
+  return errors;
+}
+
+function validateMemoClosingTemplates(rows=readMemoClosingTemplatesFromDom()) {
+  return [...new Set((rows || []).flatMap(validateMemoClosingTemplate))];
+}
+
+function showMemoClosingValidationErrors(rows=readMemoClosingTemplatesFromDom()) {
+  document.querySelectorAll('[data-closing-error]').forEach(el => {
+    el.textContent = '';
+    el.classList.remove('is-visible');
+  });
+  const errorsByType = new Map();
+  rows.forEach(row => {
+    const normalized = normalizeMemoClosingTemplate(row);
+    const errors = validateMemoClosingTemplate(normalized);
+    if(errors.length) errorsByType.set(normalized.memo_type, errors);
+  });
+  errorsByType.forEach((errors, type) => {
+    const el = document.querySelector(`[data-closing-error="${type}"]`);
+    if(el) {
+      el.textContent = errors[0];
+      el.classList.add('is-visible');
+    }
+  });
+  return [...new Set([...errorsByType.values()].flat())];
+}
+
+async function loadMemoClosingTemplatesForSettings() {
+  if(typeof checkSupa === 'function' && await checkSupa()) {
+    try {
+      const rows = await supaFetch('memo_closing_templates', 'GET', null, '?order=memo_type.asc');
+      if(Array.isArray(rows)) {
+        SETTINGS_MEMO_CLOSING_CACHE = rows.map(normalizeMemoClosingTemplate);
+        if(typeof _memoClosingTemplateCache !== 'undefined') _memoClosingTemplateCache = SETTINGS_MEMO_CLOSING_CACHE;
+        return memoClosingTemplateRows(SETTINGS_MEMO_CLOSING_CACHE);
+      }
+    } catch(e) {
+      console.warn('memo_closing_templates settings load failed', e.message);
+    }
+  }
+  SETTINGS_MEMO_CLOSING_CACHE = memoClosingTemplateRows([]);
+  return SETTINGS_MEMO_CLOSING_CACHE;
+}
+
+async function hydrateMemoClosingTemplatesPanel() {
+  const status = document.getElementById('settings-memo-closing-status');
+  const list = document.getElementById('settings-memo-closing-list');
+  try {
+    const rows = await loadMemoClosingTemplatesForSettings();
+    if(list) list.innerHTML = rows.map(renderMemoClosingTemplateCard).join('');
+    if(status) {
+      const fallbackCount = rows.filter(row => row.source === 'fallback').length;
+      status.textContent = fallbackCount ? `${rows.length} memo types loaded; ${fallbackCount} using fallback values.` : `${rows.length} memo types loaded from memo_closing_templates.`;
+      status.className = `settings-inline-status ${fallbackCount ? '' : 'ok'}`;
+    }
+  } catch(e) {
+    if(status) {
+      status.textContent = 'Could not load closing templates; fallback values are shown.';
+      status.className = 'settings-inline-status error';
+    }
+  }
+  SETTINGS_MEMO_CLOSING_BASELINE = memoClosingTemplatesSnapshot();
+  SETTINGS_DIRTY_BASELINE = settingsSnapshot();
+  markSettingsDirty();
+}
+
+async function saveMemoClosingTemplatesFromDom() {
+  const rows = readMemoClosingTemplatesFromDom();
+  const errors = showMemoClosingValidationErrors(rows);
+  if(errors.length) throw new Error(errors[0]);
+  if(typeof checkSupa === 'function' && !(await checkSupa())) throw new Error('Supabase is not configured, so closing paragraph templates were not saved.');
+  const saved = [];
+  for(const row of rows) {
+    const payload = {
+      memo_type: row.memo_type,
+      policy_ref: row.policy_ref || null,
+      has_authority_clause: row.has_authority_clause === true,
+      template_th: row.template_th,
+      supported_placeholders: MEMO_CLOSING_PLACEHOLDERS,
+      is_active: row.is_active !== false,
+    };
+    if(row.id != null && Number.isFinite(Number(row.id)) && Number(row.id) > 0) {
+      const result = await supaFetch('memo_closing_templates', 'PATCH', payload, `?id=eq.${encodeURIComponent(row.id)}`);
+      saved.push(...(Array.isArray(result) ? result : []));
+    } else {
+      const result = await supaFetch('memo_closing_templates', 'POST', payload, '?on_conflict=memo_type');
+      saved.push(...(Array.isArray(result) ? result : []));
+    }
+  }
+  SETTINGS_MEMO_CLOSING_CACHE = (saved.length ? saved : rows).map(normalizeMemoClosingTemplate);
+  if(typeof _memoClosingTemplateCache !== 'undefined') _memoClosingTemplateCache = SETTINGS_MEMO_CLOSING_CACHE;
+  SETTINGS_MEMO_CLOSING_BASELINE = memoClosingTemplatesSnapshot();
+  return SETTINGS_MEMO_CLOSING_CACHE;
 }
 
 function syncAuthorityLimitUnlimited(input) {
@@ -2268,6 +2574,7 @@ async function hydrateAuthorityLimitsPanel() {
 async function hydrateMemoApprovalPanel() {
   SETTINGS_SIGNATURE_PENDING_DATA_URL = null;
   await hydrateAuthorityLimitsPanel();
+  await hydrateMemoClosingTemplatesPanel();
   await refreshMemoProfilesPanel();
   await refreshSignaturePreview();
   SETTINGS_DIRTY_BASELINE = settingsSnapshot();
@@ -2348,7 +2655,10 @@ function collectSettingsFromDom() {
 }
 
 function settingsSnapshot() {
-  return JSON.stringify(normalizeSettings(collectSettingsFromDom()));
+  return JSON.stringify({
+    settings: normalizeSettings(collectSettingsFromDom()),
+    memoClosingTemplates: SETTINGS_ACTIVE_TAB === 'memo' ? JSON.parse(memoClosingTemplatesSnapshot()) : [],
+  });
 }
 
 function markSettingsDirty() {
@@ -2402,6 +2712,7 @@ async function saveSettings() {
         await saveAuthorityLimitsFromDom();
         SETTINGS_AUTHORITY_LIMITS_BASELINE = authorityLimitsSnapshot();
       }
+      await saveMemoClosingTemplatesFromDom();
     } catch(e) {
       matrixSaveError = e?.message || 'Approval Limit Matrix could not be saved.';
     }
@@ -2429,6 +2740,15 @@ if (typeof module !== 'undefined' && module.exports) {
     renderAuthorityTitleRow,
     renderAuthorityLimitTableRow,
     authorityLimitStateValue,
+    normalizeMemoClosingTemplate,
+    memoClosingTemplateRows,
+    renderMemoClosingTemplatesPanel,
+    renderMemoClosingTemplateCard,
+    memoClosingTemplatePlaceholders,
+    validateMemoClosingTemplate,
+    validateMemoClosingTemplates,
+    readMemoClosingTemplatesFromDom,
+    saveMemoClosingTemplatesFromDom,
     readAuthorityTitlesFromDom,
     readAuthorityLimitsFromDom,
     normalizeMemoProfileForSettings,
