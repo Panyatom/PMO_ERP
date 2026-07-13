@@ -678,38 +678,158 @@ function memoReasonMasterRows(s) {
 function normalizeAuthorityTitleItem(item, index=0) {
   if(typeof item === 'string') {
     return {
-      id: settingsStableId('title'),
+      id: null,
+      title_th: item.trim(),
+      title_en: '',
       title_name: item.trim(),
       active: true,
       sort_order: index + 1,
     };
   }
+  const titleTh = String(item?.title_th || item?.titleTh || item?.title_name || item?.name || item?.title || '').trim();
   return {
-    id: String(item?.id || settingsStableId('title')),
-    title_name: String(item?.title_name || item?.name || item?.title || '').trim(),
+    id: item?.id != null && String(item.id).trim() !== '' ? Number(item.id) : null,
+    client_id: item?.client_id || item?.clientId || null,
+    title_th: titleTh,
+    title_en: String(item?.title_en || item?.titleEn || '').trim(),
+    title_name: titleTh,
     active: item?.active !== false && item?.is_active !== false,
     sort_order: Math.max(1, Math.floor(Number(item?.sort_order || item?.sortOrder || index + 1))),
   };
 }
 
 function authorityTitleMasterRows(s) {
-  const rows = [];
-  if(Array.isArray(s.authorityTitles)) {
-    s.authorityTitles.forEach((item, index) => rows.push(normalizeAuthorityTitleItem(item, index)));
-  } else {
-    const titles = [
-      ...(s.titles || []),
-      ...Object.keys(AUTHORITY_FALLBACK_LIMITS),
-      ...((typeof _authorityCache !== 'undefined' && Array.isArray(_authorityCache)) ? _authorityCache.map(row => row?.title).filter(Boolean) : []),
-      ...Object.values(s.typeCfg || {}).map(cfg => cfg?.apprTitle).filter(Boolean),
-      s.defaultReviewer?.title,
-      s.defaultApprover?.title,
-    ].filter(Boolean);
-    [...new Set(titles)].forEach((title, index) => rows.push(normalizeAuthorityTitleItem(title, index)));
+  const source = (typeof _authorityTitleCache !== 'undefined' && Array.isArray(_authorityTitleCache) && _authorityTitleCache.length)
+    ? _authorityTitleCache
+    : (Array.isArray(s?.authorityTitles) ? s.authorityTitles : []);
+  const byKey = new Map();
+  source.map(normalizeAuthorityTitleItem).filter(row => row.title_th).forEach(row => {
+    const key = row.id != null ? `id:${row.id}` : `title:${row.title_th.toLowerCase()}`;
+    const titleKey = `title:${row.title_th.toLowerCase()}`;
+    const existing = byKey.get(key) || byKey.get(titleKey);
+    const next = existing && existing.id != null ? existing : row;
+    byKey.set(key, next);
+    byKey.set(titleKey, next);
+  });
+  return [...new Map([...byKey.values()].map(row => [row.id != null ? `id:${row.id}` : row.title_th.toLowerCase(), row])).values()]
+    .sort((a, b) => a.sort_order - b.sort_order || a.title_th.localeCompare(b.title_th));
+}
+
+function activeAuthorityTitleRows(s=loadSettings()) {
+  return authorityTitleMasterRows(s).filter(row => row.active !== false);
+}
+
+function authorityTitleById(id, rows=authorityTitleMasterRows(loadSettings())) {
+  const n = Number(id);
+  return Number.isFinite(n) && n > 0 ? rows.find(row => Number(row.id) === n) || null : null;
+}
+
+function authorityTitleByText(text, rows=authorityTitleMasterRows(loadSettings())) {
+  const key = String(text || '').trim().toLowerCase();
+  return key ? rows.find(row => row.title_th.toLowerCase() === key || row.title_en.toLowerCase() === key) || null : null;
+}
+
+function authorityTitleSelectOptions(selectedId=null, legacyTitle='', includeBlank=true) {
+  const allRows = authorityTitleMasterRows();
+  const rows = allRows.filter(row => row.active !== false);
+  const selected = selectedId != null && selectedId !== '' ? Number(selectedId) : null;
+  const legacy = String(legacyTitle || '').trim();
+  const opts = includeBlank ? ['<option value="">- Select -</option>'] : [];
+  rows.forEach(row => {
+    const value = row.id != null ? String(row.id) : `title:${row.title_th}`;
+    const isSelected = selected != null
+      ? Number(row.id) === selected
+      : !!legacy && row.title_th === legacy;
+    opts.push(`<option value="${esc(value)}" data-title-th="${esc(row.title_th)}" ${isSelected ? 'selected' : ''}>${esc(row.title_th)}${row.title_en ? ` / ${esc(row.title_en)}` : ''}</option>`);
+  });
+  if(selected != null && !rows.some(row => Number(row.id) === selected)) {
+    const current = allRows.find(row => Number(row.id) === selected);
+    if(current) {
+      opts.push(`<option value="${esc(current.id)}" data-title-th="${esc(current.title_th)}" selected>${esc(current.title_th)}${current.title_en ? ` / ${esc(current.title_en)}` : ''} / Inactive</option>`);
+    }
   }
+  if(legacy && !rows.some(row => row.title_th === legacy) && selected == null) {
+    opts.push(`<option value="legacy:${esc(legacy)}" data-title-th="${esc(legacy)}" selected>${esc(legacy)} / Legacy</option>`);
+  }
+  return opts.join('');
+}
+
+function resolveAuthorityProfileTitleSelection(value) {
+  const raw = String(value || '').trim();
+  if(!raw) return { id: null, titleTh: '' };
+  if(raw.startsWith('legacy:')) return { id: null, titleTh: raw.slice(7) };
+  if(raw.startsWith('title:')) return { id: null, titleTh: raw.slice(6) };
+  const row = authorityTitleById(raw);
+  return { id: row?.id ?? null, titleTh: row?.title_th || '' };
+}
+
+function findAuthorityLimitForSettings(titleRow, memoType) {
+  const type = String(memoType || '').toLowerCase();
+  const rows = (typeof _authorityCache !== 'undefined' && Array.isArray(_authorityCache)) ? _authorityCache : [];
+  const titleId = titleRow?.id != null ? Number(titleRow.id) : null;
+  const titleTh = String(titleRow?.title_th || titleRow?.title_name || titleRow || '').trim();
+  return rows.find(row => titleId != null && row.authority_title_id != null && Number(row.authority_title_id) === titleId && row.memo_type === type) ||
+    rows.find(row => String(row.title || '').trim() === titleTh && row.memo_type === type) ||
+    null;
+}
+
+function authorityLimitStateValue(titleRow, type) {
+  const row = findAuthorityLimitForSettings(titleRow, type);
+  if(row) {
+    return {
+      configured: true,
+      limit_thb: Number(row.limit_thb) || 0,
+      is_unlimited: row.is_unlimited === true,
+      existing: true,
+    };
+  }
+  if(typeof _authorityCache === 'undefined' || _authorityCache == null) {
+    const title = String(titleRow?.title_th || titleRow?.title_name || titleRow || '').trim();
+    if(Object.prototype.hasOwnProperty.call(AUTHORITY_FALLBACK_LIMITS, title) && Object.prototype.hasOwnProperty.call(AUTHORITY_FALLBACK_LIMITS[title], type)) {
+      return { configured: true, limit_thb: AUTHORITY_FALLBACK_LIMITS[title][type], is_unlimited: false, existing: false };
+    }
+  }
+  return { configured: false, limit_thb: null, is_unlimited: false, existing: false };
+}
+
+function syncAuthorityMatrixFromTitles() {
+  const body = document.querySelector('.settings-memo-table tbody');
+  if(!body) return;
+  const currentRows = readAuthorityTitlesFromDom(loadSettings().authorityTitles) || [];
+  const existing = new Map([...body.querySelectorAll('[data-authority-title-row-id]')].map(row => [row.dataset.authorityTitleRowId, row]));
+  currentRows.forEach(title => {
+    const key = authorityTitleDomKey(title);
+    const current = existing.get(key);
+    if(current) {
+      current.dataset.authorityTitleId = title.id || '';
+      current.dataset.authorityTitle = title.title_th || '';
+      const labelCell = current.querySelector('td:first-child');
+      if(labelCell) labelCell.innerHTML = `<strong>${esc(title.title_th)}</strong>${title.active === false ? '<span class="settings-muted-label">Inactive</span>' : ''}`;
+      existing.delete(key);
+    } else {
+      body.insertAdjacentHTML('beforeend', renderAuthorityLimitTableRow(title));
+    }
+  });
+  existing.forEach(row => row.remove());
+}
+
+function authorityTitleDomKey(row) {
+  return row?.id != null && Number.isFinite(Number(row.id)) && Number(row.id) > 0
+    ? `id:${Number(row.id)}`
+    : row?.client_id
+      ? `client:${row.client_id}`
+      : `new:${String(row?.title_th || row?.title_name || '').trim().toLowerCase()}`;
+}
+
+function authorityTitleChanged() {
+  syncAuthorityMatrixFromTitles();
+  markSettingsDirty();
+}
+
+function dedupeAuthorityTitleRows(rows=[]) {
   const byName = new Map();
-  rows.filter(row => row.title_name).forEach(row => {
-    const key = row.title_name.toLowerCase();
+  rows.filter(row => row.title_th).forEach(row => {
+    const key = row.title_th.toLowerCase();
     const existing = byName.get(key);
     if(!existing || row.sort_order < existing.sort_order) byName.set(key, row);
   });
@@ -746,21 +866,34 @@ function renderMemoReasonRow(reason) {
 }
 
 function memoApprovalTitleRows(s) {
-  return authorityTitleMasterRows(s).map(row => row.title_name);
+  return authorityTitleMasterRows(s).map(row => row.title_th);
 }
 
-function authorityLimitInputValue(title, type) {
-  if(typeof getAuthorityLimit === 'function') return getAuthorityLimit(title, type);
-  return AUTHORITY_FALLBACK_LIMITS[title]?.[type] ?? 0;
+function renderAuthorityLimitCell(titleRow, type) {
+  const state = authorityLimitStateValue(titleRow, type);
+  const disabled = state.is_unlimited ? 'disabled' : '';
+  return `
+    <td>
+      <div class="settings-limit-cell">
+        <input class="ri settings-limit-input" type="number" min="0" step="1"
+          data-authority-type="${esc(type)}"
+          data-limit-existing="${state.existing ? 'true' : 'false'}"
+          value="${state.configured && !state.is_unlimited ? esc(state.limit_thb) : ''}"
+          placeholder="Unconfigured" ${disabled}>
+        <label class="settings-limit-unlimited" title="Unlimited approval authority">
+          <input type="checkbox" data-authority-unlimited="${esc(type)}" ${state.is_unlimited ? 'checked' : ''}>
+          <span>∞</span>
+        </label>
+      </div>
+    </td>`;
 }
 
 function renderAuthorityLimitTableRow(title) {
+  const row = normalizeAuthorityTitleItem(title);
   return `
-    <tr data-authority-title="${esc(title)}">
-      <td><strong>${esc(title)}</strong></td>
-      ${MEMO_APPROVAL_TYPES.map(([type]) => `
-        <td><input class="ri settings-limit-input" type="number" min="0" step="1" data-authority-type="${esc(type)}" value="${esc(authorityLimitInputValue(title, type))}"></td>
-      `).join('')}
+    <tr data-authority-title-row-id="${esc(authorityTitleDomKey(row))}" data-authority-title-id="${esc(row.id || '')}" data-authority-title="${esc(row.title_th)}">
+      <td><strong>${esc(row.title_th)}</strong>${row.active === false ? '<span class="settings-muted-label">Inactive</span>' : ''}</td>
+      ${MEMO_APPROVAL_TYPES.map(([type]) => renderAuthorityLimitCell(row, type)).join('')}
     </tr>`;
 }
 
@@ -811,11 +944,12 @@ function renderReasonManagementPanel(s) {
 function renderAuthorityTitleRow(title) {
   const row = normalizeAuthorityTitleItem(title);
   return `
-    <div class="settings-title-row" data-authority-title-row="${esc(row.id)}">
-      <input class="ri" data-title-field="title_name" value="${esc(row.title_name)}" placeholder="Authority title">
-      <input class="ri settings-order-input" data-title-field="sort_order" type="number" min="1" step="1" value="${esc(row.sort_order)}" title="Sort order" aria-label="Sort order">
+    <div class="settings-title-row" data-authority-title-row="${esc(authorityTitleDomKey(row))}" data-authority-title-id="${esc(row.id || '')}">
+      <input class="ri" data-title-field="title_th" value="${esc(row.title_th)}" placeholder="Thai title" oninput="authorityTitleChanged()">
+      <input class="ri" data-title-field="title_en" value="${esc(row.title_en)}" placeholder="English title" oninput="authorityTitleChanged()">
+      <input class="ri settings-order-input" data-title-field="sort_order" type="number" min="1" step="1" value="${esc(row.sort_order)}" title="Sort order" aria-label="Sort order" oninput="authorityTitleChanged()">
       <label class="settings-switch" title="Active title" data-settings-toggle>
-        <input data-title-field="active" type="checkbox" ${row.active ? 'checked' : ''}>
+        <input data-title-field="active" type="checkbox" ${row.active ? 'checked' : ''} onchange="authorityTitleChanged()">
         <span aria-hidden="true"></span>
       </label>
       <button class="btn-sm settings-icon-btn" type="button" title="Deactivate title" onclick="deactivateAuthorityTitleRow(this)">x</button>
@@ -830,7 +964,7 @@ function renderAuthorityTitleManagementPanel(s) {
         <div><h3>Authority Title Management</h3><p>Maintain title options used as PMO approval authority labels.</p></div>
         <button class="btn-sm" type="button" onclick="addAuthorityTitleRow()">Add title</button>
       </div>
-      <div class="settings-title-head"><span>Title name</span><span>Sort</span><span>Active</span><span></span></div>
+      <div class="settings-title-head"><span>Thai title</span><span>English title</span><span>Sort</span><span>Active</span><span></span></div>
       <div id="settings-authority-title-list" class="settings-title-list">
         ${rows.map(renderAuthorityTitleRow).join('')}
       </div>
@@ -841,10 +975,13 @@ function addAuthorityTitleRow() {
   const list = document.getElementById('settings-authority-title-list');
   if(!list) return;
   list.insertAdjacentHTML('beforeend', renderAuthorityTitleRow({
-    title_name: '',
+    client_id: settingsStableId('title'),
+    title_th: '',
+    title_en: '',
     active: true,
     sort_order: list.children.length + 1,
   }));
+  syncAuthorityMatrixFromTitles();
   markSettingsDirty();
 }
 
@@ -852,6 +989,7 @@ function deactivateAuthorityTitleRow(button) {
   const row = button?.closest?.('[data-authority-title-row]');
   const active = row?.querySelector?.('[data-title-field="active"]');
   if(active) active.checked = false;
+  syncAuthorityMatrixFromTitles();
   markSettingsDirty();
 }
 
@@ -1340,7 +1478,7 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
       .settings-role-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.settings-role-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;animation:settings-card-in .22s cubic-bezier(.22,1,.36,1) both}.settings-tabs-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.settings-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);min-height:34px;border:1px solid var(--border);background:var(--surface-2);border-radius:8px;padding:7px 10px;cursor:pointer;transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s cubic-bezier(.22,1,.36,1),box-shadow .16s ease}.settings-check:hover{border-color:var(--blue-100);color:var(--text);background:color-mix(in srgb,var(--surface-2) 76%,var(--blue-50));box-shadow:0 8px 18px color-mix(in srgb,var(--blue) 6%,transparent)}.settings-check:active{transform:scale(.975)}.settings-check:has(.settings-check-input:checked){border-color:var(--blue-100);background:var(--blue-50);color:var(--blue-800)}.settings-mini-label{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.08em;margin:14px 0 0}.settings-scope{width:200px;min-width:200px}
       .settings-transition-grid{display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px;align-items:center;margin-top:8px}.settings-transition-grid label{font-size:11px;font-weight:700;color:var(--text-2)}
       .settings-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.settings-preview{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-preview-title{font-size:13px;font-weight:800;color:var(--text);margin-bottom:8px}.settings-preview-line{display:grid;grid-template-columns:58px 1fr;gap:8px;font-size:11px;padding:5px 0;border-top:1px solid var(--border)}.settings-preview-line strong{color:var(--text-3)}.settings-preview-line span{color:var(--text-2);line-height:1.4}
-      .settings-memo-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.settings-memo-table{width:100%;min-width:720px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}.settings-memo-table th,.settings-memo-table td{border-bottom:1px solid var(--border);padding:9px;text-align:right}.settings-memo-table th:first-child,.settings-memo-table td:first-child{text-align:left;width:260px;background:var(--surface)}.settings-memo-table tr:last-child td{border-bottom:0}.settings-limit-input{width:100%;min-width:88px;text-align:right}.settings-order-input{width:72px;min-width:72px;text-align:right}.settings-profile-help{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px}.settings-profile-help div{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:9px 10px;font-size:11px;color:var(--text-2);line-height:1.45}.settings-inline-status{font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:8px}.settings-inline-status.ok{color:var(--green)}.settings-inline-status.error{color:var(--red)}.settings-profile-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.settings-profile-table{width:100%;min-width:1080px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}.settings-profile-table th,.settings-profile-table td{border-bottom:1px solid var(--border);padding:8px;vertical-align:top;text-align:left}.settings-profile-table th{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;background:var(--surface-2)}.settings-profile-table th:nth-child(1),.settings-profile-table td:nth-child(1){width:58px}.settings-profile-table th:nth-child(6),.settings-profile-table th:nth-child(7),.settings-profile-table th:nth-child(8),.settings-profile-table th:nth-child(9),.settings-profile-table td:nth-child(6),.settings-profile-table td:nth-child(7),.settings-profile-table td:nth-child(8),.settings-profile-table td:nth-child(9){width:74px;text-align:center}.settings-profile-table th:last-child,.settings-profile-table td:last-child{width:76px;text-align:right}.settings-profile-table tr:last-child td{border-bottom:0}.settings-profile-id{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3);font-weight:700}.settings-profile-aliases{min-height:38px;resize:vertical}.settings-profile-check{min-height:34px;display:inline-flex;align-items:center;justify-content:center}.settings-type-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}.settings-type-card{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-type-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}.settings-type-head strong{font-size:14px;color:var(--text)}.settings-type-head span{font-size:11px;color:var(--text-3)}.settings-reason-head,.settings-memo-reason-row,.settings-title-head,.settings-title-row{display:grid;grid-template-columns:minmax(0,1fr) 72px 58px 34px;gap:8px;align-items:center}.settings-reason-head,.settings-title-head{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px}.settings-memo-reasons,.settings-title-list{display:grid;gap:8px;margin:8px 0}.settings-title-row,.settings-memo-reason-row{padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.settings-empty-note{font-size:11px;color:var(--text-3);padding:10px;border:1px dashed var(--border-md);border-radius:8px;background:var(--surface)}.settings-signature-grid{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;gap:12px;align-items:end}.settings-signature-actions{display:flex;gap:8px;align-items:center}.settings-signature-preview{grid-column:1/-1;min-height:86px;border:1px dashed var(--border-md);border-radius:8px;background:var(--surface-2);display:grid;place-items:center;padding:12px;color:var(--text-3);font-size:12px;text-align:center}.settings-signature-preview img{max-width:260px;max-height:76px;object-fit:contain}
+      .settings-memo-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.settings-memo-table{width:100%;min-width:840px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}.settings-memo-table th,.settings-memo-table td{border-bottom:1px solid var(--border);padding:9px;text-align:right}.settings-memo-table th:first-child,.settings-memo-table td:first-child{text-align:left;width:260px;background:var(--surface)}.settings-memo-table tr:last-child td{border-bottom:0}.settings-limit-cell{display:grid;grid-template-columns:minmax(82px,1fr) 32px;gap:6px;align-items:center}.settings-limit-input{width:100%;min-width:0;text-align:right}.settings-limit-unlimited{height:34px;display:grid;place-items:center;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);cursor:pointer;color:var(--text-3);font-weight:800}.settings-limit-unlimited input{position:absolute;opacity:0;pointer-events:none}.settings-limit-unlimited:has(input:checked){border-color:var(--blue-100);background:var(--blue-50);color:var(--blue-800)}.settings-muted-label{display:inline-block;margin-left:6px;font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase}.settings-order-input{width:72px;min-width:72px;text-align:right}.settings-profile-help{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px}.settings-profile-help div{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:9px 10px;font-size:11px;color:var(--text-2);line-height:1.45}.settings-inline-status{font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:8px}.settings-inline-status.ok{color:var(--green)}.settings-inline-status.error{color:var(--red)}.settings-profile-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.settings-profile-table{width:100%;min-width:1080px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}.settings-profile-table th,.settings-profile-table td{border-bottom:1px solid var(--border);padding:8px;vertical-align:top;text-align:left}.settings-profile-table th{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;background:var(--surface-2)}.settings-profile-table th:nth-child(1),.settings-profile-table td:nth-child(1){width:58px}.settings-profile-table th:nth-child(6),.settings-profile-table th:nth-child(7),.settings-profile-table th:nth-child(8),.settings-profile-table th:nth-child(9),.settings-profile-table td:nth-child(6),.settings-profile-table td:nth-child(7),.settings-profile-table td:nth-child(8),.settings-profile-table td:nth-child(9){width:74px;text-align:center}.settings-profile-table th:last-child,.settings-profile-table td:last-child{width:76px;text-align:right}.settings-profile-table tr:last-child td{border-bottom:0}.settings-profile-id{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-3);font-weight:700}.settings-profile-aliases{min-height:38px;resize:vertical}.settings-profile-check{min-height:34px;display:inline-flex;align-items:center;justify-content:center}.settings-type-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}.settings-type-card{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-type-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}.settings-type-head strong{font-size:14px;color:var(--text)}.settings-type-head span{font-size:11px;color:var(--text-3)}.settings-reason-head,.settings-memo-reason-row{display:grid;grid-template-columns:minmax(0,1fr) 72px 58px 34px;gap:8px;align-items:center}.settings-title-head,.settings-title-row{display:grid;grid-template-columns:minmax(160px,1.2fr) minmax(140px,1fr) 72px 58px 34px;gap:8px;align-items:center}.settings-reason-head,.settings-title-head{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px}.settings-memo-reasons,.settings-title-list{display:grid;gap:8px;margin:8px 0}.settings-title-row,.settings-memo-reason-row{padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.settings-empty-note{font-size:11px;color:var(--text-3);padding:10px;border:1px dashed var(--border-md);border-radius:8px;background:var(--surface)}.settings-signature-grid{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;gap:12px;align-items:end}.settings-signature-actions{display:flex;gap:8px;align-items:center}.settings-signature-preview{grid-column:1/-1;min-height:86px;border:1px dashed var(--border-md);border-radius:8px;background:var(--surface-2);display:grid;place-items:center;padding:12px;color:var(--text-3);font-size:12px;text-align:center}.settings-signature-preview img{max-width:260px;max-height:76px;object-fit:contain}
       .settings-placeholder-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.settings-placeholder-grid div{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:14px}.settings-placeholder-grid strong{display:block;color:var(--text);font-size:13px}.settings-placeholder-grid span{display:block;color:var(--text-3);font-size:11px;margin-top:4px;line-height:1.45}
       .settings-actions{display:flex;justify-content:flex-end;gap:8px;position:sticky;bottom:0;margin:18px -22px -78px;padding:12px 22px;background:color-mix(in srgb,var(--surface) 92%,transparent);border-top:1px solid var(--border);backdrop-filter:blur(18px)}.settings-icon-btn{width:30px;height:30px;justify-content:center;padding:0}.settings-toast{position:fixed;right:22px;bottom:22px;z-index:1500;background:var(--surface);color:var(--text);border:1px solid var(--border-md);box-shadow:var(--shadow);border-radius:8px;padding:10px 12px;font-size:12px;font-weight:700;opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;transition:opacity .18s,transform .18s cubic-bezier(.22,1,.36,1)}.settings-toast.is-open{opacity:1;transform:translateY(0) scale(1)}.settings-toast-error{border-color:var(--red-200);color:var(--red)}.settings-toast-ok{border-color:var(--green-200);color:var(--green)}
       .settings-pop{animation:settings-control-pop .2s cubic-bezier(.22,1,.36,1)}@keyframes settings-card-in{from{opacity:0;transform:translateY(7px) scale(.995)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes settings-check-pop{0%{transform:scale(.82)}62%{transform:scale(1.13)}100%{transform:scale(1)}}@keyframes settings-control-pop{0%{transform:scale(.985)}65%{transform:scale(1.018)}100%{transform:scale(1)}}@keyframes settings-dirty-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.settings-card,.settings-summary,.settings-role-card,.settings-check-input:checked,.settings-pop,.settings-dirty.is-visible{animation:none!important}.settings-nav-item,.settings-check,.settings-member-row,.settings-card{transition-duration:.01ms!important}}
@@ -1392,12 +1530,15 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
   SETTINGS_DIRTY_BASELINE = settingsSnapshot();
   root.oninput = event => {
     markSettingsDirty();
+    if(event.target?.dataset?.titleField) syncAuthorityMatrixFromTitles();
     if(event.target?.id === 'set-resource-row-no-format' || event.target?.id === 'set-resource-row-no-start') updateResourceNoPreview();
     if(event.target?.id?.startsWith('set-resource-emp-')) updateEmployeeCodePreviews();
     if(event.target?.id === 'set-signature-owner') refreshSignaturePreview();
   };
   root.onchange = event => {
     markSettingsDirty();
+    if(event.target?.dataset?.titleField) syncAuthorityMatrixFromTitles();
+    if(event.target?.dataset?.authorityUnlimited) syncAuthorityLimitUnlimited(event.target);
     animateSettingsControl(event);
   };
   root.onclick = event => {
@@ -1478,24 +1619,35 @@ function readMemoReasonsFromDom(currentReasons=null) {
 function readAuthorityTitlesFromDom(currentTitles=null) {
   const rows = [...document.querySelectorAll('[data-authority-title-row]')];
   if(!rows.length) return currentTitles;
-  return rows.map((row, index) => normalizeAuthorityTitleItem({
-    id: row.dataset.authorityTitleRow || settingsStableId('title'),
-    title_name: row.querySelector('[data-title-field="title_name"]')?.value?.trim() || '',
+  return dedupeAuthorityTitleRows(rows.map((row, index) => normalizeAuthorityTitleItem({
+    id: row.dataset.authorityTitleId || null,
+    client_id: String(row.dataset.authorityTitleRow || '').startsWith('client:')
+      ? String(row.dataset.authorityTitleRow).slice(7)
+      : '',
+    title_th: row.querySelector('[data-title-field="title_th"]')?.value?.trim() || '',
+    title_en: row.querySelector('[data-title-field="title_en"]')?.value?.trim() || '',
     active: !!row.querySelector('[data-title-field="active"]')?.checked,
     sort_order: row.querySelector('[data-title-field="sort_order"]')?.value || index + 1,
-  }, index)).filter(title => title.title_name);
+  }, index)).filter(title => title.title_th));
 }
 
 function readAuthorityLimitsFromDom() {
   return [...document.querySelectorAll('[data-authority-title]')].flatMap(row => {
     const title = row.dataset.authorityTitle || '';
+    const titleId = Number(row.dataset.authorityTitleId);
     return MEMO_APPROVAL_TYPES.map(([type]) => {
       const input = row.querySelector(`[data-authority-type="${type}"]`);
-      const n = Number(input?.value || 0);
+      const unlimited = !!row.querySelector(`[data-authority-unlimited="${type}"]`)?.checked;
+      const raw = String(input?.value || '').trim();
+      const n = Number(raw);
       return {
+        authority_title_id: Number.isFinite(titleId) && titleId > 0 ? titleId : null,
         title,
         memo_type: type,
-        limit_thb: Number.isFinite(n) && n >= 0 ? n : -1,
+        limit_thb: unlimited ? 0 : raw === '' ? null : Number.isFinite(n) && n >= 0 ? n : -1,
+        is_unlimited: unlimited,
+        configured: unlimited || raw !== '',
+        existing: input?.dataset?.limitExisting === 'true',
       };
     });
   });
@@ -1504,11 +1656,14 @@ function readAuthorityLimitsFromDom() {
 function authorityLimitsSnapshot(rows=readAuthorityLimitsFromDom()) {
   return JSON.stringify(rows
     .map(row => ({
+      authority_title_id: row.authority_title_id ?? null,
       title: String(row.title || ''),
       memo_type: String(row.memo_type || ''),
-      limit_thb: Number(row.limit_thb) || 0,
+      limit_thb: row.limit_thb == null ? null : Number(row.limit_thb) || 0,
+      is_unlimited: row.is_unlimited === true,
+      configured: row.configured === true,
     }))
-    .sort((a, b) => a.title.localeCompare(b.title) || a.memo_type.localeCompare(b.memo_type)));
+    .sort((a, b) => (a.authority_title_id || 0) - (b.authority_title_id || 0) || a.title.localeCompare(b.title) || a.memo_type.localeCompare(b.memo_type)));
 }
 
 function authorityLimitsDirty() {
@@ -1526,8 +1681,8 @@ function validateMemoApprovalDraft() {
   });
   const titleKeys = new Set();
   readAuthorityTitlesFromDom(loadSettings().authorityTitles)?.forEach(title => {
-    const key = title.title_name.toLowerCase();
-    if(titleKeys.has(key)) errors.push(`Duplicate authority title: ${title.title_name}`);
+    const key = title.title_th.toLowerCase();
+    if(titleKeys.has(key)) errors.push(`Duplicate authority title: ${title.title_th}`);
     titleKeys.add(key);
   });
   readAuthorityLimitsFromDom().forEach(row => {
@@ -1536,21 +1691,96 @@ function validateMemoApprovalDraft() {
   return [...new Set(errors)];
 }
 
+async function saveAuthorityTitlesFromDom() {
+  const rows = readAuthorityTitlesFromDom(loadSettings().authorityTitles) || [];
+  if(!rows.length) return rows;
+  if(typeof checkSupa === 'function' && !(await checkSupa())) throw new Error('Supabase is not configured, so authority titles were not saved.');
+  const saved = [];
+  for(const row of rows) {
+    const payload = {
+      title_th: row.title_th,
+      title_en: row.title_en || null,
+      sort_order: row.sort_order,
+      is_active: row.active !== false,
+    };
+    if(row.id != null && Number.isFinite(Number(row.id)) && Number(row.id) > 0) {
+      const result = await supaFetch('authority_titles', 'PATCH', payload, `?id=eq.${encodeURIComponent(row.id)}`);
+      saved.push(...(Array.isArray(result) ? result : []));
+    } else {
+      const result = await supaFetch('authority_titles', 'POST', payload);
+      saved.push(...(Array.isArray(result) ? result : []));
+    }
+  }
+  if(typeof _authorityTitleCache !== 'undefined') {
+    _authorityTitleCache = saved.length ? saved.map(normalizeAuthorityTitleItem) : rows;
+  }
+  if(typeof loadAuthorityTitlesAsync === 'function') {
+    try {
+      if(typeof _authorityTitleCache !== 'undefined') _authorityTitleCache = null;
+      await loadAuthorityTitlesAsync();
+    } catch(e) {}
+  }
+  return saved.length ? saved.map(normalizeAuthorityTitleItem) : rows;
+}
+
+async function deleteAuthorityLimitRow(row) {
+  if(row.authority_title_id != null) {
+    await supaFetch('authority_limits', 'DELETE', null, `?authority_title_id=eq.${encodeURIComponent(row.authority_title_id)}&memo_type=eq.${encodeURIComponent(row.memo_type)}`);
+    return;
+  }
+  if(row.title) {
+    await supaFetch('authority_limits', 'DELETE', null, `?title=eq.${encodeURIComponent(row.title)}&memo_type=eq.${encodeURIComponent(row.memo_type)}`);
+  }
+}
+
 async function saveAuthorityLimitsFromDom() {
   const rows = readAuthorityLimitsFromDom();
   if(!rows.length) return;
   if(rows.some(row => row.limit_thb < 0)) throw new Error('Authority limits must be non-negative numbers.');
   if(typeof checkSupa === 'function' && !(await checkSupa())) throw new Error('Supabase is not configured, so authority limits were not saved.');
-  const payload = rows.map(row => ({
-    title: row.title,
-    memo_type: row.memo_type,
-    limit_thb: row.limit_thb,
-  }));
-  await supaFetch('authority_limits', 'POST', payload, '?on_conflict=title,memo_type');
-  if(typeof loadAuthorityAsync === 'function') {
-    window._authorityCache = payload;
+  const latestTitles = authorityTitleMasterRows(loadSettings());
+  const payload = rows.filter(row => row.configured).map(row => {
+    const titleRow = row.authority_title_id != null ? authorityTitleById(row.authority_title_id, latestTitles) : authorityTitleByText(row.title, latestTitles);
+    return {
+      authority_title_id: titleRow?.id ?? row.authority_title_id ?? null,
+      title: titleRow?.title_th || row.title,
+      memo_type: row.memo_type,
+      limit_thb: row.is_unlimited ? 0 : Number(row.limit_thb) || 0,
+      is_unlimited: row.is_unlimited === true,
+    };
+  });
+  for(const row of rows.filter(row => !row.configured && row.existing)) {
+    await deleteAuthorityLimitRow(row);
+  }
+  for(const row of payload) {
+    const existing = findAuthorityLimitForSettings({ id: row.authority_title_id, title_th: row.title }, row.memo_type);
+    if(existing?.authority_title_id != null) {
+      await supaFetch('authority_limits', 'PATCH', {
+        title: row.title,
+        limit_thb: row.limit_thb,
+        is_unlimited: row.is_unlimited,
+      }, `?authority_title_id=eq.${encodeURIComponent(existing.authority_title_id)}&memo_type=eq.${encodeURIComponent(row.memo_type)}`);
+    } else {
+      await supaFetch('authority_limits', 'POST', row, '?on_conflict=title,memo_type');
+    }
   }
   if(typeof _authorityCache !== 'undefined') _authorityCache = payload;
+  if(typeof loadAuthorityAsync === 'function') {
+    try {
+      if(typeof _authorityCache !== 'undefined') _authorityCache = null;
+      await loadAuthorityAsync();
+    } catch(e) {}
+  }
+}
+
+function syncAuthorityLimitUnlimited(input) {
+  const type = input?.dataset?.authorityUnlimited;
+  const row = input?.closest?.('[data-authority-title]');
+  const amount = row?.querySelector?.(`[data-authority-type="${type}"]`);
+  if(amount) {
+    amount.disabled = !!input.checked;
+    if(input.checked) amount.value = '';
+  }
 }
 
 async function readSignatureDataUrl(owner) {
@@ -1713,6 +1943,7 @@ function normalizeMemoProfileForSettings(profile={}) {
     ...profile,
     full_name: String(profile.full_name || profile.name || profile.display_name || '').trim(),
     title: String(profile.title || profile.default_title || '').trim(),
+    default_authority_title_id: profile.default_authority_title_id ?? profile.defaultAuthorityTitleId ?? null,
     name_aliases: aliases,
     is_active: isActive !== false,
     can_review: memoProfileBool(profile.can_review),
@@ -1739,7 +1970,7 @@ function renderMemoProfileRow(profile={}) {
         data-profile-active-field="${esc(isNew ? 'is_active' : normalizedProfile.__settingsActiveField || memoProfileFieldName(rawProfile, 'is_active', 'active'))}">
       <td><span class="settings-profile-id">${isNew ? 'New' : esc(normalizedProfile.id)}</span></td>
       <td><input class="ri" data-profile-field="full_name" value="${esc(normalizedProfile.full_name || '')}" placeholder="Required"></td>
-      <td><input class="ri" data-profile-field="title" value="${esc(normalizedProfile.title || '')}" placeholder="Title"></td>
+      <td><select class="ri" data-profile-field="default_authority_title_id">${authorityTitleSelectOptions(normalizedProfile.default_authority_title_id, normalizedProfile.title)}</select></td>
       <td><input class="ri" data-profile-field="email" value="${esc(settingsNormalizedEmail(normalizedProfile.email))}" placeholder="name@example.com"></td>
       <td><textarea class="ri settings-profile-aliases" data-profile-field="name_aliases" placeholder="Comma or line separated">${esc(memoProfileAliasesText(normalizedProfile))}</textarea></td>
       ${['can_review','can_approve','is_pmo','is_active'].map(field => `
@@ -1812,8 +2043,10 @@ function readMemoProfileRow(row) {
     can_approve: memoProfileBool(field('can_approve')?.checked),
     is_pmo: memoProfileBool(field('is_pmo')?.checked),
   };
+  const titleSelection = resolveAuthorityProfileTitleSelection(field('default_authority_title_id')?.value);
   payload[row.dataset.profileNameField || 'full_name'] = field('full_name')?.value?.trim() || '';
-  payload[row.dataset.profileTitleField || 'title'] = field('title')?.value?.trim() || null;
+  payload.default_authority_title_id = titleSelection.id;
+  payload[row.dataset.profileTitleField || 'title'] = titleSelection.titleTh || null;
   payload[row.dataset.profileAliasesField || 'name_aliases'] = memoProfileAliasesFromText(field('name_aliases')?.value);
   payload[row.dataset.profileActiveField || 'is_active'] = memoProfileBool(field('is_active')?.checked);
   return payload;
@@ -2012,45 +2245,31 @@ async function renderApproverHealthCheck() {
 }
 
 async function hydrateAuthorityLimitsPanel() {
+  try {
+    if(typeof loadAuthorityTitlesAsync === 'function') await loadAuthorityTitlesAsync();
+  } catch(e) {}
+  const titleList = document.getElementById('settings-authority-title-list');
+  const matrixBody = document.querySelector('.settings-memo-table tbody');
+  const titles = authorityTitleMasterRows(loadSettings());
+  if(titleList) titleList.innerHTML = titles.map(renderAuthorityTitleRow).join('');
+  if(matrixBody) matrixBody.innerHTML = titles.map(renderAuthorityLimitTableRow).join('');
+
   if(typeof loadAuthorityAsync !== 'function') {
     SETTINGS_AUTHORITY_LIMITS_BASELINE = authorityLimitsSnapshot();
     return;
   }
   try {
     await loadAuthorityAsync();
-    if(!Array.isArray(loadSettings().authorityTitles)) {
-      const existingTitles = new Set([...document.querySelectorAll('[data-authority-title]')].map(row => row.dataset.authorityTitle).filter(Boolean));
-      const missingTitles = memoApprovalTitleRows(loadSettings()).filter(title => title && !existingTitles.has(title));
-      const matrixBody = document.querySelector('.settings-memo-table tbody');
-      const titleList = document.getElementById('settings-authority-title-list');
-      const titleStart = titleList?.children?.length || 0;
-      missingTitles.forEach((title, index) => {
-        titleList?.insertAdjacentHTML('beforeend', renderAuthorityTitleRow({
-          title_name: title,
-          active: true,
-          sort_order: titleStart + index + 1,
-        }));
-        matrixBody?.insertAdjacentHTML('beforeend', renderAuthorityLimitTableRow(title));
-      });
-    }
-    document.querySelectorAll('[data-authority-title]').forEach(row => {
-      const title = row.dataset.authorityTitle;
-      MEMO_APPROVAL_TYPES.forEach(([type]) => {
-        const input = row.querySelector(`[data-authority-type="${type}"]`);
-        if(input) input.value = authorityLimitInputValue(title, type);
-      });
-    });
+    if(matrixBody) matrixBody.innerHTML = authorityTitleMasterRows(loadSettings()).map(renderAuthorityLimitTableRow).join('');
   } catch(e) {}
   SETTINGS_AUTHORITY_LIMITS_BASELINE = authorityLimitsSnapshot();
 }
 
 async function hydrateMemoApprovalPanel() {
   SETTINGS_SIGNATURE_PENDING_DATA_URL = null;
-  await Promise.all([
-    refreshMemoProfilesPanel(),
-    hydrateAuthorityLimitsPanel(),
-    refreshSignaturePreview(),
-  ]);
+  await hydrateAuthorityLimitsPanel();
+  await refreshMemoProfilesPanel();
+  await refreshSignaturePreview();
   SETTINGS_DIRTY_BASELINE = settingsSnapshot();
   markSettingsDirty();
 }
@@ -2099,7 +2318,7 @@ function collectSettingsFromDom() {
     },
     typeCfg: readTypeCfgFromDom(current.typeCfg),
     memoReasons: readMemoReasonsFromDom(current.memoReasons),
-    authorityTitles: readAuthorityTitlesFromDom(current.authorityTitles),
+    authorityTitles: current.authorityTitles,
     resource: {
       ...current.resource,
       showRequestId: document.getElementById('set-resource-show-id') ? !!document.getElementById('set-resource-show-id').checked : current.resource.showRequestId,
@@ -2178,6 +2397,7 @@ async function saveSettings() {
   let matrixSaveError = '';
   if(SETTINGS_ACTIVE_TAB === 'memo') {
     try {
+      await saveAuthorityTitlesFromDom();
       if(authorityLimitsDirty()) {
         await saveAuthorityLimitsFromDom();
         SETTINGS_AUTHORITY_LIMITS_BASELINE = authorityLimitsSnapshot();
@@ -2197,4 +2417,21 @@ async function saveSettings() {
   renderSettings(SETTINGS_ACTIVE_TAB);
   showSettingsToast(matrixSaveError ? `Settings saved locally. ${matrixSaveError}` : 'Settings saved locally.', matrixSaveError ? 'error' : 'ok');
   return next;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    normalizeAuthorityTitleItem,
+    authorityTitleMasterRows,
+    activeAuthorityTitleRows,
+    authorityTitleSelectOptions,
+    resolveAuthorityProfileTitleSelection,
+    renderAuthorityTitleRow,
+    renderAuthorityLimitTableRow,
+    authorityLimitStateValue,
+    readAuthorityTitlesFromDom,
+    readAuthorityLimitsFromDom,
+    normalizeMemoProfileForSettings,
+    renderMemoProfileRow,
+  };
 }
