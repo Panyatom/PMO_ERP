@@ -529,8 +529,10 @@ function collectMemoData() {
     // No FX conversion: THB and USD amounts are never converted into one another.
     currency: val('#f-currency') || 'THB',
     reviewerName: revName || '-', reviewerTitle: revTitle || '-',
+    reviewerAuthorityTitleId: approversArr[0]?.authorityTitleId || null,
     reviewerDate: dateInput(val('#f-signdate')) || TODAY,
     approverName: apprName || '-', approverTitle: apprTitle || '-',
+    approverAuthorityTitleId: approversArr[1]?.authorityTitleId || null,
     approverDate: dateInput(val('#f-signdate')) || TODAY,
     // Build approvers chain from dynamic rows
     approvers: approversArr,
@@ -1043,6 +1045,7 @@ function normalizeProfile(profile={}) {
     id: profile?.id ?? null,
     name: String(profile?.full_name || profile?.name || profile?.display_name || '').trim(),
     title: String(profile?.title || profile?.default_title || '').trim(),
+    defaultAuthorityTitleId: profile?.default_authority_title_id ?? profile?.defaultAuthorityTitleId ?? null,
     aliases,
     active: profile?.is_active != null ? profile.is_active !== false : profile?.active !== false,
     canReview: profile?.can_review != null ? profile.can_review === true : (profile?.canReview === true || profile?.is_approver === true),
@@ -1070,7 +1073,17 @@ function memoProfileSourceRows() {
 }
 
 function memoProfileDefaultTitle(profile) {
-  return normalizeProfile(profile).title;
+  const normalized = normalizeProfile(profile);
+  const authorityTitle = memoAuthorityTitleById(normalized.defaultAuthorityTitleId);
+  return authorityTitle?.titleTh || normalized.title;
+}
+
+function memoProfileDefaultAuthorityTitleId(profile) {
+  const normalized = normalizeProfile(profile);
+  const directId = Number(normalized.defaultAuthorityTitleId);
+  if(Number.isFinite(directId) && directId > 0) return directId;
+  const title = memoAuthorityTitleByText(normalized.title);
+  return title?.id ?? null;
 }
 
 function memoProfileName(profile) {
@@ -1114,20 +1127,86 @@ function getProfileTitleByName(name) {
   return memoProfileDefaultTitle(memoFindProfileByName(name));
 }
 
+function memoAuthorityTitleRows() {
+  const source = (typeof _authorityTitleCache !== 'undefined' && Array.isArray(_authorityTitleCache))
+    ? _authorityTitleCache
+    : (Array.isArray(globalThis?._authorityTitleCache) ? globalThis._authorityTitleCache : []);
+  const settings = typeof loadSettings === 'function' ? loadSettings() : null;
+  const fallback = !source.length && Array.isArray(settings?.authorityTitles) ? settings.authorityTitles : [];
+  return (source.length ? source : fallback)
+    .map((row, index) => ({
+      id: row?.id != null ? Number(row.id) : (row?.authority_title_id != null ? Number(row.authority_title_id) : null),
+      titleTh: String(row?.titleTh || row?.title_th || row?.title_name || row?.title || '').trim(),
+      titleEn: String(row?.titleEn || row?.title_en || '').trim(),
+      sortOrder: Math.max(1, Math.floor(Number(row?.sortOrder || row?.sort_order || index + 1))),
+      isActive: row?.isActive != null ? row.isActive !== false : (row?.is_active != null ? row.is_active !== false : row?.active !== false),
+    }))
+    .filter(row => row.titleTh)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.titleTh.localeCompare(b.titleTh));
+}
+
+function memoActiveAuthorityTitleRows() {
+  return memoAuthorityTitleRows().filter(row => row.isActive !== false);
+}
+
+function memoAuthorityTitleById(id) {
+  const n = Number(id);
+  if(!Number.isFinite(n) || n <= 0) return null;
+  return memoAuthorityTitleRows().find(row => row.id != null && Number(row.id) === n) || null;
+}
+
+function memoAuthorityTitleByText(title) {
+  const text = String(title || '').trim().toLowerCase();
+  if(!text) return null;
+  return memoAuthorityTitleRows().find(row => row.titleTh.toLowerCase() === text || row.titleEn.toLowerCase() === text) || null;
+}
+
+function memoAuthorityTitleOptionValue(row) {
+  return row?.id != null ? String(row.id) : `title:${row.titleTh}`;
+}
+
+function resolveMemoAuthorityTitleSelection(raw, legacyTitle='') {
+  const value = String(raw || '').trim();
+  if(!value && !legacyTitle) return { id: null, title: '' };
+  if(value.startsWith('legacy:')) return { id: null, title: value.slice(7) };
+  if(value.startsWith('title:')) {
+    const title = value.slice(6);
+    const row = memoAuthorityTitleByText(title);
+    return { id: row?.id ?? null, title: row?.titleTh || title };
+  }
+  const byId = memoAuthorityTitleById(value);
+  if(byId) return { id: byId.id, title: byId.titleTh };
+  const byText = memoAuthorityTitleByText(value || legacyTitle);
+  if(byText) return { id: byText.id, title: byText.titleTh };
+  return { id: null, title: value || String(legacyTitle || '').trim() };
+}
+
+function memoAuthorityTitleSelectOptions(selectedId=null, legacyTitle='') {
+  const activeRows = memoActiveAuthorityTitleRows();
+  const selectedRow = memoAuthorityTitleById(selectedId) || memoAuthorityTitleByText(legacyTitle);
+  const seen = new Set();
+  const options = ['<option value="">— ตำแหน่ง —</option>'];
+  const addRow = (row, suffix='') => {
+    if(!row?.titleTh) return;
+    const value = memoAuthorityTitleOptionValue(row);
+    if(seen.has(value)) return;
+    seen.add(value);
+    const selected = selectedRow && ((row.id != null && selectedRow.id != null && Number(row.id) === Number(selectedRow.id)) || row.titleTh === selectedRow.titleTh);
+    options.push(`<option value="${esc(value)}" data-authority-title-id="${esc(row.id ?? '')}" data-title="${esc(row.titleTh)}" ${selected?'selected':''}>${esc(row.titleTh)}${suffix}</option>`);
+  };
+  activeRows.forEach(row => addRow(row));
+  if(selectedRow && selectedRow.isActive === false) addRow(selectedRow, ' / Inactive');
+  const legacy = String(legacyTitle || '').trim();
+  if(legacy && !selectedRow) {
+    options.push(`<option value="legacy:${esc(legacy)}" selected>${esc(legacy)} / Legacy</option>`);
+  }
+  return options.join('');
+}
+
 function memoAuthorityTitleOptions() {
-  const s = typeof loadSettings === 'function' ? loadSettings() : null;
-  const configured = Array.isArray(s?.authorityTitles)
-    ? s.authorityTitles
-      .map((item, index) => ({
-        title_name: String(item?.title_name || item?.name || item?.title || '').trim(),
-        active: item?.active !== false && item?.is_active !== false,
-        sort_order: Math.max(1, Math.floor(Number(item?.sort_order || item?.sortOrder || index + 1))),
-      }))
-      .filter(item => item.title_name && item.active)
-      .sort((a, b) => a.sort_order - b.sort_order || a.title_name.localeCompare(b.title_name))
-      .map(item => item.title_name)
-    : [];
+  const configured = memoActiveAuthorityTitleRows().map(row => row.titleTh);
   if(configured.length) return [...new Set(configured)];
+  const s = typeof loadSettings === 'function' ? loadSettings() : null;
   const profileTitles = (typeof getApprovers === 'function' ? [...getApprovers('review'), ...getApprovers('approve')] : [])
     .map(memoProfileDefaultTitle)
     .filter(Boolean);
@@ -1164,13 +1243,17 @@ function approvalRowLabel(index) {
 
 function normalizeApprovalRow(row={}, index=0) {
   const name = String(row?.name || row?.full_name || row?.reviewerName || row?.reviewer_name || row?.approverName || row?.approver_name || '').trim();
-  const title = String(row?.title || row?.default_title || row?.reviewerTitle || row?.reviewer_title || row?.approverTitle || row?.approver_title || '').trim();
+  const legacyTitle = String(row?.authorityTitle || row?.authority_title || row?.title || row?.default_title || row?.reviewerTitle || row?.reviewer_title || row?.approverTitle || row?.approver_title || '').trim();
   const profile = memoFindProfileByName(name);
+  const explicitAuthorityId = row?.authorityTitleId ?? row?.authority_title_id ?? row?.default_authority_title_id ?? null;
+  const authorityTitle = memoAuthorityTitleById(explicitAuthorityId) || memoAuthorityTitleByText(legacyTitle);
+  const title = authorityTitle?.titleTh || legacyTitle;
   const profileId = row?.profileId ?? row?.profile_id ?? profile?.id ?? null;
   return {
     profileId,
     name,
     title,
+    authorityTitleId: authorityTitle?.id ?? (explicitAuthorityId != null && Number.isFinite(Number(explicitAuthorityId)) ? Number(explicitAuthorityId) : null),
     status: row?.status || 'pending',
     approvedAt: row?.approvedAt || row?.approved_at || null,
     approvedBy: row?.approvedBy || row?.approved_by || null,
@@ -1185,15 +1268,14 @@ function approvalOptionsForStage(stage) {
 function approvalNameOptionsHtml(selected = '', stage = 'approve') {
   const options = approvalOptionsForStage(stage);
   return `<option value="">— เลือกชื่อ Approver —</option>` + options.map(profile => {
+    const authorityTitleId = memoProfileDefaultAuthorityTitleId(profile);
     const value = profile.name;
-    return `<option value="${esc(value)}" data-profile-id="${profile.id || ''}" data-title="${esc(profile.title)}" ${value===selected?'selected':''}>${esc(value)}</option>`;
+    return `<option value="${esc(value)}" data-profile-id="${profile.id || ''}" data-title="${esc(memoProfileDefaultTitle(profile))}" data-authority-title-id="${esc(authorityTitleId || '')}" ${value===selected?'selected':''}>${esc(value)}</option>`;
   }).join('');
 }
 
-function approvalTitleOptionsHtml(selected = '') {
-  const titles = memoAuthorityTitleOptions();
-  return `<option value="">— ตำแหน่ง —</option>` +
-    titles.map(title => `<option value="${esc(title)}" ${title===selected?'selected':''}>${esc(title)}</option>`).join('');
+function approvalTitleOptionsHtml(selected = '', selectedAuthorityTitleId = null) {
+  return memoAuthorityTitleSelectOptions(selectedAuthorityTitleId, selected);
 }
 
 function getApprovalRowsFromForm() {
@@ -1201,13 +1283,15 @@ function getApprovalRowsFromForm() {
     const nameSel = row.querySelector('.appr-name-sel');
     const titleSel = row.querySelector('.appr-title-sel');
     const name = String(nameSel?.value || '').trim();
-    const title = String(titleSel?.value || titleSel?.dataset?.autofill || '').trim();
+    const selectedTitle = resolveMemoAuthorityTitleSelection(titleSel?.value, titleSel?.dataset?.autofill || '');
+    const title = selectedTitle.title;
     const profile = memoFindProfileByName(name);
     const selectedProfileId = Number(nameSel?.selectedOptions?.[0]?.dataset?.profileId);
     return normalizeApprovalRow({
       profileId: profile?.id || (Number.isFinite(selectedProfileId) && selectedProfileId > 0 ? selectedProfileId : null),
       name,
       title,
+      authorityTitleId: selectedTitle.id,
       status: row.dataset.approvalStatus || 'pending',
       approvedAt: row.dataset.approvedAt || null,
       approvedBy: row.dataset.approvedBy || null,
@@ -1223,16 +1307,19 @@ function normalizeDraftApprovalRows(memo={}) {
       profileId: memo.reviewerProfileId || memo.reviewer_profile_id || null,
       name: memo.reviewerName || memo.reviewer_name,
       title: memo.reviewerTitle || memo.reviewer_title,
+      authorityTitleId: memo.reviewerAuthorityTitleId || memo.reviewer_authority_title_id || null,
     },
     {
       profileId: memo.approverProfileId || memo.approver_profile_id || null,
       name: memo.approverName || memo.approver_name,
       title: memo.approverTitle || memo.approver_title,
+      authorityTitleId: memo.approverAuthorityTitleId || memo.approver_authority_title_id || null,
     },
     {
       profileId: memo.approver2ProfileId || memo.approver2_profile_id || memo.approver3ProfileId || memo.approver3_profile_id || null,
       name: memo.approver2Name || memo.approver2_name || memo.approver3Name || memo.approver3_name || memo.a3Name,
       title: memo.approver2Title || memo.approver2_title || memo.approver3Title || memo.approver3_title || memo.a3Title,
+      authorityTitleId: memo.approver2AuthorityTitleId || memo.approver2_authority_title_id || memo.approver3AuthorityTitleId || memo.approver3_authority_title_id || null,
     },
   ]).filter(row => row.name !== '-' || row.title !== '-');
 }
@@ -1259,16 +1346,20 @@ function applyApprovalRowState(rowEl, state={}, index=0) {
     nameSel.dataset.lastPerson = row.name || '';
   }
   if(titleSel) {
-    titleSel.innerHTML = approvalTitleOptionsHtml(row.title);
-    if(row.title && ![...titleSel.options].some(option => option.value === row.title)) {
-      ensureCreateMemoSelectOption(titleSel, row.title);
+    titleSel.innerHTML = approvalTitleOptionsHtml(row.title, row.authorityTitleId);
+    const titleValue = row.authorityTitleId != null ? String(row.authorityTitleId) : (memoAuthorityTitleByText(row.title) ? memoAuthorityTitleOptionValue(memoAuthorityTitleByText(row.title)) : `legacy:${row.title}`);
+    if(row.title && ![...titleSel.options].some(option => option.value === titleValue)) {
+      ensureCreateMemoSelectOption(titleSel, titleValue, { authorityTitleId: row.authorityTitleId || '', title: row.title });
+      const added = [...titleSel.options].find(option => option.value === titleValue);
+      if(added) added.textContent = row.title;
       if(titleWarning) {
         titleWarning.textContent = `ตำแหน่งเดิม ('${row.title}') ไม่อยู่ในรายชื่อปัจจุบัน แต่ถูกคืนค่าจาก Draft แล้ว`;
         titleWarning.style.display = '';
       }
     }
-    titleSel.value = row.title || '';
+    titleSel.value = row.title ? titleValue : '';
     titleSel.dataset.autofill = row.title || getProfileTitleByName(row.name) || '';
+    titleSel.dataset.authorityTitleId = row.authorityTitleId || '';
     titleSel.dataset.manual = row.title ? 'true' : 'false';
   }
 }
@@ -1345,7 +1436,7 @@ function _appendApproverRow(isFirst, state={}) {
       </div>
       <div class="fg">
         <label>ตำแหน่ง${isFirst ? ' *' : ''}</label>
-        <select class="ri appr-title-sel" onchange="onApproverTitleChange(this)" style="margin-top:3px">${_approverTitleOpts(rowState.title, stage)}</select>
+        <select class="ri appr-title-sel" onchange="onApproverTitleChange(this)" style="margin-top:3px">${approvalTitleOptionsHtml(rowState.title, rowState.authorityTitleId)}</select>
         <div class="appr-title-warning" role="alert" style="display:none;margin-top:6px;font-size:11px;line-height:1.4;color:#A32D2D;background:#FCEBEB;border-radius:4px;padding:6px 8px"></div>
       </div>
     </div>`;
@@ -1385,22 +1476,30 @@ function onApproverNameChange(sel) {
   const row = sel.closest('.appr-form-row');
   const nameWarning = row?.querySelector('.appr-name-warning');
   if(sel.value && nameWarning) { nameWarning.style.display = 'none'; nameWarning.textContent = ''; }
-  // Auto-fill title from user_profiles when name is selected
+  // Auto-fill authority title from user_profiles when name is selected.
   if(sel.value) {
     const user = memoFindProfileByName(sel.value);
     const titleSel = row?.querySelector('.appr-title-sel');
     const titleWarning = row?.querySelector('.appr-title-warning');
-    const userTitle = memoProfileDefaultTitle(user) || String(sel.selectedOptions?.[0]?.dataset?.title || '').trim();
-    const previousPerson = sel.dataset.lastPerson || '';
-    const personChanged = previousPerson !== sel.value;
-    if(userTitle && titleSel && (personChanged || titleSel.dataset.manual !== 'true')) {
-      ensureCreateMemoSelectOption(titleSel, userTitle);
+    const defaultAuthorityTitleId = memoProfileDefaultAuthorityTitleId(user) || Number(sel.selectedOptions?.[0]?.dataset?.authorityTitleId) || null;
+    const defaultTitleRow = memoAuthorityTitleById(defaultAuthorityTitleId);
+    const userTitle = defaultTitleRow?.titleTh || memoProfileDefaultTitle(user) || String(sel.selectedOptions?.[0]?.dataset?.title || '').trim();
+    if(titleSel) {
+      titleSel.innerHTML = approvalTitleOptionsHtml(userTitle, defaultAuthorityTitleId);
+      const selectedValue = defaultTitleRow ? memoAuthorityTitleOptionValue(defaultTitleRow) : (memoAuthorityTitleByText(userTitle) ? memoAuthorityTitleOptionValue(memoAuthorityTitleByText(userTitle)) : `legacy:${userTitle}`);
+      if(userTitle && ![...titleSel.options].some(option => option.value === selectedValue)) {
+        ensureCreateMemoSelectOption(titleSel, selectedValue, { authorityTitleId: defaultAuthorityTitleId || '', title: userTitle });
+        const added = [...titleSel.options].find(option => option.value === selectedValue);
+        if(added) added.textContent = userTitle;
+      }
+      titleSel.value = userTitle ? selectedValue : '';
       if(titleWarning) { titleWarning.style.display = 'none'; titleWarning.textContent = ''; }
       titleSel.dataset.autofill = userTitle;
+      titleSel.dataset.authorityTitleId = defaultAuthorityTitleId || '';
       titleSel.dataset.manual = 'false';
     }
     sel.dataset.lastPerson = sel.value;
-    _updateApproverAuthorityHint(row, sel.value, userTitle || titleSel?.value || '');
+    _updateApproverAuthorityHint(row);
   }
   updateSelfA1Notice();
 }
@@ -1424,14 +1523,15 @@ function onApproverTitleChange(sel) {
   const titleWarning = row?.querySelector('.appr-title-warning');
   if(sel.value && titleWarning) { titleWarning.style.display = 'none'; titleWarning.textContent = ''; }
   sel.dataset.manual = 'true';
+  const selected = resolveMemoAuthorityTitleSelection(sel.value, sel.dataset.autofill || '');
+  sel.dataset.autofill = selected.title || '';
+  sel.dataset.authorityTitleId = selected.id || '';
   // Update authority hint when title changes manually
-  const nameSel = row?.querySelector('.appr-name-sel');
-  const name = nameSel?.value||'';
-  _updateApproverAuthorityHint(row, name, sel.value);
+  _updateApproverAuthorityHint(row);
 }
 
 // Show authority limit hint per approver row
-function _updateApproverAuthorityHint(row, name, title) {
+function _updateApproverAuthorityHint(row) {
   if(!row) return;
   let hint = row.querySelector('.appr-authority-hint');
   if(!hint) {
@@ -1440,30 +1540,41 @@ function _updateApproverAuthorityHint(row, name, title) {
     hint.style.cssText = 'font-size:10px;margin-top:5px;padding:4px 8px;border-radius:4px';
     row.appendChild(hint);
   }
-  if(!title) { hint.style.display='none'; return; }
   const rowIdx = [...document.querySelectorAll('#approver-rows-form .appr-form-row')].indexOf(row);
   if(rowIdx === 0) { hint.style.display='none'; return; } // A1 reviewer — no authority check needed
+  const titleSel = row.querySelector('.appr-title-sel');
+  const selectedTitle = resolveMemoAuthorityTitleSelection(titleSel?.value, titleSel?.dataset?.autofill || '');
+  const title = selectedTitle.title;
+  if(!title) { hint.style.display='none'; return; }
   // Get current memo total for warning
   const totalEl = document.getElementById('sl-total')||document.getElementById('hw-total')||
                   document.getElementById('int-total')||document.getElementById('ent-total')||
                   document.getElementById('dep-total');
   const totalText = totalEl?.textContent?.replace(/[฿,]/g,'')||'0';
   const total = parseFloat(totalText)||0;
-  const limit = typeof getAuthorityLimit==='function' ? getAuthorityLimit(title, selectedType||'sl') : 0;
-  if(limit===0 && selectedType==='int') {
+  const resolved = typeof resolveAuthorityLimit === 'function'
+    ? resolveAuthorityLimit(selectedTitle.id || title, selectedType || 'sl')
+    : { configured:false, limitThb:0, isUnlimited:false };
+  if(!resolved.configured) {
     hint.style.cssText='font-size:10px;margin-top:5px;padding:4px 8px;border-radius:4px;background:#E6F1FB;color:#185FA5';
     hint.style.display='';
-    hint.textContent=`ℹ ${title} — INT memo ไม่ระบุวงเงินใน Policy`;
-  } else if(limit>0 && total>limit) {
-    hint.style.cssText='font-size:10px;margin-top:5px;padding:4px 8px;border-radius:4px;background:#FCEBEB;color:#A32D2D';
-    hint.style.display='';
-    hint.textContent=`⚠ วงเงินของ ${title}: ${limit.toLocaleString('th-TH')} ฿ — ยอด Memo (${total.toLocaleString('th-TH')} ฿) เกิน · ยัง submit ได้ แต่ Approver อาจไม่อนุมัติ`;
-  } else if(limit>0) {
+    hint.textContent=`${title} — ยังไม่ได้กำหนดวงเงินสำหรับ Memo ประเภทนี้`;
+  } else if(resolved.isUnlimited) {
     hint.style.cssText='font-size:10px;margin-top:5px;padding:4px 8px;border-radius:4px;background:#EAF3DE;color:#27500A';
     hint.style.display='';
-    hint.textContent=`✓ วงเงินของ ${title}: ${limit.toLocaleString('th-TH')} ฿`;
+    hint.textContent=`${title} — อนุมัติได้ไม่จำกัดวงเงิน`;
+  } else if(Number(resolved.limitThb) === 0) {
+    hint.style.cssText='font-size:10px;margin-top:5px;padding:4px 8px;border-radius:4px;background:#E6F1FB;color:#185FA5';
+    hint.style.display='';
+    hint.textContent=`${title} — กำหนดวงเงินไว้ที่ 0 ฿`;
+  } else if(total > Number(resolved.limitThb)) {
+    hint.style.cssText='font-size:10px;margin-top:5px;padding:4px 8px;border-radius:4px;background:#FCEBEB;color:#A32D2D';
+    hint.style.display='';
+    hint.textContent=`วงเงินของ ${title}: ${Number(resolved.limitThb).toLocaleString('th-TH')} ฿ — ยอด Memo (${total.toLocaleString('th-TH')} ฿) เกิน`;
   } else {
-    hint.style.display='none';
+    hint.style.cssText='font-size:10px;margin-top:5px;padding:4px 8px;border-radius:4px;background:#EAF3DE;color:#27500A';
+    hint.style.display='';
+    hint.textContent=`วงเงินของ ${title}: ${Number(resolved.limitThb).toLocaleString('th-TH')} ฿`;
   }
 }
 
@@ -1849,4 +1960,25 @@ function populateMemoTypeDetail(memo) {
       });
     }
   }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    memoAuthorityTitleRows,
+    memoActiveAuthorityTitleRows,
+    memoAuthorityTitleById,
+    memoAuthorityTitleByText,
+    memoAuthorityTitleSelectOptions,
+    resolveMemoAuthorityTitleSelection,
+    memoProfileDefaultTitle,
+    memoProfileDefaultAuthorityTitleId,
+    normalizeApprovalRow,
+    normalizeDraftApprovalRows,
+    getApprovalRowsFromForm,
+    approvalNameOptionsHtml,
+    approvalTitleOptionsHtml,
+    onApproverNameChange,
+    onApproverTitleChange,
+    _updateApproverAuthorityHint,
+  };
 }
