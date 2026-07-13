@@ -999,10 +999,8 @@ function _ovBuildMonths() {
 function _ovInitState() {
   if (_ov.initialized) return;
   _ov.initialized = true;
-  const records = loadActualSpendRecords();
-  const projKeys = [...new Set(records.map(record => record.project || '(ไม่ระบุ)'))].sort();
-  _ov.activeProjKeys = new Set(projKeys);
-  _ov.activeTypeKeys = new Set([...new Set(records.map(record => SPEND_TYPE_TO_MEMO_TYPE[record.spendType]).filter(Boolean))]);
+  _ov.activeProjKeys = new Set();
+  _ov.activeTypeKeys = new Set();
   _ovApplyPresetIdxs(12);
 }
 
@@ -1087,40 +1085,104 @@ function ovSetGroup(g) {
     b.style.background = active ? 'var(--blue)' : 'transparent';
     b.style.color      = active ? '#fff' : 'var(--text-2)';
   });
-  // Hide type chips when grouping by project
-  const typeCol = document.getElementById('ov-type-col');
-  if (typeCol) typeCol.style.display = g === 'type' ? '' : 'none';
+  // Hide type filter when grouping by project
+  const typeMenu = document.querySelector('#ov-breakdown-filters .ov-filter-menu[data-kind="type"]');
+  if (typeMenu) typeMenu.style.display = g === 'type' ? '' : 'none';
   _ovRenderChart();
 }
 
-// ── Chip toggles ──
+// ── Overview filters ──
+function _ovFilterOptions() {
+  const records = loadActualSpendRecords();
+  return {
+    project: [...new Set(records.map(record => record.project || '(ไม่ระบุ)'))].sort(),
+    type: [...new Set(records.map(record => SPEND_TYPE_TO_MEMO_TYPE[record.spendType]).filter(Boolean))],
+  };
+}
+function _ovEffectiveProjKeys() {
+  return _ov.activeProjKeys.size ? [..._ov.activeProjKeys] : _ovFilterOptions().project;
+}
+function _ovEffectiveTypeKeys() {
+  return _ov.activeTypeKeys.size ? [..._ov.activeTypeKeys] : _ovFilterOptions().type;
+}
+function _ovApplyFilterChange() {
+  _ovRenderChips(); _ovUpdateKPIs(); _ovRenderChart(); _ovRenderBvA();
+}
+function ovCloseFilterMenus() {
+  document.querySelectorAll('#ov-breakdown-filters .ov-filter-menu.open').forEach(el => el.classList.remove('open'));
+}
+function ovKeepFilterMenuOpen(kind) {
+  document.querySelector(`#ov-breakdown-filters .ov-filter-menu[data-kind="${kind}"]`)?.classList.add('open');
+}
+function ovToggleFilterMenu(kind, ev) {
+  ev?.stopPropagation();
+  const menu = document.querySelector(`#ov-breakdown-filters .ov-filter-menu[data-kind="${kind}"]`);
+  const open = menu?.classList.contains('open');
+  ovCloseFilterMenus();
+  if (menu && !open) menu.classList.add('open');
+}
+function ovSetFilterValue(kind, value, checked) {
+  const set = kind === 'project' ? _ov.activeProjKeys : _ov.activeTypeKeys;
+  checked ? set.add(value) : set.delete(value);
+  _ovApplyFilterChange();
+  ovKeepFilterMenuOpen(kind);
+}
+function ovClearFilter(kind) {
+  if (kind === 'project') _ov.activeProjKeys = new Set();
+  if (kind === 'type') _ov.activeTypeKeys = new Set();
+  _ovApplyFilterChange();
+  ovKeepFilterMenuOpen(kind);
+}
+function ovSelectAllFilter(kind) {
+  const options = _ovFilterOptions();
+  if (kind === 'project') _ov.activeProjKeys = new Set(options.project);
+  if (kind === 'type') _ov.activeTypeKeys = new Set(options.type);
+  _ovApplyFilterChange();
+  ovKeepFilterMenuOpen(kind);
+}
 function ovToggleProj(k) {
   if (_ov.activeProjKeys.has(k)) { if (_ov.activeProjKeys.size > 1) _ov.activeProjKeys.delete(k); }
   else _ov.activeProjKeys.add(k);
   _ovRenderChips(); _ovUpdateKPIs(); _ovRenderChart(); _ovRenderBvA();
 }
-function ovToggleType(k) {
-  if (_ov.activeTypeKeys.has(k)) { if (_ov.activeTypeKeys.size > 1) _ov.activeTypeKeys.delete(k); }
-  else _ov.activeTypeKeys.add(k);
-  _ovRenderChips(); _ovUpdateKPIs(); _ovRenderChart(); _ovRenderBvA();
-}
 
-// ── Chips ──
 function _ovRenderChips() {
   const records = loadActualSpendRecords();
-  const projKeys = [...new Set(records.map(record => record.project || '(ไม่ระบุ)'))].sort();
-  const typeKeys = [...new Set(records.map(record => SPEND_TYPE_TO_MEMO_TYPE[record.spendType]).filter(Boolean))];
-  const chip = (label, on, onclick) =>
-    `<span onclick="${onclick}" style="display:inline-flex;align-items:center;font-size:11px;padding:4px 11px;border-radius:20px;cursor:pointer;user-select:none;margin-bottom:3px;transition:all 0.12s;border:0.5px solid ${on ? 'transparent' : 'var(--border)'};background:${on ? 'var(--blue)' : 'transparent'};color:${on ? '#fff' : 'var(--text-2)'}">${label}</span>`;
-
-  const projChips = document.getElementById('ov-proj-chips');
-  if (projChips) projChips.innerHTML = projKeys.map(k => chip(esc(k), _ov.activeProjKeys.has(k), `ovToggleProj('${esc(k)}')`)).join('');
-
-  const typeChips = document.getElementById('ov-type-chips');
-  if (typeChips) typeChips.innerHTML = typeKeys.map(k => chip(BGT_TYPE_LABELS[k], _ov.activeTypeKeys.has(k), `ovToggleType('${k}')`)).join('');
-
-  const tc = document.getElementById('ov-type-count');
-  if (tc) tc.textContent = _ov.activeTypeKeys.size === typeKeys.length ? '(all)' : `(${_ov.activeTypeKeys.size}/${typeKeys.length})`;
+  const filterEl = document.getElementById('ov-breakdown-filters');
+  if (!filterEl) return;
+  const options = _ovFilterOptions();
+  const defs = [
+    { kind:'project', label:'Project', values:options.project, selected:_ov.activeProjKeys, display:value => value, count:value => records.filter(record => (record.project || '(ไม่ระบุ)') === value).length },
+    { kind:'type', label:'Type', values:options.type, selected:_ov.activeTypeKeys, display:value => BGT_TYPE_LABELS[value] || value, count:value => records.filter(record => SPEND_TYPE_TO_MEMO_TYPE[record.spendType] === value).length },
+  ];
+  filterEl.innerHTML = defs.map(def => {
+    const allActive = !def.selected.size || def.selected.size === def.values.length;
+    const summary = allActive ? `${def.label} All` : `${def.label} ${def.selected.size} selected`;
+    const rows = def.values.map(value => {
+      const on = def.selected.has(value);
+      const safeValue = esc(JSON.stringify(String(value)));
+      return `
+        <label class="ov-filter-option">
+          <input type="checkbox" data-value="${esc(String(value))}" ${on?'checked':''} onchange="ovSetFilterValue('${def.kind}', ${safeValue}, this.checked)">
+          <span>${esc(def.display(value))}</span>
+          <em>${def.count(value)}</em>
+        </label>`;
+    }).join('');
+    return `
+      <div class="ov-filter-menu" data-kind="${def.kind}" onclick="event.stopPropagation()" style="${def.kind === 'type' && _ov.groupBy !== 'type' ? 'display:none' : ''}">
+        <button class="ov-filter-trigger" onclick="ovToggleFilterMenu('${def.kind}', event)" type="button">
+          <span>${esc(summary)}</span>
+          <b onclick="${def.selected.size ? `event.stopPropagation();ovClearFilter('${def.kind}')` : ''}">${def.selected.size ? '&times;' : '&#9662;'}</b>
+        </button>
+        <div class="ov-filter-popover">
+          <div class="ov-filter-actions">
+            <button type="button" onclick="ovSelectAllFilter('${def.kind}')">Select all</button>
+            <button type="button" onclick="ovClearFilter('${def.kind}')">Clear</button>
+          </div>
+          <div class="ov-filter-options">${rows || '<div class="ov-filter-empty">No values</div>'}</div>
+        </div>
+      </div>`;
+  }).join('');
 }
 
 // Canonical Budget vs Actual dataset for Overview's Budget/Remaining/Utilization figures. Reads
@@ -1141,8 +1203,8 @@ function _ovUpdateKPIs() {
   const numMonths = months.length;
   const fromKey   = months[0]?.key;
   const toKey     = months[months.length - 1]?.key;
-  const projArr   = [..._ov.activeProjKeys];
-  const typeArr   = [..._ov.activeTypeKeys];
+  const projArr   = _ovEffectiveProjKeys();
+  const typeArr   = _ovEffectiveTypeKeys();
 
   const records = loadActualSpendRecords().filter(record =>
     projArr.includes(record.project || '(ไม่ระบุ)') && typeArr.includes(SPEND_TYPE_TO_MEMO_TYPE[record.spendType])
@@ -1207,8 +1269,8 @@ function _ovRenderChart() {
 
   const months   = _ov.allMonths.slice(_ov.fromIdx, _ov.toIdx + 1);
   const labels   = months.map(m => m.label);
-  const typeKeys = [..._ov.activeTypeKeys];
-  const projKeys = [..._ov.activeProjKeys];
+  const typeKeys = _ovEffectiveTypeKeys();
+  const projKeys = _ovEffectiveProjKeys();
   const records = loadActualSpendRecords().filter(record =>
     projKeys.includes(record.project || '(ไม่ระบุ)') && typeKeys.includes(SPEND_TYPE_TO_MEMO_TYPE[record.spendType])
   );
@@ -1316,7 +1378,7 @@ function _ovRenderBvA() {
   const fromKey   = months[0]?.key;
   const toKey     = months[months.length - 1]?.key;
   const numMonths = months.length;
-  const projKeys  = [..._ov.activeProjKeys];
+  const projKeys  = _ovEffectiveProjKeys();
   // Canonical Budget Pool totals per project (TD-7A-03) — replaces the legacy loadSLBudgets() store.
   const poolBudgetByProject = new Map();
   _ovCanonicalDataset().rows.forEach(row => {
@@ -1325,7 +1387,7 @@ function _ovRenderBvA() {
 
   // Render BvA project chips
   const canonical = loadActualSpendRecords();
-  const typeKeys = [..._ov.activeTypeKeys];
+  const typeKeys = _ovEffectiveTypeKeys();
   const allProjKeys = [...new Set(canonical.map(record => record.project || '(ไม่ระบุ)'))].sort();
   const bvaChips = document.getElementById('ov-bva-proj-chips');
   if (bvaChips) {
@@ -4478,6 +4540,13 @@ function deleteBudgetPool(id) {
       console.warn('Pool delete error:', e);
       alert('ไม่สามารถลบ Budget Pool ได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่');
     });
+}
+
+if (typeof document !== 'undefined' && typeof window !== 'undefined' && !window.__ovFilterOutsideClickBound) {
+  window.__ovFilterOutsideClickBound = true;
+  document.addEventListener('click', e => {
+    if (!e.target.closest?.('#ov-breakdown-filters .ov-filter-menu')) ovCloseFilterMenus();
+  });
 }
 
 if (typeof module !== 'undefined' && module.exports) {

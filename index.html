@@ -886,6 +886,24 @@ body {
 .filter-toolbar .ms-trigger,
 .actual-spend-toolbar .ms-trigger { width: 100%; min-width: 0; max-width: none; height: 38px; min-height: 38px; box-sizing: border-box; padding: 7px 10px; }
 .filter-toolbar .pmo-select-trigger { height: 38px; min-height: 38px; padding: 7px 10px; font-weight: 500; }
+.ov-filter-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.ov-filter-menu{position:relative}
+.ov-filter-trigger{display:inline-flex;align-items:center;justify-content:space-between;gap:10px;min-width:150px;height:38px;padding:0 12px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface);color:var(--text);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.ov-filter-trigger span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-filter-trigger b{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--text-3);font-size:13px;line-height:1}
+.ov-filter-menu.open .ov-filter-trigger{border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 14%,transparent)}
+.ov-filter-popover{display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:45;width:260px;max-width:78vw;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);box-shadow:0 14px 34px rgba(15,23,42,.18);overflow:hidden}
+.ov-filter-menu.open .ov-filter-popover{display:block}
+.ov-filter-actions{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid var(--border);background:var(--bg)}
+.ov-filter-actions button{border:0;background:transparent;color:var(--blue);font-family:inherit;font-size:11px;font-weight:800;cursor:pointer}
+.ov-filter-options{max-height:246px;overflow:auto;padding:5px}
+.ov-filter-option{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:7px;padding:7px;border-radius:6px;font-size:12px;cursor:pointer;transition:background .16s ease,transform .16s ease,color .16s ease}
+.ov-filter-option:hover{background:var(--bg);transform:translateY(-1px)}
+.ov-filter-option input{width:14px;height:14px;accent-color:var(--blue);transition:transform .16s ease,box-shadow .18s ease}
+.ov-filter-option input:checked{transform:scale(1.08);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 16%,transparent)}
+.ov-filter-option span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-filter-option em{font-style:normal;color:var(--text-3);font-size:11px}
+.ov-filter-empty{padding:12px;color:var(--text-3);font-size:12px;text-align:center}
 .filter-range { display: contents; }
 .filter-checkbox {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1693,12 +1711,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
                 </div>
               </div>
             </div>
-            <div style="font-size:10px;font-weight:500;color:var(--text-3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em">Filter by project</div>
-            <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px" id="ov-proj-chips"></div>
-            <div id="ov-type-col" style="margin-bottom:12px">
-              <div style="font-size:10px;font-weight:500;color:var(--text-3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em">Filter by type <span id="ov-type-count" style="font-weight:400"></span></div>
-              <div style="display:flex;gap:5px;flex-wrap:wrap" id="ov-type-chips"></div>
-            </div>
+            <div class="ov-filter-row" id="ov-breakdown-filters"></div>
             <div class="ov-breakdown-grid">
               <div style="min-width:0">
                 <div style="font-size:11px;color:var(--text-3);margin-bottom:6px">Monthly spend (฿)</div>
