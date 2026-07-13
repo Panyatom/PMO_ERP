@@ -1232,6 +1232,11 @@ if (typeof module !== 'undefined' && module.exports) {
     normalizeAuthorityTitle,
     normalizeAuthorityLimitRow,
     resolveAuthorityLimit,
+    memoFinalApproverRow,
+    buildAuthoritySnapshot,
+    applyAuthoritySnapshotsOnApproval,
+    renderConfiguredClosingParagraph,
+    renderMemoPdf,
     getAuthorityLimit,
     currentUser,
     isPMO,
@@ -1542,6 +1547,172 @@ function resolvedCurrentUserProfile() {
 function getAuthorityLimit(title, memoType) {
   const resolved = resolveAuthorityLimit(title, memoType);
   return resolved.isUnlimited ? Infinity : Number(resolved.limitThb) || 0;
+}
+
+function memoApproverStage(row = {}) {
+  return String(row.stage || 'approve').trim().toLowerCase();
+}
+
+function isMemoApproveStage(row = {}) {
+  return memoApproverStage(row) === 'approve';
+}
+
+function memoFinalApproverRow(memo = {}) {
+  const approvers = Array.isArray(memo.approvers) ? memo.approvers : [];
+  const explicitStages = approvers.some(row => row && row.stage);
+  const candidates = explicitStages ? approvers.filter(isMemoApproveStage) : approvers;
+  return candidates.length ? candidates[candidates.length - 1] : null;
+}
+
+function memoClosingTemplateForType(memoType, templateRows) {
+  const type = String(memoType || '').trim().toLowerCase();
+  const rows = Array.isArray(templateRows) ? templateRows : (_memoClosingTemplateCache || []);
+  return rows.find(row =>
+    String(row.memo_type || row.memoType || '').trim().toLowerCase() === type &&
+    row.is_active !== false
+  ) || null;
+}
+
+function memoAuthorityValueForRow(row = {}, memo = {}) {
+  return row.authorityTitleId
+    ?? row.authority_title_id
+    ?? row.default_authority_title_id
+    ?? memo.approverAuthorityTitleId
+    ?? memo.authorityTitleId
+    ?? row.title
+    ?? memo.approverTitle
+    ?? memo.authorityTitle
+    ?? '';
+}
+
+function normalizeAuthoritySnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  return {
+    authorityTitleId: snapshot.authorityTitleId ?? snapshot.authority_title_id ?? null,
+    titleTh: String(snapshot.titleTh || snapshot.title_th || snapshot.title || '').trim(),
+    titleEn: String(snapshot.titleEn || snapshot.title_en || '').trim(),
+    memoType: String(snapshot.memoType || snapshot.memo_type || '').trim().toLowerCase(),
+    limitThb: snapshot.limitThb === null || snapshot.limit_thb === null
+      ? null
+      : Number(snapshot.limitThb ?? snapshot.limit_thb ?? 0),
+    isUnlimited: snapshot.isUnlimited === true || snapshot.is_unlimited === true,
+    configured: snapshot.configured === true,
+    policyRef: String(snapshot.policyRef || snapshot.policy_ref || '').trim(),
+    resolvedAt: snapshot.resolvedAt || snapshot.resolved_at || '',
+  };
+}
+
+function buildAuthoritySnapshot(memo = {}, row = {}, options = {}) {
+  const memoType = String(options.memoType || memo.type || memo.memo_type || '').trim().toLowerCase();
+  const authorityValue = memoAuthorityValueForRow(row, memo);
+  const resolver = typeof options.authorityResolver === 'function' ? options.authorityResolver : resolveAuthorityLimit;
+  const resolved = resolver(authorityValue, memoType) || {};
+  const title = findAuthorityTitle(authorityValue);
+  const template = memoClosingTemplateForType(memoType, options.templateRows);
+  const rawLimit = resolved.configured === true ? Number(resolved.limitThb) || 0 : null;
+  return {
+    authorityTitleId: resolved.authorityTitleId ?? title?.id ?? (Number(authorityValue) > 0 ? Number(authorityValue) : null),
+    titleTh: String(resolved.titleTh || title?.titleTh || row.title || '').trim(),
+    titleEn: String(resolved.titleEn || title?.titleEn || row.titleEn || '').trim(),
+    memoType,
+    limitThb: rawLimit,
+    isUnlimited: resolved.isUnlimited === true,
+    configured: resolved.configured === true,
+    policyRef: String(options.policyRef ?? template?.policy_ref ?? template?.policyRef ?? '').trim(),
+    resolvedAt: options.resolvedAt || new Date().toISOString(),
+  };
+}
+
+function applyAuthoritySnapshotsOnApproval(memo = {}, previousApprovers = [], nextApprovers = [], options = {}) {
+  const previousRows = Array.isArray(previousApprovers) ? previousApprovers : [];
+  const nextRows = Array.isArray(nextApprovers) ? nextApprovers : [];
+  return nextRows.map((row, index) => {
+    const before = previousRows[index] || {};
+    const becameApproved = before.status !== 'approved' && row?.status === 'approved';
+    if (!becameApproved || !isMemoApproveStage(row)) return row;
+    return {
+      ...row,
+      authoritySnapshot: buildAuthoritySnapshot(memo, row, options),
+    };
+  });
+}
+
+function resolveMemoAuthorityForPdf(memo = {}, options = {}) {
+  const finalApprover = memoFinalApproverRow(memo);
+  const existing = normalizeAuthoritySnapshot(finalApprover?.authoritySnapshot);
+  if (existing) return existing;
+  if (finalApprover) return buildAuthoritySnapshot(memo, finalApprover, options);
+  return buildAuthoritySnapshot(memo, {}, options);
+}
+
+function memoSoftwareMetrics(data = {}) {
+  let totalSeats = 0;
+  let months = 12;
+  (data.slItems || []).forEach(item => {
+    const qty = Number(item.qty || item.quantity || item.seats || item.count || 0);
+    const mo = Number(item.months || item.month || item.durationMonths || 0);
+    if (Number.isFinite(qty)) totalSeats += qty;
+    if (Number.isFinite(mo) && mo > 0) months = mo;
+  });
+  if (totalSeats) return { totalSeats, months };
+
+  const slSection = (data.sections || []).find(section => section.title === 'รายการ Software');
+  if (!slSection?.html) return { totalSeats, months };
+  if (typeof DOMParser !== 'undefined') {
+    const doc = new DOMParser().parseFromString(slSection.html, 'text/html');
+    doc.querySelectorAll('tbody tr').forEach(row => {
+      const cells = row.querySelectorAll('td');
+      if (cells.length >= 6) {
+        const mo = parseInt(cells[4]?.textContent, 10) || 0;
+        const qty = parseInt(cells[5]?.textContent, 10) || 0;
+        if (mo) months = mo;
+        totalSeats += qty;
+      }
+    });
+  }
+  return { totalSeats, months };
+}
+
+function authorityLimitText(snapshot = {}) {
+  const normalized = normalizeAuthoritySnapshot(snapshot) || {};
+  if (normalized.isUnlimited) return 'ไม่จำกัดวงเงิน';
+  if (normalized.configured && Number(normalized.limitThb) === 0) return '0 บาท';
+  if (Number(normalized.limitThb) > 0) return `ไม่เกิน ${(Number(normalized.limitThb)||0).toLocaleString('th-TH',{maximumFractionDigits:0})} บาท`;
+  return 'ในการอนุมัติงบประมาณ';
+}
+
+function renderConfiguredClosingParagraph(data = {}, options = {}) {
+  const memoType = String(data.type || data.memo_type || '').trim().toLowerCase();
+  const template = options.template || memoClosingTemplateForType(memoType, options.templateRows);
+  if (!template || !String(template.template_th || '').trim()) return '';
+
+  const authority = resolveMemoAuthorityForPdf(data, {
+    memoType,
+    templateRows: options.templateRows,
+    authorityResolver: options.authorityResolver,
+  });
+  const metrics = memoSoftwareMetrics(data);
+  const total = Number(data.total) || 0;
+  const amountNumber = total ? total.toLocaleString('th-TH', {maximumFractionDigits:0}) : '';
+  const amountWords = String(data.amountWords || data.amount_words || '-').trim();
+  const values = {
+    amount: total ? `<strong>${amountNumber} บาท</strong> (${esc(amountWords || '-')})` : '',
+    amount_text: esc(amountWords || '-'),
+    project_name: esc(data.project || data.entClient || data.project_name || '-'),
+    seat_count: metrics.totalSeats ? `จำนวนรวมทั้งหมด ${metrics.totalSeats} Seats` : '',
+    duration_months: metrics.months ? `ระยะเวลา ${metrics.months} เดือน` : '',
+    authority_title_th: esc(authority.titleTh || ''),
+    authority_title_en: esc(authority.titleEn || ''),
+    authority_limit: esc(authorityLimitText(authority)),
+    policy_ref: esc(authority.policyRef || template.policy_ref || template.policyRef || ''),
+  };
+
+  return esc(String(template.template_th || ''))
+    .replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, key) => (
+      Object.prototype.hasOwnProperty.call(values, key) ? values[key] : ''
+    ))
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // isPMO — single source of truth (moved from budget.js)
@@ -2871,7 +3042,7 @@ async function updateMemoStatusAsync(memoNo, status, extra={}) {
     const approvingIdx = status === 'approved_a1' ? 0 : status === 'approved_a2' ? 1 : 2;
     const nextIdx = approvingIdx + 1;
 
-    updated.approvers = approvers.map((a, i) =>
+    const nextApprovers = approvers.map((a, i) =>
       i === approvingIdx
         ? {
             ...a,
@@ -2882,6 +3053,10 @@ async function updateMemoStatusAsync(memoNo, status, extra={}) {
           }
         : a
     );
+    updated.approvers = applyAuthoritySnapshotsOnApproval(updated, approvers, nextApprovers, {
+      memoType: updated.type,
+      resolvedAt: now,
+    });
 
     if (nextIdx < approvers.length && approvers[nextIdx]) {
       // Still more approvers
@@ -3919,11 +4094,10 @@ function renderMemoPdf(data) {
 
   // ── Authority — dynamic from Supabase (_authorityCache) with fallback ──
   function getAuthority(memoType) {
-    const approvers = data.approvers || [];
-    const finalApprover = approvers.length > 0 ? approvers[approvers.length-1] : null;
-    const title = finalApprover?.title || data.approverTitle || 'ประธานเจ้าหน้าที่บริหาร';
-    const limit = getAuthorityLimit(title, memoType);
-    return { title, limit };
+    const snapshot = resolveMemoAuthorityForPdf(data, { memoType });
+    const title = snapshot.titleTh || data.approverTitle || 'ประธานเจ้าหน้าที่บริหาร';
+    const limit = snapshot.isUnlimited ? Infinity : Number(snapshot.limitThb) || 0;
+    return { title, limit, snapshot };
   }
   function fmtLimit(n) { return (Number(n)||0).toLocaleString('th-TH',{maximumFractionDigits:0}); }
 
@@ -3987,7 +4161,8 @@ function renderMemoPdf(data) {
       return `จึงขอความอนุเคราะห์อนุมัติการจัดซื้อสำหรับรายการจัดซื้อข้างต้น ในวงเงิน ${amtStr} อ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงินที่มี (การตั้งงบประมาณไว้) หมวดการชำระเงินค่าสวัสดิการพนักงาน ${limitStr}`;
     })() : '',
   };
-  const closingText = closingMap[data.type] || (data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณรวมเป็นจำนวนเงินไม่เกิน ${amtStr}` : '');
+  const configuredClosingText = renderConfiguredClosingParagraph(data);
+  const closingText = configuredClosingText || closingMap[data.type] || (data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณรวมเป็นจำนวนเงินไม่เกิน ${amtStr}` : '');
 
   // sectionsHtml rendered inline below with fxNote injection
 
