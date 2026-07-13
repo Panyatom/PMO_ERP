@@ -704,44 +704,201 @@ body {
 .lic-tab-btn.lic-tab-active { background:var(--surface)!important; color:var(--blue-800)!important; font-weight:600; box-shadow:0 1px 4px rgba(0,0,0,.10); border-bottom-color:transparent!important; }
 .lic-expand{display:inline-block;transition:transform .15s;margin-right:4px;font-size:10px;color:var(--text-3)}
 
-.filter-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 14px; }
+.filter-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 14px;
+}
+.filter-control--search { flex: 1 1 263px; min-width: 180px; max-width: 460px; }
 .filter-search,
 .filter-toolbar input[type="search"],
 .filter-toolbar input[type="text"].filter-search {
-  flex: 1 1 280px; width: 320px; min-width: 280px; max-width: 340px;
-  height: 32px; box-sizing: border-box;
+  width: 100%; min-width: 0;
+  height: 38px; min-height: 38px; box-sizing: border-box;
   font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
-  font-size: 12px; padding: 6px 10px;
+  font-size: 12px; padding: 7px 10px;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
   background: var(--surface); color: var(--text); outline: none;
 }
 .filter-toolbar select,
+.actual-spend-toolbar select,
 .filter-input,
 .filter-select {
   font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
-  font-size: 12px; padding: 6px 10px; width: 160px; min-width: 160px; max-width: 160px;
-  height: 32px; box-sizing: border-box;
+  font-size: 12px; padding: 7px 10px; width: 100%; min-width: 0;
+  height: 38px; min-height: 38px; box-sizing: border-box;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
   background: var(--surface); color: var(--text); cursor: pointer;
 }
 .filter-toolbar input[type="month"],
 .filter-toolbar input[type="date"],
+.actual-spend-toolbar input[type="month"],
+.actual-spend-toolbar input[type="date"],
 .filter-control input[type="month"],
 .filter-control input[type="date"],
 .filter-date,
 .filter-month {
   font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
-  font-size: 12px; padding: 6px 10px; width: 160px; min-width: 160px;
-  height: 32px; box-sizing: border-box;
+  font-size: 12px; padding: 7px 10px; width: 100%; min-width: 0;
+  height: 38px; min-height: 38px; box-sizing: border-box;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
   background: var(--surface); color: var(--text);
 }
-.filter-control { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.filter-toolbar .ms-wrap { width: 160px; min-width: 160px; }
-.filter-toolbar .ms-trigger { width: 160px; min-width: 160px; max-width: 160px; height: 32px; box-sizing: border-box; }
-.filter-range { display: inline-flex; gap: 8px; align-items: flex-end; flex-wrap: nowrap; }
-.filter-actions { display: flex; gap: 8px; align-items: center; align-self: flex-end; flex-wrap: nowrap; margin-left: auto; }
-.filter-actions button { height: 32px; box-sizing: border-box; white-space: nowrap; }
+.filter-control { display: flex; flex: 0 0 169px; flex-direction: column; align-items: stretch; gap: 0; min-width: 0; }
+.filter-control:has(input[type="month"]),
+.filter-control:has(input[type="date"]) { flex-basis: 130px; }
+.filter-control--compact,
+.filter-control--date,
+.filter-control:has(#as-year),
+.filter-control:has(#as-from),
+.filter-control:has(#as-to),
+.filter-control:has(#as-manual-from),
+.filter-control:has(#as-manual-to),
+.filter-control:has(#bva-year),
+.filter-control:has(#bset-year),
+.filter-control:has(#sl-forecast-period) { flex-basis: 130px; }
+.filter-toolbar--dense .filter-control { flex-basis: 160px; }
+.filter-toolbar--dense .filter-control--compact,
+.filter-toolbar--dense .filter-control--date,
+.filter-toolbar--dense .filter-control:has(#as-year),
+.filter-toolbar--dense .filter-control:has(#as-from),
+.filter-toolbar--dense .filter-control:has(#as-to),
+.filter-toolbar--dense .filter-control:has(#as-manual-from),
+.filter-toolbar--dense .filter-control:has(#as-manual-to) { flex-basis: 130px; }
+.filter-toolbar--single-line {
+  display: grid;
+  grid-template-columns: var(--filter-toolbar-columns, minmax(180px,1.4fr) minmax(120px,.9fr) minmax(130px,.9fr) 130px 130px auto);
+  gap: 8px;
+  align-items: end;
+}
+.filter-toolbar--single-line .filter-control,
+.filter-toolbar--single-line .filter-control--search,
+.filter-toolbar--single-line .ms-wrap {
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  flex: initial;
+}
+.filter-toolbar--single-line .filter-actions {
+  min-width: max-content;
+  margin-left: 0;
+  justify-content: flex-end;
+}
+.filter-toolbar--actual-report {
+  --filter-toolbar-columns: 130px 130px 130px minmax(120px,.9fr) minmax(120px,.9fr) minmax(120px,.9fr) minmax(145px,.95fr) auto;
+}
+.filter-toolbar--actual-manual {
+  --filter-toolbar-columns: minmax(130px,1.35fr) minmax(90px,.85fr) minmax(90px,.85fr) minmax(110px,.9fr) 100px 100px minmax(110px,.9fr) auto;
+}
+.filter-toolbar--device {
+  --filter-toolbar-columns: minmax(180px,1.35fr) minmax(90px,.85fr) minmax(90px,.85fr) minmax(90px,.85fr) minmax(90px,.85fr) minmax(90px,.85fr) auto;
+}
+.filter-toolbar--license {
+  --filter-toolbar-columns: minmax(220px,1.35fr) minmax(120px,.85fr) minmax(140px,.9fr) minmax(150px,.95fr) auto;
+}
+.filter-toolbar--resource-style {
+  margin-bottom: 12px;
+}
+.filter-toolbar--resource-style .filter-control,
+.filter-toolbar--resource-style .filter-control--search,
+.filter-toolbar--resource-style .ms-wrap {
+  flex: 1 1 150px;
+  max-width: none;
+}
+.filter-toolbar--resource-style .filter-control--compact,
+.filter-toolbar--resource-style .filter-control--date {
+  flex: 0 1 150px;
+}
+.filter-action-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: nowrap;
+  margin: 0 0 14px;
+}
+.filter-action-row .filter-control--search {
+  flex: 1 1 360px;
+  max-width: none;
+}
+.filter-action-row .filter-actions {
+  margin-left: auto;
+}
+.filter-action-row .filter-meta {
+  align-self: center;
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.actual-spend-toolbar {
+  display: grid;
+  gap: 8px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+.actual-spend-toolbar--report {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+.actual-spend-toolbar--manual {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+.actual-spend-toolbar .filter-control,
+.actual-spend-toolbar .filter-control--compact,
+.actual-spend-toolbar .filter-control--date,
+.actual-spend-toolbar .ms-wrap {
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  flex: initial;
+}
+.actual-spend-actions {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  align-items: flex-end;
+}
+.actual-spend-actions .filter-control--search {
+  max-width: none;
+}
+@media (max-width:1100px){
+  .actual-spend-toolbar--report,
+  .actual-spend-toolbar--manual { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width:960px){
+  .actual-spend-actions { flex-wrap: wrap; }
+  .actual-spend-actions .filter-control--search { flex: 1 1 100%; }
+  .actual-spend-actions .filter-actions { margin-left: auto; }
+}
+@media (max-width:760px){
+  .actual-spend-toolbar--report,
+  .actual-spend-toolbar--manual { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.filter-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+.filter-toolbar .ms-wrap,
+.actual-spend-toolbar .ms-wrap { width: auto; min-width: 0; }
+.filter-toolbar .ms-trigger,
+.actual-spend-toolbar .ms-trigger { width: 100%; min-width: 0; max-width: none; height: 38px; min-height: 38px; box-sizing: border-box; padding: 7px 10px; }
+.filter-toolbar .pmo-select-trigger { height: 38px; min-height: 38px; padding: 7px 10px; font-weight: 500; }
+.filter-range { display: contents; }
+.filter-checkbox {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 38px; box-sizing: border-box;
+  font-size: 12px; color: var(--text-2); white-space: nowrap;
+}
+.filter-checkbox input { width: 14px; height: 14px; accent-color: var(--blue); }
+.filter-actions { display: flex; gap: 8px; align-items: center; align-self: flex-end; flex: 0 0 auto; flex-wrap: nowrap; margin-left: auto; }
+.filter-actions .btn-export { margin-left: 0; }
+.filter-actions button { height: 38px; box-sizing: border-box; white-space: nowrap; }
+@media (max-width:1100px){.filter-control,.filter-control--search,.filter-toolbar--dense .filter-control{flex:1 1 calc(50% - 4px);max-width:none}.filter-actions{margin-left:0}}
+@media (min-width:761px) and (max-width:1399px){.filter-toolbar--single-line{display:flex;flex-wrap:wrap}.filter-toolbar--single-line .filter-control,.filter-toolbar--single-line .filter-control--search,.filter-toolbar--single-line .ms-wrap{flex:1 1 calc(25% - 6px);max-width:none}.filter-toolbar--single-line .filter-actions{margin-left:auto}}
+@media (max-width:760px){.filter-toolbar--single-line{display:flex;flex-wrap:wrap}.filter-toolbar--single-line .filter-control,.filter-toolbar--single-line .filter-control--search,.filter-toolbar--single-line .ms-wrap{flex:1 1 calc(50% - 4px);max-width:none}.filter-toolbar--single-line .filter-actions{margin-left:0}.filter-action-row{flex-wrap:wrap}.filter-action-row .filter-control--search{flex-basis:100%}}
 
 #view-history > .filter-toolbar,
 #view-pending > .filter-toolbar { margin-bottom: 14px; }
@@ -1348,8 +1505,9 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
         <!-- Filters -->
         <div class="filter-toolbar">
-          <input type="text" id="pend-search" class="filter-search" placeholder="Search by memo no., subject, project, or approver"
-            oninput="_pendingSearch=this.value;renderPendingContent()">
+          <span class="filter-control filter-control--search"><label class="filter-label" for="pend-search">Search</label>
+            <input type="text" id="pend-search" class="filter-search" placeholder="Search by memo no., subject, project, or approver"
+              oninput="_pendingSearch=this.value;renderPendingContent()"></span>
           <select id="pend-filter-type" onchange="renderPendingContent()">
             <option value="sl">SL</option><option value="hw">HW</option>
             <option value="int">INT</option><option value="ent">ENT</option><option value="dep">DEP</option>
@@ -1403,7 +1561,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
           </div>
         </div>
         <div class="filter-toolbar">
-          <input type="search" id="hist-search" class="filter-search" placeholder="Search by memo no., subject, project, or requester" oninput="renderHistoryMemos()">
+          <span class="filter-control filter-control--search"><label class="filter-label" for="hist-search">Search</label>
+            <input type="search" id="hist-search" class="filter-search" placeholder="Search by memo no., subject, project, or requester" oninput="renderHistoryMemos()"></span>
           <select id="hist-status" onchange="renderHistoryMemos()" style="display:none">
             <option value="all">ทุกสถานะ</option>
             <option value="completed">Completed</option>
@@ -1565,14 +1724,14 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
           <div id="as-panel-report">
 
-            <div class="filter-toolbar">
-              <span class="filter-control"><span class="filter-label">Year</span><select id="as-year" onchange="renderActualSpend()" aria-label="ปีข้อมูล Actual Spend">
+            <div class="actual-spend-toolbar actual-spend-toolbar--report">
+              <span class="filter-control filter-control--compact"><span class="filter-label">Year</span><select id="as-year" onchange="renderActualSpend()" aria-label="ปีข้อมูล Actual Spend">
                 <option value="2026">2026</option>
               </select></span>
               <span class="filter-range">
-                <span class="filter-control"><span class="filter-label">Month From</span>
+                <span class="filter-control filter-control--date"><span class="filter-label">Month From</span>
                   <input type="month" id="as-from" class="filter-month" onchange="renderActualSpend()"></span>
-                <span class="filter-control"><span class="filter-label">Month To</span>
+                <span class="filter-control filter-control--date"><span class="filter-label">Month To</span>
                   <input type="month" id="as-to" class="filter-month" onchange="renderActualSpend()"></span>
               </span>
               <select id="as-project" onchange="renderActualSpend()">
@@ -1597,8 +1756,11 @@ svg.icon { display: inline-block; vertical-align: middle; }
                 <option value="Needs PMO Review">Needs PMO Review</option>
                 <option value="Unbudgeted">Unbudgeted</option>
               </select>
+            </div>
+            <div class="filter-action-row actual-spend-actions">
+              <span style="flex:1 1 auto"></span>
               <div class="filter-actions">
-                <span id="as-period-label" style="font-size:11px;color:var(--text-3);white-space:nowrap">ทั้งหมด</span>
+                <span id="as-period-label" class="filter-meta">ทั้งหมด</span>
                 <button class="btn-export" onclick="exportActualSpendCSV()">⬇ Export CSV</button>
               </div>
             </div>
@@ -1607,8 +1769,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
           </div>
 
           <div id="as-panel-manual" style="display:none">
-            <div class="filter-toolbar">
-              <input id="as-manual-search" type="search" class="filter-search" placeholder="Search by reference no., description, program, or memo no." oninput="renderManualEntries()">
+            <div class="actual-spend-toolbar actual-spend-toolbar--manual">
               <select id="as-manual-project" onchange="renderManualEntries()"></select>
               <select id="as-manual-type" onchange="renderManualEntries()"></select>
               <span class="filter-control"><span class="filter-label">Frequency</span><select id="as-manual-frequency" onchange="renderManualEntries()"><option value="all">All frequencies</option><option value="one_time">One-time</option><option value="monthly">Monthly</option></select></span>
@@ -1617,6 +1778,10 @@ svg.icon { display: inline-block; vertical-align: middle; }
                 <span class="filter-control"><span class="filter-label">Coverage To</span><input id="as-manual-to" type="month" onchange="renderManualEntries()" aria-label="Coverage to"></span>
               </span>
               <select id="as-manual-budget-status" onchange="renderManualEntries()"><option value="Mapped">Mapped</option><option value="Manual Override">Manual Override</option><option value="Needs PMO Review">Needs PMO Review</option><option value="Unbudgeted">Unbudgeted</option></select>
+            </div>
+            <div class="filter-action-row actual-spend-actions">
+              <span class="filter-control--search">
+                <input id="as-manual-search" type="search" class="filter-search" placeholder="Search by reference no., description, program, or memo no." oninput="renderManualEntries()"></span>
               <div class="filter-actions">
                 <button class="btn-export" onclick="downloadActualSpendTemplate()">⬇ Download Template</button>
                 <button class="btn-export" id="as-import-button" onclick="document.getElementById('as-import-file').click()">⬆ Import Excel</button>
@@ -1672,7 +1837,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <div id="bgt-tab-bva" class="cost-tab-panel" style="display:none">
 
           <div class="filter-toolbar">
-            <input id="bva-search" type="search" class="filter-search" placeholder="Search by reference no., description, project, or spend type" oninput="bvaSearchDebounced()">
+            <span class="filter-control filter-control--search"><label class="filter-label" for="bva-search">Search</label>
+              <input id="bva-search" type="search" class="filter-search" placeholder="Search by reference no., description, project, or spend type" oninput="bvaSearchDebounced()"></span>
             <!-- Options populated dynamically by populateBudgetYearSelect('bva-year') (views/budget.js). -->
             <span class="filter-control"><span class="filter-label">Year</span><select id="bva-year" class="filter-select" onchange="renderBudgetVsActual()"></select></span>
             <span class="filter-control"><span class="filter-label">Project</span><select id="bva-project" onchange="renderBudgetVsActual()">
@@ -1713,8 +1879,9 @@ svg.icon { display: inline-block; vertical-align: middle; }
                     <span style="font-size:12px;font-weight:600">Budget Pools</span>
                     <span style="font-size:11px;color:var(--text-3);margin-left:8px">ตั้งงบประมาณต่อโปรเจค แยกตาม pool และช่วงเวลา</span>
                   </div>
-                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                    <input id="bset-search" type="search" class="filter-search" placeholder="Search by project or pool name" oninput="renderBudgetSettings()">
+                  <div class="filter-toolbar" style="margin-bottom:0">
+                    <span class="filter-control filter-control--search"><label class="filter-label" for="bset-search">Search</label>
+                      <input id="bset-search" type="search" class="filter-search" placeholder="Search by project or pool name" oninput="renderBudgetSettings()"></span>
                     <!-- Options populated dynamically by populateBudgetYearSelect('bset-year') (views/budget.js). -->
                     <span class="filter-control"><span class="filter-label">Year</span><select id="bset-year" class="filter-input" aria-label="Year" onchange="renderBudgetSettings()"></select></span>
                     <div class="filter-actions">
@@ -1817,7 +1984,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <div class="metric-card"><div class="metric-label">Fulfilled</div><div class="metric-val" id="po-kpi-fulfilled" style="color:#3B6D11">0</div></div>
           </div>
           <div class="filter-toolbar">
-            <input type="text" id="po-search" class="filter-search" placeholder="Search by memo no. or item name" oninput="renderPurchaseOrders()">
+            <span class="filter-control filter-control--search"><label class="filter-label" for="po-search">Search</label>
+              <input type="text" id="po-search" class="filter-search" placeholder="Search by memo no. or item name" oninput="renderPurchaseOrders()"></span>
             <span class="filter-control"><span class="filter-label">Status</span><select id="po-filter-status" onchange="renderPurchaseOrders()">
               <option value="pending_order">Pending Order</option>
               <option value="ordered">Ordered</option>
@@ -1829,7 +1997,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <span class="filter-control"><span class="filter-label">Project</span><select id="po-filter-project" onchange="renderPurchaseOrders()">
             </select></span>
             <span class="filter-control"><span class="filter-label">Remaining</span>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);white-space:nowrap;height:32px;box-sizing:border-box">
+              <label class="filter-checkbox">
                 <input type="checkbox" id="po-filter-remaining" onchange="renderPurchaseOrders()"> &gt; 0
               </label></span>
             <div id="po-visible-count" style="font-size:11px;color:var(--text-3)"></div>
@@ -1898,8 +2066,9 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
         <!-- Filter row -->
         <div id="dev-registry-context-banner" style="display:none;margin-bottom:10px"></div>
-        <div class="filter-toolbar">
-          <input type="text" id="dev-search" class="filter-search" placeholder="Search by device name, brand, serial no., asset tag, or assignee" oninput="renderDevice()">
+        <div class="filter-toolbar filter-toolbar--single-line filter-toolbar--device">
+          <span class="filter-control filter-control--search"><label class="filter-label" for="dev-search">Search</label>
+            <input type="text" id="dev-search" class="filter-search" placeholder="Search by device name, brand, serial no., asset tag, or assignee" oninput="renderDevice()"></span>
           <span class="filter-control"><span class="filter-label">Platform</span><select id="dev-filter-platform" onchange="renderDevice()">
             <option value="ios">iOS</option>
             <option value="android">Android</option>

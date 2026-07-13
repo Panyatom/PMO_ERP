@@ -441,9 +441,10 @@ function _renderLicMemoIndex() {
       <div class="metric-card"><div class="metric-label">ค่าใช้จ่าย/ปี</div><div class="metric-val" id="lic-annual" style="font-size:18px;margin-top:4px">฿0</div><div class="metric-sub" id="lic-renewal-3m"></div></div>
     </div>
 
-    <div class="filter-toolbar">
-      <input type="text" id="lic-search" class="filter-search" placeholder="Search by software, plan, project, owner, or vendor"
-        oninput="_renderLicMemoIndexRows()">
+    <div class="filter-toolbar filter-toolbar--single-line filter-toolbar--license">
+      <span class="filter-control filter-control--search"><label class="filter-label" for="lic-search">Search</label>
+        <input type="text" id="lic-search" class="filter-search" placeholder="Search by software, plan, project, owner, or vendor"
+          oninput="_renderLicMemoIndexRows()"></span>
       <select id="lic-filter-status" onchange="_renderLicMemoIndexRows()">
         <option value="active">Active</option>
         <option value="expiring">Expiring (≤30d)</option>
@@ -1583,8 +1584,9 @@ function _renderLicUsers() {
     ${_renderLicReviewQueueHtml(queueItems)}
     <div id="lic-usr-context-banner" style="margin-bottom:12px;display:none"></div>
     <div class="filter-toolbar">
-      <input id="lic-usr-search" type="text" class="filter-search" placeholder="Search by email"
-        oninput="_renderLicUsersRows()">
+      <span class="filter-control filter-control--search"><label class="filter-label" for="lic-usr-search">Search</label>
+        <input id="lic-usr-search" type="text" class="filter-search" placeholder="Search by email"
+          oninput="_renderLicUsersRows()"></span>
       <select id="lic-usr-proj" onchange="_renderLicUsersRows()">
         ${projects.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('')}
       </select>

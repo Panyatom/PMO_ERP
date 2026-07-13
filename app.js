@@ -3005,6 +3005,15 @@ function msValues(id) {
 function initMultiSelect(id, placeholder, fieldLabel) {
   const select = document.getElementById(id);
   if (!select) return;
+  const singleSelectWrap = select.closest?.('.pmo-select');
+  if (singleSelectWrap) {
+    singleSelectWrap.parentNode.insertBefore(select, singleSelectWrap);
+    singleSelectWrap.remove();
+    select.classList.remove('pmo-select-native');
+    delete select.dataset.pmoEnhanced;
+    select.removeAttribute('aria-hidden');
+    select.removeAttribute('tabindex');
+  }
   const alreadyMultiple = select.multiple;
   select.multiple = true;
   select.style.display = 'none';
@@ -3022,9 +3031,20 @@ function initMultiSelect(id, placeholder, fieldLabel) {
     wrap.classList.add('filter-control', 'ms-wrap');
     wrap.dataset.msFor = id;
     if (!existingControl) select.insertAdjacentElement('afterend', wrap);
-    if (fieldLabel && !wrap.querySelector('.filter-label')) {
-      wrap.insertAdjacentHTML('afterbegin', `<label class="filter-label" for="${esc(id)}">${esc(fieldLabel)}</label>`);
+    if (fieldLabel) {
+      wrap.querySelectorAll('.filter-label').forEach((label, index) => {
+        if (index === 0) {
+          label.textContent = fieldLabel;
+          label.setAttribute('for', id);
+        } else {
+          label.remove();
+        }
+      });
+      if (!wrap.querySelector('.filter-label')) {
+        wrap.insertAdjacentHTML('afterbegin', `<label class="filter-label" for="${esc(id)}">${esc(fieldLabel)}</label>`);
+      }
     }
+    Array.from(wrap.querySelectorAll('.ms-trigger, .ms-panel')).forEach(node => node.remove());
     wrap.insertAdjacentHTML('beforeend', `
       <button type="button" class="ms-trigger" aria-haspopup="listbox" aria-expanded="false"></button>
       <div class="ms-panel" role="listbox" aria-multiselectable="true" style="display:none">
