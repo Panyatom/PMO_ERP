@@ -1719,7 +1719,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
           <div style="display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--border)">
             <button id="as-tab-report" class="btn-sm active" onclick="switchActualSpendTab('report',this)" style="border-radius:6px 6px 0 0">Report</button>
-            <button id="as-tab-manual" class="btn-sm" onclick="switchActualSpendTab('manual',this)" style="border-radius:6px 6px 0 0">Manual Spending</button>
+            <button id="as-tab-manual" class="btn-sm" onclick="switchActualSpendTab('manual',this)" style="border-radius:6px 6px 0 0">Transactions</button>
           </div>
 
           <div id="as-panel-report">
@@ -1778,11 +1778,13 @@ svg.icon { display: inline-block; vertical-align: middle; }
                 <span class="filter-control"><span class="filter-label">Coverage To</span><input id="as-manual-to" type="month" onchange="renderManualEntries()" aria-label="Coverage to"></span>
               </span>
               <select id="as-manual-budget-status" onchange="renderManualEntries()"><option value="Mapped">Mapped</option><option value="Manual Override">Manual Override</option><option value="Needs PMO Review">Needs PMO Review</option><option value="Unbudgeted">Unbudgeted</option></select>
+              <span class="filter-control"><span class="filter-label">Source</span><select id="as-manual-source" onchange="renderManualEntries()"><option value="all">All sources</option><option value="memo">Memo</option><option value="manual_spending">Manual Spending</option></select></span>
             </div>
             <div class="filter-action-row actual-spend-actions">
               <span class="filter-control--search">
                 <input id="as-manual-search" type="search" class="filter-search" placeholder="Search by reference no., description, program, or memo no." oninput="renderManualEntries()"></span>
               <div class="filter-actions">
+                <button class="btn-export" onclick="exportActualSpendTransactionsCSV()">⬇ Export CSV</button>
                 <button class="btn-export" onclick="downloadActualSpendTemplate()">⬇ Download Template</button>
                 <button class="btn-export" id="as-import-button" onclick="document.getElementById('as-import-file').click()">⬆ Import Excel</button>
                 <input id="as-import-file" type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleActualSpendImport(event)">

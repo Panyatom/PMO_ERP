@@ -2616,25 +2616,117 @@ function formatActualSpendDateTime(value) {
   return `${datePart} ${timePart}`;
 }
 
+function actualSpendTransactionFromRecord(record) {
+  const manualExpense = record.source === ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE ? manualExpenseForRecord(record) : null;
+  return {
+    id: record.id,
+    source: canonicalActualSpendSourceKey(record.source),
+    sourceId: record.memoId || manualExpense?.id || record.id,
+    referenceNo: record.referenceNo || '',
+    project: record.project || '',
+    spendType: record.spendType || '',
+    description: record.description || record.vendorProgram || record.notes || '',
+    amount: Number(record.amount) || 0,
+    dateFrom: record.startDate || record.month || '',
+    dateTo: record.endDate || record.startDate || record.month || '',
+    budgetStatus: record.budgetStatus || '',
+    frequency: manualExpense?.frequency || '',
+    rawRecord: record,
+  };
+}
+
+function actualSpendTransactionDateLabel(transaction) {
+  const from = transaction.dateFrom || '—';
+  const to = transaction.dateTo || transaction.dateFrom || '';
+  return to && to !== from ? `${from} → ${to}` : from;
+}
+
+function actualSpendTransactionMatchesSearch(transaction, search) {
+  if (!search) return true;
+  const record = transaction.rawRecord || {};
+  const memo = canonicalTransactionMemo(record);
+  const manualExpense = manualExpenseForRecord(record);
+  const haystack = [
+    transaction.referenceNo,
+    transaction.description,
+    transaction.project,
+    transaction.spendType,
+    record.vendorProgram,
+    record.memoId,
+    memo?.memoNo,
+    memo?.subject,
+    memo?.reason,
+    memo?.project,
+    memo?.originalDocumentRef,
+    ...(Array.isArray(record.detailLines) ? record.detailLines.flatMap(line => [line.program, line.plan, line.name]) : []),
+    manualExpense?.vendorProgram,
+    manualExpense?.notes,
+  ].filter(Boolean).join(' ').toLowerCase();
+  return haystack.includes(search);
+}
+
+function filteredActualSpendTransactions(records = loadActualSpendRecords()) {
+  const search = (document.getElementById('as-manual-search')?.value || '').trim().toLowerCase();
+  const source = document.getElementById('as-manual-source')?.value || 'all';
+  const frequency = document.getElementById('as-manual-frequency')?.value || 'all';
+  const selectedProject = msValues('as-manual-project');
+  const selectedType = msValues('as-manual-type');
+  const from = document.getElementById('as-manual-from')?.value || '';
+  const to = document.getElementById('as-manual-to')?.value || '';
+  const budgetStatus = msValues('as-manual-budget-status');
+  return records
+    .map(actualSpendTransactionFromRecord)
+    .filter(transaction => {
+      const record = transaction.rawRecord || {};
+      const recordFrequency = transaction.frequency || (record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO ? 'one_time' : '');
+      return (!source || source === 'all' || transaction.source === source)
+        && (!selectedProject.length || selectedProject.includes(transaction.project))
+        && (!selectedType.length || selectedType.includes(transaction.spendType))
+        && (frequency === 'all' || recordFrequency === frequency)
+        && (!from || !transaction.dateTo || String(transaction.dateTo).slice(0, 7) >= from)
+        && (!to || !transaction.dateFrom || String(transaction.dateFrom).slice(0, 7) <= to)
+        && (!budgetStatus.length || budgetStatus.includes(transaction.budgetStatus))
+        && actualSpendTransactionMatchesSearch(transaction, search);
+    })
+    .sort((a, b) => String(b.dateFrom || '').localeCompare(String(a.dateFrom || '')) || String(b.id || '').localeCompare(String(a.id || '')));
+}
+
+function showActualSpendTransactionDetail(id) {
+  showActualSpendRecord(id);
+}
+
+function canEditActualSpendTransaction(transaction) {
+  return transaction?.source === 'manual_spending' && (transaction.rawRecord?.storageKind === 'manual_expense' || manualExpenseForRecord(transaction.rawRecord));
+}
+
+async function exportActualSpendTransactionsCSV() {
+  await refreshCanonicalActualSpend();
+  const transactions = filteredActualSpendTransactions();
+  if (!transactions.length) { alert('ไม่มีข้อมูล'); return; }
+  _downloadCSV('Actual_Spend_Transactions', [
+    'Reference No.','Project','Spend Type','Description','Amount','Date / Coverage','Source','Budget Status',
+  ], transactions.map(transaction => [
+    transaction.referenceNo,
+    transaction.project,
+    transaction.spendType,
+    transaction.description,
+    transaction.amount,
+    actualSpendTransactionDateLabel(transaction),
+    canonicalActualSpendSourceLabel(transaction.rawRecord.source),
+    transaction.budgetStatus,
+  ]));
+}
+
 function renderManualEntries() {
   const container = document.getElementById('as-manual-content');
   if (!container) return;
-  const value = id => document.getElementById(id)?.value || '';
-  const search = value('as-manual-search').trim().toLowerCase();
-  // Part 8 (UX consistency pass) — Project/Type/Budget Status are
-  // multi-select filters; initMultiSelect() is idempotent and must run
-  // before updateSelect() repopulates as-manual-project/-type's options.
+  const records = loadActualSpendRecords();
   initMultiSelect('as-manual-project', 'All projects', 'Project');
   initMultiSelect('as-manual-type', 'All spend types', 'Type');
   initMultiSelect('as-manual-budget-status', 'All budget statuses', 'Budget Status');
   const selectedProject = msValues('as-manual-project');
   const selectedType = msValues('as-manual-type');
-  const frequency = value('as-manual-frequency') || 'all';
-  const from = value('as-manual-from');
-  const to = value('as-manual-to');
   const budgetStatus = msValues('as-manual-budget-status');
-  const active = activeManualExpenses();
-  const historical = historicalMemoSourceRows();
   const updateSelect = (id, values, selected) => {
     const select = document.getElementById(id);
     if (!select) return;
@@ -2642,33 +2734,22 @@ function renderManualEntries() {
     Array.from(select.options).forEach(o => { if (selected.includes(o.value)) o.selected = true; });
     refreshMultiSelectUI(id);
   };
-  updateSelect('as-manual-project', [...new Set([...active.map(item => item.project), ...historical.map(item => item.project)].filter(Boolean))].sort(), selectedProject);
-  updateSelect('as-manual-type', [...new Set([...active.map(item => manualExpenseToActualSpend(item).spendType), ...historical.map(item => spendTypeFromMemoType(item.type))])].sort(), selectedType);
-  const manualRows = active.map(item => ({ kind:'manual', ...manualEntryViewModel(item), description:item.description, updatedAt:item.updatedAt || item.createdAt }));
-  const historicalRows = historical.map(historicalSpendingViewModel);
-  const rows = [...manualRows, ...historicalRows].filter(({ kind, expense, memo, record, description }) => {
-    const haystack = kind === 'historical'
-      ? [memo.memoNo, memo.subject, memo.reason, memo.originalDocumentRef].filter(Boolean).join(' ').toLowerCase()
-      : [expense.referenceNo, expense.description, expense.vendorProgram, expense.program, expense.notes].filter(Boolean).join(' ').toLowerCase();
-    const start = kind === 'historical'
-      ? String(record.startDate || memo.date || '').slice(0, 7)
-      : String(expense.frequency === 'monthly' ? expense.startMonth : expense.expenseDate || '').slice(0, 7);
-    const end = kind === 'historical'
-      ? String(record.endDate || record.startDate || memo.date || '').slice(0, 7)
-      : String(expense.frequency === 'monthly' ? expense.endMonth : expense.expenseDate || '').slice(0, 7);
-    return (!search || haystack.includes(search))
-      && (!selectedProject.length || selectedProject.includes(record.project))
-      && (!selectedType.length || selectedType.includes(record.spendType))
-      && (frequency === 'all' || (kind === 'manual' && expense.frequency === frequency) || (kind === 'historical' && frequency === 'one_time'))
-      && (!from || !end || end >= from) && (!to || !start || start <= to)
-      && (!budgetStatus.length || budgetStatus.includes(record.budgetStatus));
-  }).sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
-  if (!rows.length) { container.innerHTML = '<div class="card" style="padding:32px;text-align:center;color:var(--text-3)">No manual entries found</div>'; return; }
-  // Updated At is intentionally not shown here (available via View Detail) to keep this dense
-  // table scannable; Description is truncated with an ellipsis (full text via the `title` attr).
-  container.innerHTML = `<div class="card" style="padding:0;overflow:auto"><table class="hist-table"><thead><tr><th style="width:10%">Reference No</th><th style="width:9%">Project</th><th style="width:8%">Spend Type</th><th style="width:20%">Description</th><th style="width:9%;text-align:right">Amount</th><th style="width:11%">Expense / Coverage Date</th><th style="width:9%">Budget Status</th><th style="width:24%;text-align:center">Actions</th></tr></thead><tbody>${rows.map(({ kind, id, expense, record, referenceNo, schedule, description }) => {
-    const rowId = kind === 'historical' ? id : expense.id;
-    return `<tr><td style="font-weight:600">${esc(referenceNo)}</td><td>${esc(record.project)}</td><td>${esc(record.spendType)}</td><td class="hist-cell-clip" title="${esc(description)}">${esc(description)}</td><td style="text-align:right;font-weight:600">${money(record.amount)}</td><td>${esc(schedule)}</td><td>${esc(record.budgetStatus)}</td><td style="text-align:center;white-space:nowrap"><button class="btn-sm" onclick="showSpendingDetail('${esc(kind)}','${esc(rowId)}')">View Detail</button>${isPMO() ? ` <button class="btn-sm" onclick="editSpending('${esc(kind)}','${esc(rowId)}')">Edit</button> <button class="btn-sm" style="color:var(--red)" onclick="deleteSpending('${esc(kind)}','${esc(rowId)}')">Delete</button>` : ''}</td></tr>`;
+  updateSelect('as-manual-project', [...new Set(records.map(record => record.project).filter(Boolean))].sort(), selectedProject);
+  updateSelect('as-manual-type', [...new Set(records.map(record => record.spendType).filter(Boolean))].sort(), selectedType);
+  const transactions = filteredActualSpendTransactions(records);
+  if (!transactions.length) { container.innerHTML = '<div class="card" style="padding:32px;text-align:center;color:var(--text-3)">No transactions found</div>'; return; }
+  const memoCount = transactions.filter(transaction => transaction.source === 'memo').length;
+  const manualCount = transactions.filter(transaction => transaction.source === 'manual_spending').length;
+  const total = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
+  container.innerHTML = `
+    <div style="margin:2px 0 10px;display:flex;gap:20px;align-items:center;flex-wrap:wrap;font-size:12px">
+      <strong style="font-size:13px">Transactions: <span style="color:var(--blue)">${money(Math.round(total))}</span></strong>
+      <span style="color:var(--text-3)"><strong style="color:var(--blue)">Memo</strong> ${memoCount} รายการ</span>
+      <span style="color:var(--text-3)"><strong style="color:var(--amber)">Manual Spending</strong> ${manualCount} รายการ</span>
+    </div>
+    <div class="card" style="padding:0;overflow:auto"><table class="hist-table hist-table--ellipsis"><thead><tr><th style="width:10%">Reference No.</th><th style="width:10%">Project</th><th style="width:10%">Spend Type</th><th style="width:20%">Description</th><th style="width:9%;text-align:right">Amount</th><th style="width:12%">Expense / Coverage Date</th><th style="width:9%">Source</th><th style="width:9%">Budget Status</th><th style="width:11%;text-align:center">Actions</th></tr></thead><tbody>${transactions.map(transaction => {
+    const record = transaction.rawRecord;
+    return `<tr><td style="font-weight:600" title="${esc(transaction.referenceNo || '—')}">${esc(transaction.referenceNo || '—')}</td><td title="${esc(transaction.project)}">${esc(transaction.project || '—')}</td><td title="${esc(transaction.spendType)}">${esc(transaction.spendType || '—')}</td><td title="${esc(transaction.description)}">${esc(transaction.description || '—')}</td><td style="text-align:right;font-weight:600">${money(transaction.amount)}</td><td>${esc(actualSpendTransactionDateLabel(transaction))}</td><td><span class="badge ${actualSpendSourceBadgeClass(record.source)}">${actualSpendSourceShortLabel(record.source)}</span></td><td><span class="badge ${actualSpendBudgetStatusBadgeClass(transaction.budgetStatus)}">${esc(transaction.budgetStatus || '—')}</span></td><td style="text-align:center;white-space:nowrap"><button class="btn-sm" onclick="showActualSpendTransactionDetail('${esc(transaction.id)}')">View Detail</button></td></tr>`;
   }).join('')}</tbody></table></div>`;
 }
 
@@ -2979,6 +3060,12 @@ function showCanonicalTransactionDetail(record, options = {}) {
   const sourceLabel = canonicalActualSpendSourceLabel(record.source);
   const status = record.budgetStatus || '';
   const poolLabel = pool?.name || pool?.poolName || poolId || '-';
+  const editableManualExpense = expense && record.storageKind === 'manual_expense' ? expense : null;
+  const actionHtml = isPMO() && editableManualExpense ? `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <button class="btn-sm" onclick="document.getElementById('actual-spend-record-detail')?.remove();openManualExpenseModal('${esc(editableManualExpense.id)}')">Edit</button>
+      <button class="btn-sm" style="color:var(--red)" onclick="document.getElementById('actual-spend-record-detail')?.remove();voidManualExpense('${esc(editableManualExpense.id)}')">Delete</button>
+    </div>` : '';
 
   panel.innerHTML = `<div class="card txn-modal-card">
     <div class="txn-modal-header">
@@ -2990,6 +3077,7 @@ function showCanonicalTransactionDetail(record, options = {}) {
           ${status ? `<span class="badge ${actualSpendBudgetStatusBadgeClass(status)}">${esc(status)}</span>` : ''}
           <span class="txn-muted">${esc(poolLabel)}</span>
         </div>
+        ${actionHtml}
       </div>
       <button class="btn-sm" onclick="document.getElementById('actual-spend-record-detail').remove()" style="flex-shrink:0">✕</button>
     </div>
@@ -3185,7 +3273,7 @@ function showActualSpendGroup(projectEncoded, typeEncoded, sourceEncoded) {
 function showActualSpendRecord(id) {
   const record = loadActualSpendRecords().find(item => item.id === id);
   if (!record) return;
-  const helper = record.source === ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE ? 'To modify this record, go to Actual Spend → Manual Spending.' : '';
+  const helper = record.source === ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE ? 'To modify this record, go to Actual Spend → Transactions.' : '';
   showCanonicalTransactionDetail(record, { title:'Actual Spend Detail', helper });
 }
 
@@ -4404,6 +4492,14 @@ if (typeof module !== 'undefined' && module.exports) {
     renderMemoSpendTypeDetail,
     renderCanonicalDetailSection,
     canonicalTransactionRecordFromMemo,
+    actualSpendTransactionFromRecord,
+    actualSpendTransactionDateLabel,
+    actualSpendTransactionMatchesSearch,
+    filteredActualSpendTransactions,
+    filteredActualSpendRecords,
+    canEditActualSpendTransaction,
+    renderManualEntries,
+    exportActualSpendTransactionsCSV,
     canonicalActualSpendSourceLabel,
     historicalMemoSourceRows,
     reconcileActualSpendSources,
@@ -4412,6 +4508,8 @@ if (typeof module !== 'undefined' && module.exports) {
     showCanonicalTransactionDetail,
     openCanonicalTransactionDetailForMemo,
     showManualEntryDetail,
+    loadManualExpenses,
+    storeManualExpenses,
     openAddSpendingTypeSelector,
     openHistoricalSpendingModal,
     saveHistoricalSpendingFromModal,
