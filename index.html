@@ -1812,12 +1812,18 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <!-- ── TAB: FORECAST ── -->
         <div id="bgt-tab-forecast" class="cost-tab-panel" style="display:none">
           <div style="padding:10px 0 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <span style="font-size:11px;color:var(--text-3)">Previous 6 months Actual + current/next 6 months Forecast</span>
+            <span style="font-size:11px;color:var(--text-3)">Previous 6 months Actual + current/next 5 months Forecast</span>
             <div class="filter-toolbar" style="margin-bottom:0">
               <span class="filter-control"><span class="filter-label">Period</span>
                 <input id="sl-forecast-period" type="month" class="filter-month" onchange="renderBudgetSLInfra()"></span>
               <select id="sl-forecast-proj" onchange="renderBudgetSLInfra()">
                 <option value="all">ทุกโปรเจค</option>
+              </select>
+              <select id="sl-forecast-program" onchange="renderBudgetSLInfra()">
+                <option value="all">ทุกโปรแกรม</option>
+              </select>
+              <select id="sl-forecast-plan" onchange="renderBudgetSLInfra()">
+                <option value="all">ทุกแผน</option>
               </select>
               <div class="filter-actions">
                 <button class="btn-export" onclick="exportForecastCSV()">⬇ Export CSV</button>

@@ -61,14 +61,14 @@ function actualSpendRecord(overrides = {}) {
   };
 }
 
-test('Forecast period window is previous six Actual months plus current and next six Forecast months', () => {
+test('Forecast period window is exactly 12 months: previous six plus current and next five', () => {
   const months = forecastMonths(anchor);
-  assert.equal(months.length, 13);
+  assert.equal(months.length, 12);
   assert.deepEqual(months.map(month => month.key), [
-    '2025-12','2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2026-12',
+    '2025-12','2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07','2026-08','2026-09','2026-10','2026-11',
   ]);
   assert.deepEqual(months.slice(0, 6).map(month => month.kind), ['actual','actual','actual','actual','actual','actual']);
-  assert.deepEqual(months.slice(6).map(month => month.kind), ['forecast','forecast','forecast','forecast','forecast','forecast','forecast']);
+  assert.deepEqual(months.slice(6).map(month => month.kind), ['forecast','forecast','forecast','forecast','forecast','forecast']);
 });
 
 test('Forecast splits one software memo into one component per detail line', () => {
@@ -102,7 +102,7 @@ test('Covered future Forecast month is fully source-supported', () => {
   assert.equal(isEligible(row, '2026-07'), true);
 });
 
-test('Historical software manual spending follows the same active-coverage forecast rule', () => {
+test('Historical software carries its latest Actual beyond the recorded end date', () => {
   const forecast = calculateForecast([completedSoftwareMemo({
     id: 'actual-spend-historical-HIST-SW',
     source: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
@@ -118,11 +118,12 @@ test('Historical software manual spending follows the same active-coverage forec
   })], anchor);
   const row = forecast.rows.find(item => item.program === 'Historical Program');
   assert.equal(row.values['2026-06'], 1000);
-  assert.equal(row.values['2026-07'], 0);
+  assert.equal(row.values['2026-07'], 1000);
   assert.equal(row.contributors['2026-07'].length, 0);
+  assert.equal(row.cellKinds['2026-07'], 'forecast');
 });
 
-test('Future month after detail-line coverage expires to zero', () => {
+test('Future month carries forward after detail-line coverage expires', () => {
   const memo = completedSoftwareMemo({
     amount: 15000,
     endDate: '2026-06',
@@ -133,7 +134,7 @@ test('Future month after detail-line coverage expires to zero', () => {
   });
   const forecast = calculateForecast([memo], anchor);
   const row = forecast.rows[0];
-  assert.equal(row.values['2026-07'], 0);
+  assert.equal(row.values['2026-07'], 1000);
   assert.equal(row.supportedValues['2026-07'], 0);
   assert.equal(row.contributors['2026-07'].length, 0);
   assert.equal(isEligible(row, '2026-07'), false);
@@ -212,7 +213,7 @@ test('Manual and Infra records remain record-level components', () => {
   assert.deepEqual(components.map(item => item.parentRecordId), ['actual-spend-manual-1', 'actual-spend-infra-1']);
 });
 
-test('Infrastructure repeats only inside its Start-End range', () => {
+test('Infrastructure carries its latest Actual beyond its Start-End range', () => {
   const forecast = calculateForecast([actualSpendRecord({
     id: 'actual-spend-infra-range',
     source: ACTUAL_SPEND_SOURCES.INFRA_COST,
@@ -228,10 +229,11 @@ test('Infrastructure repeats only inside its Start-End range', () => {
   assert.equal(row.values['2026-01'], 1000);
   assert.equal(row.values['2026-03'], 1000);
   assert.equal(row.values['2026-04'], 0);
-  assert.equal(row.values['2026-07'], 0);
+  assert.equal(row.values['2026-07'], 1000);
+  assert.equal(row.cellKinds['2026-07'], 'forecast');
 });
 
-test('One-time spending appears only in its Actual month and never repeats into Forecast', () => {
+test('One-time spending is excluded from Forecast entirely', () => {
   const forecast = calculateForecast([actualSpendRecord({
     id: 'actual-spend-hardware-once',
     spendType: SPEND_TYPES.HARDWARE,
@@ -241,14 +243,10 @@ test('One-time spending appears only in its Actual month and never repeats into 
     coverageMonths: 1,
     vendorProgram: 'Laptop',
   })], anchor);
-  const row = forecast.rows[0];
-  assert.equal(row.values['2026-02'], 12000);
-  assert.equal(row.values['2026-03'], 0);
-  assert.equal(row.values['2026-06'], 0);
-  assert.equal(row.values['2026-07'], 0);
+  assert.equal(forecast.rows.length, 0);
 });
 
-test('One-time spending outside the Actual lookback window does not create an empty Forecast row', () => {
+test('One-time Actual inside the forecast section is still excluded', () => {
   const forecast = calculateForecast([actualSpendRecord({
     id: 'actual-spend-future-hardware',
     spendType: SPEND_TYPES.HARDWARE,

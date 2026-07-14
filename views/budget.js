@@ -1599,7 +1599,7 @@ function forecastCellIsClickable(row, monthKey) {
   const displayAmount = Number(row?.values?.[monthKey]) || 0;
   const supportedAmount = Number(row?.supportedValues?.[monthKey]) || 0;
   const contributors = row?.contributors?.[monthKey] || [];
-  return displayAmount > 0 && contributors.length > 0 && Math.abs(displayAmount - supportedAmount) < 0.01;
+  return row?.cellKinds?.[monthKey] === 'actual' && displayAmount > 0 && contributors.length > 0 && Math.abs(displayAmount - supportedAmount) < 0.01;
 }
 
 function showForecastCellBreakdown(rowIndex, monthKey) {
@@ -1641,7 +1641,7 @@ function showForecastCellBreakdown(rowIndex, monthKey) {
     <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:10px;position:sticky;top:0;background:var(--surface);z-index:1">
       <div>
         <div style="font-size:14px;font-weight:600">${esc(row.project)} · ${esc(row.program)}</div>
-        <div style="font-size:11px;color:var(--text-3)">${esc(monthLabel)} · ${esc(month?.kind === 'forecast' ? 'Forecast source detail' : 'Actual source detail')}</div>
+        <div style="font-size:11px;color:var(--text-3)">${esc(monthLabel)} · Actual source detail</div>
       </div>
       <button class="btn-sm" onclick="document.getElementById('forecast-cell-breakdown-panel').remove()">✕</button>
     </div>
@@ -1670,7 +1670,7 @@ function _renderForecastTable() {
   const selectedPeriod = periodInput?.value || '';
   const anchorDate = selectedPeriod ? new Date(`${selectedPeriod}-01T00:00:00`) : new Date();
   const forecast = calculateForecast(loadActualSpendRecords(), anchorDate);
-  const allProjects = [...new Set(forecast.rows.map(row => row.project))].sort();
+  const allProjects = forecastCascadingOptions(forecast.rows).projects;
 
   // Project dropdown — Part 8 (UX consistency pass): multi-select filter.
   initMultiSelect('sl-forecast-proj', 'ทุกโปรเจค', 'Project');
@@ -1687,9 +1687,30 @@ function _renderForecastTable() {
     refreshMultiSelectUI('sl-forecast-proj');
   }
   const selProj = msValues('sl-forecast-proj');
+  const projectRows = forecast.rows.filter(row => !selProj.length || selProj.includes(row.project));
+  const syncCascadingFilter = (id, placeholder, label, values) => {
+    initMultiSelect(id, placeholder, label);
+    const select = document.getElementById(id);
+    if (!select) return [];
+    const selected = msValues(id).filter(value => values.includes(value));
+    select.innerHTML = '';
+    values.forEach(value => {
+      const option = document.createElement('option');
+      option.value = option.textContent = value;
+      option.selected = selected.includes(value);
+      select.appendChild(option);
+    });
+    refreshMultiSelectUI(id);
+    return selected;
+  };
+  const allPrograms = forecastCascadingOptions(forecast.rows, selProj).programs;
+  const selProgram = syncCascadingFilter('sl-forecast-program', 'ทุกโปรแกรม', 'Program / Software', allPrograms);
+  const programRows = projectRows.filter(row => !selProgram.length || selProgram.includes(row.program));
+  const allPlans = forecastCascadingOptions(forecast.rows, selProj, selProgram).plans;
+  const selPlan = syncCascadingFilter('sl-forecast-plan', 'ทุกแผน', 'Plan', allPlans);
   _forecastView = {
     months: forecast.months,
-    rows: forecast.rows.filter(row => !selProj.length || selProj.includes(row.project)),
+    rows: programRows.filter(row => !selPlan.length || selPlan.includes(row.plan)),
   };
   const months = _forecastView.months;
   const monthDate = key => new Date(`${key}-01T00:00:00`);
@@ -1726,7 +1747,8 @@ function _renderForecastTable() {
         rowTotal += v; projMonthTotals[mi] += v; projTotal += v;
         if(v > 0) {
           const clickable = forecastCellIsClickable(row, m.key);
-          const cellStyle = `${m.kind === 'forecast' ? tdFS : tdS}${clickable ? ';text-decoration:underline;cursor:pointer' : ''}`;
+          const isActual = row.cellKinds?.[m.key] === 'actual';
+          const cellStyle = `${m.kind === 'forecast' ? tdFS : tdS}${clickable ? ';text-decoration:underline;cursor:pointer' : ''}${isActual && m.kind === 'forecast' ? ';font-weight:600;color:var(--text)' : ''}`;
           const clickAttr = clickable ? ` onclick="showForecastCellBreakdown(${rowIndex},'${esc(m.key)}')"` : '';
           return `<td style="${cellStyle}"${clickAttr}>${money(Math.round(v))}</td>`;
         }

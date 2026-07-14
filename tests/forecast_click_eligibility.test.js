@@ -38,10 +38,10 @@ test('A cell with real, fully-supported contributors is clickable', () => {
   assert.equal(budget.forecastCellIsClickable(row, '2026-07'), true);
 });
 
-test('Expired software coverage no longer carries into forecast months', () => {
+test('Expired software carries into forecast months but remains non-clickable', () => {
   const forecast = calculateForecast([softwareMemo({ endDate: '2026-06', coverageMonths: 6, amount: 600 })], anchor);
   const row = forecast.rows[0];
-  assert.equal(row.values['2026-07'], 0);
+  assert.equal(row.values['2026-07'], 100);
   assert.equal(row.supportedValues['2026-07'], 0);
   assert.equal(budget.forecastCellIsClickable(row, '2026-07'), false);
 });
