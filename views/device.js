@@ -861,7 +861,10 @@ function renderDevice() {
     'dev-filter-platform': 'Platform', 'dev-filter-type': 'Type', 'dev-filter-status': 'Status',
     'dev-filter-project': 'Project', 'dev-filter-company': 'Company',
   };
-  Object.keys(_devFilterLabels).forEach(id => initMultiSelect(id, undefined, _devFilterLabels[id]));
+  Object.keys(_devFilterLabels).forEach(id => {
+    const label = _devFilterLabels[id];
+    initMultiSelect(id, `${label} All`, label);
+  });
   // Load fresh from Supabase then render
   loadDevicesAsync().then(() => _renderDeviceTable()).catch(() => _renderDeviceTable());
 }

@@ -6,11 +6,11 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('shared Resource-inspired UI layer is loaded and defines responsive contracts', () => {
+test('shared application UI layer is loaded and defines responsive contracts', () => {
   const index = read('index.html');
   const components = read('styles/components.css');
 
-  assert.match(index, /styles\/components\.css\?v=0\.3\.1/);
+  assert.match(index, /styles\/components\.css\?v=0\.3\.2/);
   assert.match(components, /--ui-control-h:\s*34px/);
   assert.match(components, /\.metric-row\s*\{[\s\S]*auto-fit/);
   assert.match(components, /@media \(max-width:\s*760px\)/);
@@ -18,6 +18,12 @@ test('shared Resource-inspired UI layer is loaded and defines responsive contrac
   assert.match(components, /\[id\$="-modal"\]/);
   assert.match(components, /#resource-detail-drawer\s*\{[\s\S]*position:\s*fixed/);
   assert.match(index, /class="history-tabs-scroll"/);
+  assert.match(components, /#view-device\s*\{[\s\S]*background:\s*transparent/);
+  assert.match(components, /#view-device > \.tab-bar/);
+  assert.match(components, /#view-device \.filter-toolbar--device[\s\S]*grid-template-columns:\s*repeat\(5/);
+  const resource = read('views/resource_module.js');
+  assert.match(resource, /#view-resource\{background:transparent;border:0/);
+  assert.match(resource, /\.res-tab\.is-active::after[\s\S]*height:2px/);
 });
 
 test('application typography uses Anuphan for UI and preserves IBM Plex for data and PDF', () => {
