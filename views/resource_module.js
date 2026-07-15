@@ -1784,7 +1784,7 @@ function ensureResChrome() {
     const st = document.createElement('style');
     st.id = 'res-timeline-style';
     st.textContent = `
-      .res-timeline-cell{display:block;width:100%;max-width:100%;padding:0!important;border-bottom:none!important;overflow:hidden;--timeline-person-width:190px;--timeline-grid-min-width:864px}
+      .res-timeline-cell{display:block;width:100%;max-width:100%;height:auto!important;min-height:0;padding:0!important;border-bottom:none!important;overflow:hidden;--timeline-person-width:190px;--timeline-grid-min-width:864px}
       .res-timeline-toolbar{display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-bottom:10px}
       .res-timeline-toolbar-controls{display:grid;grid-template-columns:minmax(190px,1fr) minmax(118px,.65fr) minmax(118px,.65fr) auto;gap:8px;align-items:center;justify-self:end;width:min(820px,100%)}
       .res-timeline-toolbar-select{width:100%;min-width:0;font-size:11px;padding:5px 8px}

@@ -26,6 +26,8 @@ test('shared application UI layer is loaded and defines responsive contracts', (
   const resource = read('views/resource_module.js');
   assert.match(resource, /#view-resource\{background:transparent;border:0/);
   assert.match(resource, /\.res-tab\.is-active::after[\s\S]*height:2px/);
+  assert.match(resource, /\.res-timeline-cell\{[^}]*height:auto!important/);
+  assert.match(index, /views\/resource_module\.js\?v=0\.5\.34/);
 });
 
 test('application typography uses Anuphan for UI and preserves IBM Plex for data and PDF', () => {
