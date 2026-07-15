@@ -6,6 +6,20 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
+test('shared Resource-inspired UI layer is loaded and defines responsive contracts', () => {
+  const index = read('index.html');
+  const components = read('styles/components.css');
+
+  assert.match(index, /styles\/components\.css\?v=0\.2\.0/);
+  assert.match(components, /--ui-control-h:\s*34px/);
+  assert.match(components, /\.metric-row\s*\{[\s\S]*auto-fit/);
+  assert.match(components, /@media \(max-width:\s*760px\)/);
+  assert.match(components, /--sidebar-rail-w:\s*56px/);
+  assert.match(components, /\[id\$="-modal"\]/);
+  assert.match(components, /#resource-detail-drawer\s*\{[\s\S]*position:\s*fixed/);
+  assert.match(index, /class="history-tabs-scroll"/);
+});
+
 test('shared PMO modal classes are defined in the app and style reference', () => {
   const index = read('index.html');
   const style = read('style.css');

@@ -1259,7 +1259,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 .cost-tab-panel { border:1px solid rgba(0,0,0,0.12); border-top:none; border-radius:0 var(--chrome-control-r) var(--chrome-control-r) var(--chrome-control-r); padding:14px; background:#FFFFFF; margin-bottom:14px; }
 </style>
 <link rel="stylesheet" href="theme.css?v=0.1.15">
-<link rel="stylesheet" href="styles/components.css?v=0.1.1">
+<link rel="stylesheet" href="styles/components.css?v=0.2.0">
 <script>
   (function () {
     try {
@@ -1729,8 +1729,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
       <!-- ════ ALL MEMOS (History) ════ -->
       <div id="view-history" class="view">
         <!-- Status tabs -->
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-          <div style="display:flex;gap:4px;background:var(--bg);border-radius:var(--r);padding:4px">
+        <div class="history-tabs-shell" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <div class="history-tabs-scroll" style="display:flex;gap:4px;background:var(--bg);border-radius:var(--r);padding:4px">
             <button class="hist-tab-btn active" data-status="all" onclick="switchHistTab('all',this)" style="font-family:inherit;font-size:12px;font-weight:500;padding:6px 14px;border:none;border-radius:var(--r-sm);cursor:pointer;transition:all .15s;background:var(--surface);color:var(--blue)">
               All <span class="hist-tab-count" style="margin-left:4px;font-size:10px;background:var(--bg);color:var(--text-3);padding:1px 6px;border-radius:10px"></span>
             </button>
@@ -2227,7 +2227,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <div class="metric-card"><div class="metric-label">Available</div><div class="metric-val" id="dev-available" style="color:var(--gray)">0</div><div class="metric-sub">ยังไม่มีผู้ถือ</div></div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+        <div class="system-split-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
           <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
             <div style="padding:12px 16px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600">Summary by Platform × Type</div>
             <table class="hist-table" id="dev-summary-platform">
