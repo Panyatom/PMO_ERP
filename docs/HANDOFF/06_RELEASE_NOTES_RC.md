@@ -164,4 +164,3 @@ Suggested commit message:
 ```text
 Add technical handoff documentation
 ```
-

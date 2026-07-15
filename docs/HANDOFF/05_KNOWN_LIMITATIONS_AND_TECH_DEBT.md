@@ -268,4 +268,3 @@ These require PMO/Tech Team confirmation before final production hardening.
 5. Move signatures to object storage.
 6. Simplify authority title legacy matching.
 7. Normalize historical hardware lines if device linking grows.
-

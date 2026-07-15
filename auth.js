@@ -12,6 +12,8 @@
       initials: 'CK',
     },
     role: 'pmo',
+    roles: ['pmo_admin'],
+    roleSource: '',
     organizationId: 'orbit-digital',
     project: '',
     accessToken: '',
@@ -33,24 +35,37 @@
     return (parts.length > 1 ? parts[0][0] + parts[1][0] : source.slice(0, 2)).toUpperCase();
   }
 
+  function normalizeRoles(value, fallback='pmo') {
+    if(global.PMO_ACCESS?.normalizeRoleKeys) return global.PMO_ACCESS.normalizeRoleKeys(value, fallback);
+    const aliases = { pmo:'pmo_admin', user:'employee', bbik:'recruiter' };
+    const source = Array.isArray(value) ? value : [value];
+    const roles = [...new Set(source.map(role => aliases[String(role || '').trim()] || String(role || '').trim()).filter(Boolean))];
+    return roles.length ? roles : [aliases[fallback] || fallback || 'employee'];
+  }
+
   function loadSession() {
     let saved = {};
     try { saved = safeParse(localStorage.getItem(KEY)); } catch(e) {}
     const user = { ...DEFAULT_SESSION.user, ...(saved.user || {}) };
     user.initials = initials(user.name, user.email);
+    const roles = normalizeRoles(saved.roles?.length ? saved.roles : (saved.role || DEFAULT_SESSION.role));
     return {
       ...DEFAULT_SESSION,
       ...saved,
       user,
       role: saved.role || DEFAULT_SESSION.role,
+      roles,
       project: saved.project || '',
     };
   }
 
   function storeSession(session) {
+    const roles = normalizeRoles(session.roles?.length ? session.roles : (session.role || DEFAULT_SESSION.role));
     const next = {
       ...DEFAULT_SESSION,
       ...session,
+      role: session.role || roles[0],
+      roles,
       user: { ...DEFAULT_SESSION.user, ...(session.user || {}) },
       updatedAt: new Date().toISOString(),
     };
@@ -72,7 +87,7 @@
 
   function setSessionRole(role) {
     if(!role) return loadSession();
-    return storeSession({ ...loadSession(), role });
+    return storeSession({ ...loadSession(), role, roles: normalizeRoles(role), roleSource:'session' });
   }
 
   function setSessionProject(project) {
@@ -88,6 +103,8 @@
       provider: 'mock',
       user: { name, email, initials: initials(name, email) },
       role: data?.role || 'pmo',
+      roles: normalizeRoles(data?.roles?.length ? data.roles : (data?.role || 'pmo')),
+      roleSource: 'session',
       project: data?.project || '',
       accessToken: '',
     });
@@ -98,7 +115,18 @@
   }
 
   function roleLabel(role) {
+    if(global.PMO_ACCESS?.roleLabel) return global.PMO_ACCESS.roleLabel(role);
     return ({ pmo:'PMO / Dir', user:'Requester', bbik:'BBIK' })[role] || role || 'PMO';
+  }
+
+  function authRoleOptions(selectedRole) {
+    if(!global.PMO_ACCESS?.ROLE_TEMPLATES) {
+      return `<option value="pmo">PMO / Dir</option><option value="user">Requester</option><option value="bbik">BBIK</option>`;
+    }
+    const selected = global.PMO_ACCESS.normalizeRoleKey(selectedRole) || 'pmo_admin';
+    return Object.entries(global.PMO_ACCESS.ROLE_TEMPLATES).map(([key, role]) =>
+      `<option value="${key}" ${key === selected ? 'selected' : ''}>${role.label}</option>`
+    ).join('');
   }
 
   function ensureAuthModal() {
@@ -106,7 +134,7 @@
     const style = document.createElement('style');
     style.id = 'auth-session-style';
     style.textContent = `
-      .auth-status-chip{height:32px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface-2,var(--surface));color:var(--text-2);padding:0 10px;display:inline-flex;align-items:center;gap:7px;font:600 12px 'IBM Plex Sans Thai',sans-serif;cursor:pointer}
+      .auth-status-chip{height:32px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface-2,var(--surface));color:var(--text-2);padding:0 10px;display:inline-flex;align-items:center;gap:7px;font:600 12px var(--font-ui);cursor:pointer}
       .auth-status-chip:hover{background:var(--bg);color:var(--text)}
       .auth-status-dot{width:7px;height:7px;border-radius:50%;background:var(--amber)}
       .auth-status-chip.is-signed-in .auth-status-dot{background:var(--green)}
@@ -143,7 +171,7 @@
           <div class="fg"><label>Email</label><input id="auth-email" class="ri" autocomplete="email"></div>
         </div>
         <div class="form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:14px">
-          <div class="fg"><label>Role</label><select id="auth-role" class="ri"><option value="pmo">PMO / Dir</option><option value="user">Requester</option><option value="bbik">BBIK</option></select></div>
+          <div class="fg"><label>Role</label><select id="auth-role" class="ri">${authRoleOptions('pmo_admin')}</select></div>
           <div class="fg"><label>Project scope</label><input id="auth-project" class="ri" placeholder="Optional"></div>
         </div>
         <div style="display:flex;justify-content:space-between;gap:8px">
@@ -161,7 +189,8 @@
       top.classList.toggle('is-signed-in', !!session.signedIn);
       const label = session.signedIn ? session.user.name : 'Sign in';
       top.querySelector('.auth-status-text').textContent = label;
-      top.title = session.signedIn ? `${session.user.email} - ${roleLabel(session.role)}` : 'Open mock sign in';
+      const roles = normalizeRoles(session.roles?.length ? session.roles : session.role);
+      top.title = session.signedIn ? `${session.user.email} - ${roles.map(roleLabel).join(', ')}` : 'Open mock sign in';
     }
   }
 
@@ -170,7 +199,7 @@
     const session = loadSession();
     document.getElementById('auth-name').value = session.user.name || '';
     document.getElementById('auth-email').value = session.user.email || '';
-    document.getElementById('auth-role').value = session.role || 'pmo';
+    document.getElementById('auth-role').innerHTML = authRoleOptions(session.roles?.[0] || session.role || 'pmo_admin');
     document.getElementById('auth-project').value = session.project || '';
     document.getElementById('auth-modal').classList.add('is-open');
   }

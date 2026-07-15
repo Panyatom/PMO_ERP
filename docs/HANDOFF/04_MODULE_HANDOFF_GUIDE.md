@@ -505,4 +505,3 @@ Common debugging locations:
 - License missing from memo: `parseLicenseFromMemo()` and memo status/type.
 - Duplicate/colliding license id: generated identity in `parseLicenseFromMemo()`.
 - Seat reconciliation mismatch: `_licSeatsByProjectSoftwarePlan()` and `computeLicReconciliation()`.
-

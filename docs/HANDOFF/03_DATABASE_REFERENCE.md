@@ -605,4 +605,3 @@ Current migrations deliberately use PoC-compatible RLS:
 - Delete is generally omitted except for the historical spending/device link join table, which grants delete for unlink behavior.
 
 This is not the final production authorization model. See [limitations](./05_KNOWN_LIMITATIONS_AND_TECH_DEBT.md).
-

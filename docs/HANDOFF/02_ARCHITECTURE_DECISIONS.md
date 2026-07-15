@@ -285,4 +285,3 @@ Trade-offs:
 - More duplicate or transitional code paths.
 
 Future considerations: Remove compatibility paths only after a data audit and migration/backfill.
-

@@ -393,4 +393,3 @@ Rules:
 - Legacy SL license derivation can parse rendered HTML if `slItems` is missing.
 - Historical memos are memo-shaped but are distinct from `memos`.
 - Actual Spend source values are intentionally only `memo` and `manual_spending`, while `storageKind` preserves the lower-level origin.
-
