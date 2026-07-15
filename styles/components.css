@@ -981,7 +981,11 @@ textarea {
 
 #view-device > .pmo-workspace-page-head { margin-bottom: 14px; }
 
-#view-device > .tab-bar {
+#view-budget > .cost-tab-bar,
+#view-license > .tab-bar,
+#view-device > .tab-bar,
+#view-cost > .cost-tab-bar,
+#view-history .history-tabs-shell {
   display: flex;
   align-items: flex-end;
   gap: 0;
@@ -993,7 +997,18 @@ textarea {
   background: transparent;
 }
 
-#view-device > .tab-bar .tab-btn {
+#view-history .history-tabs-scroll {
+  display: flex !important;
+  align-items: flex-end;
+  gap: 0 !important;
+  min-height: 40px;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+:is(#view-budget, #view-license, #view-device, #view-cost) :is(.tab-btn, .cost-stab),
+#view-history .hist-tab-btn {
   position: relative;
   height: 40px;
   padding: 0 15px;
@@ -1005,23 +1020,29 @@ textarea {
   opacity: 1;
 }
 
-#view-device > .tab-bar .tab-btn:hover {
+:is(#view-budget, #view-license, #view-device, #view-cost) :is(.tab-btn, .cost-stab):hover,
+#view-history .hist-tab-btn:hover {
   background: color-mix(in srgb, var(--blue) 6%, transparent) !important;
   color: var(--text) !important;
   opacity: 1;
 }
 
-#view-device > .tab-bar .tab-btn.active {
+:is(#view-budget, #view-license, #view-device, #view-cost) :is(.tab-btn, .cost-stab).active,
+#view-license :is(.tab-btn, .lic-tab-btn).lic-tab-active,
+#view-history .hist-tab-btn.active {
   background: transparent !important;
   color: var(--blue-800) !important;
+  font-weight: 700 !important;
   box-shadow: none !important;
   opacity: 1;
 }
 
-#view-device > .tab-bar .tab-btn.active::after {
+:is(#view-budget, #view-license, #view-device, #view-cost) :is(.tab-btn, .cost-stab).active::after,
+#view-license :is(.tab-btn, .lic-tab-btn).lic-tab-active::after,
+#view-history .hist-tab-btn.active::after {
   content: '';
   position: absolute;
-  right: 0;
+  right: 14px;
   bottom: 0;
   left: 14px;
   height: 2px;
