@@ -98,8 +98,13 @@ function histMatchesAmount(memo, preset, minVal, maxVal) {
 // ── All-memo tab state ──
 let _histTab = 'all';
 
+function ensureHistoryPendingFilterAvailable() {
+  // History is a related-memo tracker, so pending-family memos stay visible here.
+}
+
 function switchHistTab(status, btn) {
   _histTab = status;
+  ensureHistoryPendingFilterAvailable();
   document.querySelectorAll('.hist-tab-btn').forEach(b => {
     const active = b.dataset.status === status;
     b.classList.toggle('active', active);
@@ -115,16 +120,19 @@ function switchHistTab(status, btn) {
 
 // ── Filter / sort (all statuses now) ──
 function getHistoryMemos() {
-  // Return ALL memos — not just completed/rejected
-  return loadMemos();
+  return loadMemos().filter(memo =>
+    typeof canCurrentUserViewMemoHistory === 'function'
+      ? canCurrentUserViewMemoHistory(memo)
+      : !isPendingFamilyMemo(memo)
+  );
 }
 
 function populateHistTabCounts() {
-  const all = loadMemos();
+  const all = getHistoryMemos();
   const counts = {
     all:       all.length,
     draft:     all.filter(m => m.status === 'draft').length,
-    pending:   all.filter(m => !m.status || (m.status === 'pending' || m.status === 'pending_a2' || m.status === 'pending_a3')).length,
+    pending:   all.filter(m => isPendingFamilyMemo(m)).length,
     completed: all.filter(m => m.status === 'completed').length,
     rejected:  all.filter(m => m.status === 'rejected').length,
     cancelled: all.filter(m => m.status === 'cancelled').length,
@@ -155,7 +163,8 @@ function filteredHistoryMemos() {
 
   let memos = getHistoryMemos().filter(memo => {
     const sk = memoStatusKey(memo);
-    if (status !== 'all' && sk !== status) return false;
+    if (status === 'pending' && !isPendingFamilyMemo(memo)) return false;
+    if (status !== 'all' && status !== 'pending' && sk !== status) return false;
     if (type.length && !type.includes(memo.type)) return false;
     if (project.length && !project.includes(memo.project)) return false;
     if (!useCustomDates && !histInPresetRange(memo, range)) return false;
@@ -257,8 +266,18 @@ function _memoLinkedRecordsButtonsHtml(memo) {
 // (buildApprovalTimeline, below) and the PDF appendix
 // (buildApprovalTimelinePdfHtml, app.js's renderMemoPdf). Only applicable
 // events for this memo are included — no fixed/hardcoded stage list.
+function histPmoAuditLabel(e) {
+  if (!String(e?.action || '').startsWith('PMO Override')) return e?.action || '';
+  if (e.statusAfter === 'rejected') return 'PMO Override: Rejected';
+  const stage = e.statusBefore === 'pending_a3' ? 'A3' : e.statusBefore === 'pending_a2' ? 'A2' : 'A1';
+  if (e.statusAfter === 'completed') return `PMO Override: ${stage} overridden and completed`;
+  if (e.statusAfter === 'pending_a3') return `PMO Override: ${stage} overridden and sent to A3`;
+  if (e.statusAfter === 'pending_a2') return `PMO Override: ${stage} overridden and sent to A2`;
+  return e.action;
+}
 function computeApprovalTimelineEvents(memo) {
   const events = [];
+  const pmoStageLabel = i => i === 0 ? 'Reviewer' : `A${i + 1}`;
   if (memo.createdAt) events.push({ at: memo.createdAt, label: 'สร้าง Memo (Draft)', actor: histRequesterName(memo), kind: 'create' });
   if (memo.submittedAt && memo.submittedAt !== memo.createdAt) {
     events.push({ at: memo.submittedAt, label: 'ส่งขออนุมัติ (Submitted)', actor: histRequesterName(memo), kind: 'submit' });
@@ -290,7 +309,7 @@ function computeApprovalTimelineEvents(memo) {
     } else if (a.status === 'bypassed' && a.approvedAt) {
       events.push({ at: a.approvedAt, label: `${roleLabel} ข้ามการตรวจสอบ (Self Review)`, actor: a.name, kind: 'approve' });
     } else if (a.status === 'overridden' && a.overriddenAt) {
-      events.push({ at: a.overriddenAt, label: `${roleLabel} — PMO Override`, actor: a.overriddenBy, comment: a.overrideNote, kind: 'audit' });
+      events.push({ at: a.overriddenAt, label: `${pmoStageLabel(i)} stage overridden by PMO`, actor: a.overriddenBy, comment: a.overrideNote, kind: 'audit' });
     } else if (a.status === 'rejected' && a.rejectedAt) {
       events.push({ at: a.rejectedAt, label: `${roleLabel} ปฏิเสธ (Rejected)`, actor: a.rejectedBy, kind: 'reject' });
     }
@@ -299,7 +318,7 @@ function computeApprovalTimelineEvents(memo) {
     if (step.doneAt) events.push({ at: step.doneAt, label: `${step.role} อนุมัติ`, actor: step.name, kind: 'approve' });
   });
   (memo.auditLog || []).forEach(e => {
-    events.push({ at: e.timestamp, label: e.action, actor: e.actor, comment: e.comment, kind: 'audit' });
+    events.push({ at: e.timestamp, label: histPmoAuditLabel(e), actor: e.actor, comment: e.comment, kind: 'audit' });
   });
   // De-duplicate: the same transition is often captured both as a structured
   // field above (for a friendlier label) and as a generic auditLog entry.
@@ -347,6 +366,13 @@ function buildApprovalTimelinePdfHtml(memo) {
 function buildApprovalInfoRows(memo) {
   const rows = [];
   const requester = histRequesterName(memo);
+  const pmoOverrideReason = memo.pmoOverrideNote
+    || (memo.approvers || []).find(a => a?.status === 'overridden' && a.overrideNote)?.overrideNote
+    || [...(memo.auditLog || [])].reverse().find(e => String(e.action || '').startsWith('PMO Override') && e.comment)?.comment
+    || '';
+  const pmoOverrideEvidence = memo.pmoEvidenceUrl
+    || [...(memo.auditLog || [])].reverse().find(e => String(e.action || '').startsWith('PMO Override') && e.evidenceUrl)?.evidenceUrl
+    || '';
   if (requester && requester !== '—') rows.push(['ผู้ขอ (Requester)', requester]);
 
   (memo.approvers || []).forEach((a, i) => {
@@ -362,7 +388,8 @@ function buildApprovalInfoRows(memo) {
     rows.push([roleLabel, `${a.name}${a.title ? ' ('+a.title+')' : ''} — ${statusText}${atText ? ' · ' + atText : ''}`]);
 
     if (a.status === 'overridden') {
-      rows.push([`PMO Override — ${roleLabel}`, `โดย ${a.overriddenBy || '—'}${a.overrideNote ? ' · เหตุผล: ' + a.overrideNote : ''}`]);
+      const stageLabel = i === 0 ? 'Reviewer' : `A${i + 1}`;
+      rows.push([`${stageLabel} stage overridden by PMO`, `โดย ${a.overriddenBy || '—'}${a.overrideNote ? ' · เหตุผล: ' + a.overrideNote : ''}`]);
     }
     if (a.status === 'bypassed') {
       rows.push([`Self Review — ${roleLabel}`, `${a.name} เป็นผู้ขอเอง จึงข้ามขั้นตอนการตรวจสอบของตนเอง`]);
@@ -373,9 +400,10 @@ function buildApprovalInfoRows(memo) {
   if (memo.status === 'completed' && memo.approvedAt) rows.push(['วันที่อนุมัติสมบูรณ์ (Approved)', formatDateTime(memo.approvedAt)]);
 
   if (memo.status === 'rejected') {
-    rows.push(['เหตุผลที่ปฏิเสธ (Rejected Reason)', memo.rejectionReason || '—']);
+    rows.push(['เหตุผลที่ปฏิเสธ (Rejected Reason)', memo.rejectionReason || pmoOverrideReason || '—']);
     rows.push(['ปฏิเสธโดย / วันที่', `${memo.rejectedBy || '—'} · ${memo.rejectedAt ? formatDateTime(memo.rejectedAt) : '—'}`]);
   }
+  if (pmoOverrideEvidence) rows.push(['หลักฐาน PMO Override (Evidence)', 'แนบไฟล์แล้ว']);
   if (memo.status === 'cancelled') {
     rows.push(['เหตุผลที่ยกเลิก (Cancelled Reason)', memo.cancellationReason || '—']);
     rows.push(['ยกเลิกโดย / วันที่', `${memo.cancelledBy || '—'} · ${memo.cancelledAt ? formatDateTime(memo.cancelledAt) : '—'}`]);
@@ -516,9 +544,11 @@ function _buildMemoDetailContent(memo, mode) {
               white-space:nowrap;min-width:90px">${esc(shortDate(e.timestamp))}</div>
             <div style="font-size:12px;color:var(--text-2,var(--color-text-secondary))">
               <span style="font-weight:500;color:var(--text-1,var(--color-text-primary))">${esc(e.actor)}</span>
-              — ${esc(e.action)}
+              — ${esc(histPmoAuditLabel(e))}
               ${e.comment ? `<div style="font-size:11px;color:var(--text-3,var(--color-text-tertiary));
                 margin-top:2px">${esc(e.comment)}</div>` : ''}
+              ${e.evidenceUrl ? `<div style="font-size:11px;color:var(--text-3,var(--color-text-tertiary));
+                margin-top:2px">Evidence attached</div>` : ''}
             </div>
           </div>`).join('')
       : `<div style="font-size:12px;color:var(--text-3,var(--color-text-tertiary));
@@ -788,8 +818,12 @@ function _cleanSectionTable(html) {
 
 // ── Main entry points ───────────────────────────────────
 function openHistoryDetail(memoNo) {
-  const memo = getHistoryMemos().find(m => m.memoNo === memoNo);
+  const memo = getHistoryMemos().find(m => m.memoNo === memoNo) || loadMemos().find(m => m.memoNo === memoNo);
   if (!memo) { alert('ไม่พบ Memo'); return; }
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์ดู Memo นี้');
+    return;
+  }
 
   document.getElementById('detail-content').innerHTML = _buildMemoDetailContent(memo, 'full');
 
@@ -803,18 +837,10 @@ function openHistoryDetail(memoNo) {
   const isDraft     = _st === 'draft';
   const isVoided    = _st === 'voided'; // Milestone 1B
   const isOwn       = typeof isMemoRequester === 'function' ? isMemoRequester(memo) : false;
-  const canApprove  = isPending && typeof canCurrentUserActOnMemo === 'function' && canCurrentUserActOnMemo(memo);
-  const canCancel   = isPending && isOwn;
   const isPMOUser   = typeof isPMO === 'function' && isPMO();
+  const canDuplicate = !isDraft && (isCompleted || isCancelled || isPending || isVoided) && (isOwn || isPMOUser);
 
   acts.innerHTML = `
-    ${canApprove ? `
-      <button class="btn-primary" type="button" onclick="closeDetailModal();openApproveModal('${_no}')">✓ Approve</button>
-      <button class="btn-reject"  type="button" onclick="closeDetailModal();openRejectModal('${_no}')">✕ Reject</button>
-    ` : ''}
-    ${canCancel ? `
-      <button class="btn-sm" type="button" style="color:var(--red)" onclick="closeDetailModal();cancelMemo('${_no}')">✕ Cancel</button>
-    ` : ''}
     ${!isDraft ? `
       <button class="btn-sm" type="button" onclick="if(typeof downloadMemoPdf==='function'){downloadMemoPdf(loadMemos().find(m=>m.memoNo==='${_no}'))}" style="color:var(--blue)">⬇ Download PDF</button>
     ` : ''}
@@ -822,7 +848,7 @@ function openHistoryDetail(memoNo) {
     ${isRejected ? `
       <button class="btn-sm" type="button" onclick="closeDetailModal();reeditRejectedMemo('${_no}')">✎ Re-edit as New Draft</button>
     ` : ''}
-    ${(isCompleted||isCancelled||isPending||isVoided) && !isDraft ? `
+    ${canDuplicate ? `
       <button class="btn-sm" type="button" onclick="closeDetailModal();duplicateMemo('${_no}')">⊕ Duplicate</button>
     ` : ''}
     ${isDraft ? `
@@ -933,15 +959,20 @@ async function confirmVoidMemo(memoNo) {
 }
 
 // ── Read-only detail (Budget / License / Device tabs) ──
-function openMemoReadOnly(memoNo) {
+function openMemoReadOnly(memoNo, options = {}) {
   const memo = loadMemos().find(m => m.memoNo === memoNo) || getHistoryMemos().find(m => m.memoNo === memoNo);
   if (!memo) { alert('ไม่พบ Memo'); return; }
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์ดู Memo นี้');
+    return;
+  }
   document.getElementById('detail-content').innerHTML = _buildMemoDetailContent(memo, 'readonly');
   const acts = document.getElementById('detail-actions');
   // Read-only tabs: no approve/reject/tag-budget/duplicate, but the Device
   // Management deep-links (Part 5) are still useful here since this view is
   // itself reached by clicking a memo number from the PO table.
-  if (acts) acts.innerHTML = `${_memoLinkedRecordsButtonsHtml(memo)}<button class="btn-ghost" type="button" onclick="closeDetailModal()">ปิด</button>`;
+  const linkedActions = options?.source === 'device-detail' ? '' : _memoLinkedRecordsButtonsHtml(memo);
+  if (acts) acts.innerHTML = `${linkedActions}<button class="btn-ghost" type="button" onclick="closeDetailModal()">ปิด</button>`;
   const modalInner = document.querySelector('#detail-modal > div');
   if (modalInner) modalInner.style.maxWidth = '680px';
   document.getElementById('detail-modal').style.display = 'flex';
@@ -1049,6 +1080,7 @@ function handleHistoryTableClick(e) {
 if (typeof window._histVisible === 'undefined') window._histVisible = 20;
 
 function renderHistoryMemos() {
+  ensureHistoryPendingFilterAvailable();
   // Part 8 (UX consistency pass) — Type/Project are multi-select filters.
   // initMultiSelect() is idempotent, and must run before
   // populateHistFilterOptions() populates hist-project's options.
@@ -1106,6 +1138,10 @@ function renderHistoryMemos() {
 function editDraft(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
   if (!memo || memo.status !== 'draft') return;
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์แก้ไข Draft นี้');
+    return;
+  }
   try { localStorage.setItem('orbit-pmo-edit-draft', JSON.stringify(memo)); } catch(e) {}
   swView('create', document.querySelector('.sb-sub-item[onclick*="create"]'), 'Create Memo');
   setTimeout(() => { if (typeof applyDraftEdit === 'function') applyDraftEdit(); }, 100);
@@ -1116,6 +1152,10 @@ function editDraft(memoNo) {
 async function deleteDraft(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
   if (!memo || memo.status !== 'draft') return; // only Draft is user-deletable
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์ลบ Draft นี้');
+    return;
+  }
   if (!confirm(`ลบ Draft "${memoNo}" ออกจากระบบ?`)) return;
 
   const now = new Date().toISOString();
@@ -1163,6 +1203,16 @@ function _auditMemoDuplicated(memoNo, action) {
 function duplicateMemo(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
   if (!memo) return;
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์ดู Memo นี้');
+    return;
+  }
+  const isRequester = typeof isMemoRequester === 'function' && isMemoRequester(memo);
+  const isPmoUser = typeof isPMO === 'function' && isPMO();
+  if (!isRequester && !isPmoUser) {
+    alert('Duplicate ใช้ได้เฉพาะ Requester หรือ PMO เท่านั้น');
+    return;
+  }
   if (!confirm(`Duplicate "${memoNo}" เป็น Draft ใหม่?`)) return;
   try {
     localStorage.setItem('orbit-pmo-edit-draft', JSON.stringify(draftFromMemo(memo)));
@@ -1175,6 +1225,10 @@ function duplicateMemo(memoNo) {
 function reeditRejectedMemo(memoNo) {
   const memo = loadMemos().find(m => m.memoNo === memoNo);
   if (!memo || memo.status !== 'rejected') return;
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(memo)) {
+    alert('คุณไม่มีสิทธิ์ดู Memo นี้');
+    return;
+  }
   if (!confirm(`เปิด Memo "${memoNo}" เพื่อ Re-edit เป็น Draft ใหม่?\nMemo ที่ถูก Reject จะยังคงอยู่ใน History`)) return;
   try {
     localStorage.setItem('orbit-pmo-edit-draft', JSON.stringify(draftFromMemo(memo, memoNo)));
@@ -1194,17 +1248,52 @@ document.addEventListener('click', e => {
 
 // ── Budget Tag Cell (inline in history table) ──
 // Default: auto-assign to memo.project — PMO can override to Company-Wide
-function getMemoActualSpend(memoNo) {
+function isHistoricalBudgetMemo(memo) {
+  return Boolean(memo && (memo.sourceKind === 'historical' || memo.isHistoricalMemo));
+}
+
+function budgetTagMemoKey(memo) {
+  if (!isHistoricalBudgetMemo(memo)) return memo?.memoNo || '';
+  return `historical:${memo.id || memo.memoNo}`;
+}
+
+function findBudgetTagMemo(ref) {
+  const value = String(ref || '');
+  const historicalId = value.replace(/^historical:/, '');
+  if (value.startsWith('historical:')) {
+    const memo = typeof loadHistoricalMemos === 'function'
+      ? loadHistoricalMemos().find(item => String(item.id || '') === historicalId || String(item.memoNo || '') === historicalId)
+      : null;
+    return memo ? { memo, historical: true } : null;
+  }
+  const approved = getHistoryMemos().find(m => m.memoNo === value) || loadMemos().find(m => m.memoNo === value);
+  if (approved) return { memo: approved, historical: false };
+  const historical = typeof loadHistoricalMemos === 'function'
+    ? loadHistoricalMemos().find(item => String(item.memoNo || '') === value || String(item.id || '') === value)
+    : null;
+  return historical ? { memo: historical, historical: true } : null;
+}
+
+function completedBudgetTagMemos() {
+  const approved = typeof loadMemos === 'function' ? loadMemos().filter(m => m.status === 'completed') : [];
+  const historical = typeof loadHistoricalMemos === 'function' ? loadHistoricalMemos().filter(m => m.status === 'completed') : [];
+  return [...approved, ...historical];
+}
+
+function getMemoActualSpend(memoOrRef) {
   if (typeof loadActualSpendRecords !== 'function') return null;
-  return loadActualSpendRecords().find(record => record.memoId === memoNo) || null;
+  const key = typeof memoOrRef === 'object' ? budgetTagMemoKey(memoOrRef) : String(memoOrRef || '');
+  return loadActualSpendRecords().find(record => record.memoId === key) || null;
 }
 
 function getEffectiveBudgetSource(memo) {
-  const actualSpend = getMemoActualSpend(memo.memoNo);
+  const actualSpend = getMemoActualSpend(memo);
   const effectivePoolId = actualSpend?.finalBudgetPoolId || memo.finalBudgetPoolId || memo.budgetPoolId;
   // If PMO directly picked a pool, show pool name (project / pool name)
   if (effectivePoolId) {
-    const pools = typeof loadBudgetPools === 'function' ? loadBudgetPools() : [];
+    const pools = typeof loadBudgetPools === 'function'
+      ? loadBudgetPools()
+      : (typeof loadBudgetPoolRecords === 'function' ? loadBudgetPoolRecords() : []);
     const pool  = pools.find(p => p.id === effectivePoolId);
     if (pool) return { source: pool.project + ' / ' + pool.name, isAuto: !actualSpend?.manualBudgetPoolId, poolId: pool.id };
     // Pool was deleted — fall back to budgetSource
@@ -1244,7 +1333,8 @@ function buildBudgetSourceBadge(memo) {
 }
 
 function openBudgetTagModal(memoNo) {
-  const memo = getHistoryMemos().find(m => m.memoNo === memoNo);
+  const target = findBudgetTagMemo(memoNo);
+  const memo = target?.memo;
   if (!memo) return;
   if (typeof isPMO === 'function' && !isPMO()) {
     alert('Tag Budget สำหรับ PMO เท่านั้น');
@@ -1263,10 +1353,11 @@ function openBudgetTagModal(memoNo) {
   // records (createBudgetPoolRecord() derives year from normalized startMonth) — not the raw
   // loadBudgetPools() result — or a legacy corrupted pool (e.g. year:"3112") would be selectable
   // here, and the year filter/pool period display would disagree with Budget Settings/BvA/Export.
-  const allPools   = typeof loadBudgetPools === 'function'
-    ? loadBudgetPools().map(pool => typeof createBudgetPoolRecord === 'function' ? createBudgetPoolRecord(pool) : pool)
-    : [];
-  const allMemos   = typeof loadMemos === 'function' ? loadMemos().filter(m => m.status === 'completed') : [];
+  const rawPools = typeof loadBudgetPools === 'function'
+    ? loadBudgetPools()
+    : (typeof loadBudgetPoolRecords === 'function' ? loadBudgetPoolRecords() : []);
+  const allPools = rawPools.map(pool => typeof createBudgetPoolRecord === 'function' ? createBudgetPoolRecord(pool) : pool);
+  const allMemos   = completedBudgetTagMemos();
 
   // Phase 7A-9C (TD-7A-02): read the canonical Actual Spend mapping result for each memo instead
   // of recomputing a match — the removed legacy pool-matching helper had its own narrowest-pool
@@ -1279,7 +1370,7 @@ function openBudgetTagModal(memoNo) {
       .map(record => [record.memoId, record])
   );
   function effectivePoolId(m) {
-    const record = actualSpendByMemo.get(m.memoNo);
+    const record = actualSpendByMemo.get(budgetTagMemoKey(m));
     return record && typeof getFinalBudgetPoolId === 'function' ? getFinalBudgetPoolId(record) : null;
   }
 
@@ -1365,7 +1456,8 @@ function openBudgetTagModal(memoNo) {
   }
 
   // ── Build modal header ──
-  const autoMatchPoolId = (actualSpendByMemo.get(memo.memoNo) || {}).autoBudgetPoolId || null;
+  const memoKey = budgetTagMemoKey(memo);
+  const autoMatchPoolId = (actualSpendByMemo.get(memoKey) || {}).autoBudgetPoolId || null;
   const autoMatch = autoMatchPoolId ? allPools.find(p => p.id === autoMatchPoolId) : null;
   const { source: curSource, isAuto } = getEffectiveBudgetSource(memo);
 
@@ -1395,7 +1487,7 @@ function openBudgetTagModal(memoNo) {
   }
 
   buildPoolOptions();
-  document.getElementById('btm-save-btn').onclick = () => saveBudgetTag(memoNo);
+  document.getElementById('btm-save-btn').onclick = () => saveBudgetTag(memoKey);
   modal.style.display = 'flex';
 }
 
@@ -1405,7 +1497,8 @@ function closeBudgetTagModal() {
 }
 
 function saveBudgetTag(memoNo) {
-  const memo = getHistoryMemos().find(m => m.memoNo === memoNo);
+  const target = findBudgetTagMemo(memoNo);
+  const memo = target?.memo;
   if (!memo) return;
   if (memo.status !== 'completed') {
     alert('Tag Budget ได้เฉพาะ Memo ที่อนุมัติแล้วเท่านั้น');
@@ -1424,7 +1517,9 @@ function saveBudgetTag(memoNo) {
     newSource = null;
   } else {
     // PMO picked a specific pool
-    const pools = typeof loadBudgetPools === 'function' ? loadBudgetPools() : [];
+    const pools = typeof loadBudgetPools === 'function'
+      ? loadBudgetPools()
+      : (typeof loadBudgetPoolRecords === 'function' ? loadBudgetPoolRecords() : []);
     const pool  = pools.find(p => p.id === selected);
     if (!pool) { alert('ไม่พบ Pool ที่เลือก'); return; }
     // Cross-year Manual Override is not allowed for Tag Budget either (Phase 7A-3): the same
@@ -1439,8 +1534,7 @@ function saveBudgetTag(memoNo) {
       alert(`Budget Pool ที่เลือกอยู่คนละ Project กับ Memo นี้ (Pool: ${canonicalPool.project}, Memo: ${memo.project})\nไม่สามารถ Tag Budget ข้าม Project ได้ กรุณาเลือก Budget Pool ของ Project เดียวกับ Memo`);
       return;
     }
-    const existingRecord = typeof loadActualSpendRecords === 'function'
-      ? loadActualSpendRecords().find(r => r.memoId === memoNo) : null;
+    const existingRecord = getMemoActualSpend(memo);
     let mappingDate = existingRecord && typeof actualSpendMappingDate === 'function'
       ? actualSpendMappingDate(existingRecord) : null;
     if (!mappingDate) {
@@ -1462,6 +1556,44 @@ function saveBudgetTag(memoNo) {
     newSource = pool.project; // derive budgetSource from pool's project
   }
 
+  const memoKey = budgetTagMemoKey(memo);
+  const canonicalPools = typeof loadBudgetPoolRecords === 'function' ? loadBudgetPoolRecords() : [];
+
+  if (target.historical) {
+    const previousPoolId = memo.budgetPoolId || null;
+    const previousLabel  = typeof getEffectiveBudgetSource === 'function'
+      ? getEffectiveBudgetSource(memo).source
+      : (memo.budgetSource || '(ไม่ระบุ)');
+    const actualSpend = typeof updateActualSpendBudgetOverride === 'function'
+      ? updateActualSpendBudgetOverride(memoKey, newPoolId, canonicalPools)
+      : null;
+    const updatedMemo = {
+      ...memo,
+      budgetPoolId: newPoolId,
+      manualBudgetPoolId: actualSpend?.manualBudgetPoolId || newPoolId || null,
+      autoBudgetPoolId: actualSpend?.autoBudgetPoolId || null,
+      finalBudgetPoolId: actualSpend?.finalBudgetPoolId || null,
+      budgetStatus: actualSpend?.budgetStatus || (newPoolId ? 'Manual Override' : 'Unbudgeted'),
+      budgetSource: newSource,
+      updatedAt: new Date().toISOString(),
+      auditLog: [
+        ...(memo.auditLog || []),
+        {
+          action: 'Budget tag changed',
+          actor: typeof currentUser === 'function' ? currentUser() : '',
+          comment: `"${previousLabel}" → "${newSource || memo.project || '(ไม่ระบุ)'}"`,
+          previousBudgetPoolId: previousPoolId,
+          newBudgetPoolId: newPoolId,
+          timestamp: new Date().toISOString(),
+        }
+      ],
+    };
+    if (typeof saveHistoricalMemo === 'function') saveHistoricalMemo(updatedMemo);
+    closeBudgetTagModal();
+    if (typeof renderBudget === 'function') renderBudget();
+    return;
+  }
+
   // ── Write to localStorage directly ──
   const memos = loadMemos();
   const idx   = memos.findIndex(m => m.memoNo === memoNo);
@@ -1471,7 +1603,6 @@ function saveBudgetTag(memoNo) {
   const previousLabel  = typeof getEffectiveBudgetSource === 'function'
     ? getEffectiveBudgetSource(memos[idx]).source
     : (memos[idx].budgetSource || '(ไม่ระบุ)');
-  const canonicalPools = typeof loadBudgetPoolRecords === 'function' ? loadBudgetPoolRecords() : [];
   let actualSpend = typeof updateActualSpendBudgetOverride === 'function'
     ? updateActualSpendBudgetOverride(memoNo, newPoolId, canonicalPools)
     : null;
@@ -1536,4 +1667,17 @@ function loadMoreHistory() {
 }
 function resetHistoryPagination() {
   window._histVisible = 20;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    _buildMemoDetailContent,
+    _buildMemoTypeSection,
+    openHistoryDetail,
+    openMemoReadOnly,
+    openBudgetTagModal,
+    saveBudgetTag,
+    getMemoActualSpend,
+    getEffectiveBudgetSource,
+  };
 }

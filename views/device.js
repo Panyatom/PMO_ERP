@@ -26,6 +26,7 @@ function deviceToDb(d, isNew=false) {
     platform:      d.platform || 'other',
     type:          d.type || 'other',
     serial:        d.serial || null,
+    asset_it:      d.assetIt || null,
     asset_tag:     d.assetTag || null,
     pbx_number:    d.pbxNumber || null,
     owner:         d.owner || null,
@@ -38,7 +39,7 @@ function deviceToDb(d, isNew=false) {
     qa_owner:      d.qaOwner || null,
     os_version:    d.osVersion || null,
     photo_url:     d.photoUrl || null,
-    status:        d.status || 'not_identified',
+    status:        normalizeDeviceStatus(d.status, d.qaOwner),
     memo_ref:      d.memoNo || null,    // use memoNo as single field name
     purchase_order_id: d.purchaseOrderId || null,
     note:          d.note || null,
@@ -66,6 +67,7 @@ function dbToDevice(r) {
     platform:     r.platform || 'other',
     type:         r.type || 'other',
     serial:       r.serial || '',
+    assetIt:      r.asset_it || '',
     assetTag:     r.asset_tag || '',
     pbxNumber:    r.pbx_number || '',
     owner:        r.owner || '',
@@ -78,7 +80,7 @@ function dbToDevice(r) {
     qaOwner:      r.qa_owner || '',
     osVersion:    r.os_version || '',
     photoUrl:     r.photo_url || '',
-    status:       r.status || 'not_identified',
+    status:       normalizeDeviceStatus(r.status, r.qa_owner),
     memoNo:       r.memo_ref || '',   // canonical field name
     purchaseOrderId: r.purchase_order_id || '',
     note:         r.note || '',
@@ -137,13 +139,13 @@ function _excludeDeletedDevices(devices) {
   return (devices || []).filter(d => !d.deleted);
 }
 function _loadDevicesRaw() {
-  if (_devCache !== null && _devCache.length > 0) return _devCache;
+  if (_devCache !== null && _devCache.length > 0) return _devCache.map(normalizeDeviceRecord);
   try {
     const d = JSON.parse(localStorage.getItem(DEVICE_KEY) || '[]');
     if (Array.isArray(d)) {
       d.forEach(dev => { if (dev.memoRef && !dev.memoNo) { dev.memoNo = dev.memoRef; delete dev.memoRef; } });
     }
-    return Array.isArray(d) ? d : [];
+    return Array.isArray(d) ? d.map(normalizeDeviceRecord) : [];
   } catch(e) { return []; }
 }
 
@@ -159,7 +161,7 @@ async function loadDevicesAsync() {
     }
   }
   // Offline fallback
-  try { const d = JSON.parse(localStorage.getItem(DEVICE_KEY)||'[]'); return _excludeDeletedDevices(Array.isArray(d)?d:[]); } catch(e) { return []; }
+  try { const d = JSON.parse(localStorage.getItem(DEVICE_KEY)||'[]'); return _excludeDeletedDevices(Array.isArray(d)?d.map(normalizeDeviceRecord):[]); } catch(e) { return []; }
 }
 
 async function saveDeviceAsync(data) {
@@ -227,6 +229,9 @@ async function deleteDeviceAsync(id) {
   appendDeviceAuditLog(updated, 'Deleted');
   devices[idx] = updated;
   storeDevices(devices); // soft delete — row stays in cache/localStorage, just hidden from normal reads
+  // Batch 2B — a deleted device can't stay "linked" to a Hardware Spending
+  // line; remove the join row so the line's linked count drops immediately.
+  try { await unlinkDeviceFromSpendingAsync(updated.id); } catch(e) { console.warn('Failed to remove spending/device link on device delete', e.message); }
   if (await checkSupa()) {
     try {
       // devices table uses BIGINT id — use _supaId stored after INSERT
@@ -492,10 +497,11 @@ async function markArrived(poId, qty, serialNumbers = []) {
       // itemName — a blank Asset/Serial at arrival is acceptable, a blank or
       // memo-number-shaped device name is not.
       name:            po.itemName    || 'Unnamed Hardware Item',
-      brand:           '',
+      brand:           po.itemName    || '',
       platform:        'other',
       type:            'mobile',
       serial:          serial,
+      assetIt:         '',
       assetTag:        '',
       owner:           '',
       assignedDate:    now.slice(0, 10),
@@ -503,7 +509,7 @@ async function markArrived(poId, qty, serialNumbers = []) {
       company:         '',
       returnDate:      '',
       warranty:        '',
-      status:          'not_identified',
+      status:          'available',
       memoNo:          po.memoNo      || '',
       purchaseOrderId: po.id,
       note:            `Arrived from ${po.memoNo} · ${po.itemName}`,
@@ -540,9 +546,95 @@ async function markArrived(poId, qty, serialNumbers = []) {
 // ── Helpers ──
 const PLATFORM_LABEL = { ios:'iOS', android:'Android', huawei:'Huawei', windows:'Windows', other:'Other' };
 const TYPE_LABEL = { mobile:'Mobile', tablet:'Tablet', laptop:'Laptop', other:'Other' };
+const DEVICE_OPERATIONAL_STATUSES = ['available', 'in-use', 'maintenance', 'retired'];
+
+function defaultDeviceStatusFromQaOwner(qaOwner) {
+  return qaOwner && String(qaOwner).trim() ? 'in-use' : 'available';
+}
+
+function normalizeDeviceStatus(status, qaOwner) {
+  return DEVICE_OPERATIONAL_STATUSES.includes(status) ? status : defaultDeviceStatusFromQaOwner(qaOwner);
+}
+
+function normalizeDeviceRecord(d) {
+  return d ? { ...d, assetIt: d.assetIt || '', assetTag: d.assetTag || '', status: normalizeDeviceStatus(d.status, d.qaOwner) } : d;
+}
+
+function deviceIdentityKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function devicePrimaryLabel(d) {
+  return (d?.brand || d?.name || 'Unnamed Device').trim();
+}
+
+function deviceConflictLabel(d) {
+  if(!d) return 'another device';
+  const suffix = d.serial || d.assetIt || d.id || '';
+  return suffix ? `${devicePrimaryLabel(d)} (${suffix})` : devicePrimaryLabel(d);
+}
+
+function findDeviceIdentityMatches(devices, data, options = {}) {
+  const excludeId = options.excludeId == null ? '' : String(options.excludeId);
+  const serialKey = deviceIdentityKey(data?.serial);
+  const assetItKey = deviceIdentityKey(data?.assetIt);
+  const candidates = (devices || []).filter(d => !excludeId || String(d.id) !== excludeId);
+  return {
+    serialMatches: serialKey ? candidates.filter(d => deviceIdentityKey(d.serial) === serialKey) : [],
+    assetItMatches: assetItKey ? candidates.filter(d => deviceIdentityKey(d.assetIt) === assetItKey) : [],
+  };
+}
+
+function validateDeviceIdentityUnique(devices, data, options = {}) {
+  const { serialMatches, assetItMatches } = findDeviceIdentityMatches(devices, data, options);
+  const serialMatch = serialMatches[0] || null;
+  const assetItMatch = assetItMatches[0] || null;
+  if(serialMatch && assetItMatch && String(serialMatch.id) !== String(assetItMatch.id)) {
+    return {
+      ok: false,
+      reason: 'conflict',
+      message: `Serial Number and Asset IT point to different existing devices: ${deviceConflictLabel(serialMatch)} and ${deviceConflictLabel(assetItMatch)}.`,
+      serialMatch,
+      assetItMatch,
+    };
+  }
+  if(serialMatch) {
+    return {
+      ok: false,
+      reason: 'serial',
+      message: `Serial Number ${data.serial} is already used by another device: ${deviceConflictLabel(serialMatch)}.`,
+      serialMatch,
+      assetItMatch,
+    };
+  }
+  if(assetItMatch) {
+    return {
+      ok: false,
+      reason: 'assetIt',
+      message: `Asset IT ${data.assetIt} is already used by another device: ${deviceConflictLabel(assetItMatch)}.`,
+      serialMatch,
+      assetItMatch,
+    };
+  }
+  return { ok: true, serialMatch, assetItMatch };
+}
+
+function missingDeviceIdentificationFields(d) {
+  const missing = [];
+  if(!d.brand) missing.push('Brand / Model');
+  if(!d.assetIt) missing.push('Asset IT');
+  if(!d.serial) missing.push('Serial Number');
+  return missing;
+}
+
+function deviceIdentificationBadgeHtml(d) {
+  const missing = missingDeviceIdentificationFields(d);
+  if(!missing.length) return '';
+  return `<span class="badge badge-amber" title="Missing: ${esc(missing.join(', '))}" style="font-size:10px;display:inline-flex;margin-left:6px;vertical-align:middle">Missing ID</span>`;
+}
 
 function deviceStatusBadge(status) {
-  return { 'not_identified':{ label:'Not Identified', cls:'badge-gray' }, 'in-use':{ label:'In Use', cls:'badge-blue' }, 'available':{ label:'Available', cls:'badge-green' }, 'maintenance':{ label:'Maintenance', cls:'badge-amber' }, 'retired':{ label:'Retired', cls:'badge-gray' } }[status] || { label:status, cls:'badge-gray' };
+  return { 'in-use':{ label:'In Use', cls:'badge-blue' }, 'available':{ label:'Available', cls:'badge-green' }, 'maintenance':{ label:'Maintenance', cls:'badge-amber' }, 'retired':{ label:'Retired', cls:'badge-gray' } }[normalizeDeviceStatus(status)] || { label:status, cls:'badge-gray' };
 }
 function warrantyStatus(warrantyDate) {
   if(!warrantyDate) return null;
@@ -554,6 +646,13 @@ function warrantyStatus(warrantyDate) {
 
 // ── Auto-sync from HW Memos (legacy — for memos approved before PO system) ──
 // syncFromHWMemos removed — devices only enter registry via markArrived()
+
+let _devProjectSummaryExpanded = false;
+
+function toggleDeviceProjectSummary() {
+  _devProjectSummaryExpanded = !_devProjectSummaryExpanded;
+  renderDeviceSummaries(_filteredDevices(loadDevices()));
+}
 
 // ── Summary tables ──
 function renderDeviceSummaries(devices) {
@@ -604,7 +703,8 @@ function renderDeviceSummaries(devices) {
   const projBody = document.getElementById('dev-summary-project-body');
   if(projBody) {
     const rows = Object.entries(projMap).sort((a,b) => b[1].total - a[1].total);
-    projBody.innerHTML = rows.map(([p, d]) =>
+    const visibleRows = _devProjectSummaryExpanded ? rows : rows.slice(0, 5);
+    projBody.innerHTML = visibleRows.map(([p, d]) =>
       `<tr>
         <td style="padding-left:16px;font-weight:500">${esc(p)}</td>
         <td>${d['in-use']||'—'}</td>
@@ -613,6 +713,17 @@ function renderDeviceSummaries(devices) {
         <td style="text-align:right;padding-right:16px;font-weight:600">${d.total}</td>
       </tr>`
     ).join('');
+    const toggle = document.getElementById('dev-summary-project-toggle');
+    if(toggle) {
+      toggle.style.display = rows.length > 5 ? '' : 'none';
+      toggle.textContent = _devProjectSummaryExpanded ? 'Collapse' : 'View All';
+      toggle.setAttribute('aria-expanded', _devProjectSummaryExpanded ? 'true' : 'false');
+    }
+    const scroll = document.getElementById('dev-summary-project-scroll');
+    if(scroll) {
+      scroll.style.maxHeight = _devProjectSummaryExpanded ? '300px' : '';
+      scroll.style.overflowY = _devProjectSummaryExpanded ? 'auto' : '';
+    }
   }
 }
 
@@ -630,11 +741,11 @@ function requireDevicePermission(permission) {
 
 function downloadDeviceTemplate() {
   if(!requireDevicePermission('device.export')) return;
-  const headers = ['name','brand','type','platform','serial','asset_tag',
+  const headers = ['name','brand','type','platform','serial','asset_it','asset_acc',
     'owner','project','warranty','note'];
   const example = ['MacBook Pro 14"','Apple','laptop','mac',
-    'C02XL0MCJG5M','ORB-2024-001',
-    'สมชาย ใจดี','Geo9','2027-03-01','Status defaults to not_identified'];
+    'C02XL0MCJG5M','IT-2024-001','ACC-2024-001',
+    'สมชาย ใจดี','Geo9','2027-03-01','Status defaults from QA Owner'];
   _downloadCSV('Device_Template', headers, [example]);
 }
 
@@ -693,13 +804,14 @@ async function importDeviceBulk(file) {
       platform:     get(row,'platform','os') || 'other',
       pbxNumber:    get(row,'pbxnumber','pbx_number'),
       serial:       get(row,'serial','serialnumber','sn'),
-      assetTag:     get(row,'assetacc','asset_acc','asset_tag','assettag','assetno'),
+      assetIt:      get(row,'assetit','asset_it','itasset','assetitno','assetitnumber','assetnoit'),
+      assetTag:     get(row,'assetacc','asset_acc','assettag','asset_tag'),
       owner:        get(row,'owner','assignee','user'),
       position:     get(row,'position'),
       project:      get(row,'project'),
       qaOwner:      get(row,'qaowner','qa_owner'),
       osVersion:    get(row,'osversion','os_version'),
-      status:       'not_identified',
+      status:       defaultDeviceStatusFromQaOwner(get(row,'qaowner','qa_owner')),
       warranty:     get(row,'warranty'),
       note:         get(row,'note','remark'),
       source:       'bulk-import',
@@ -723,16 +835,21 @@ async function importDeviceBulk(file) {
   const existingRaw = _loadDevicesRaw();
   const activeExisting = _excludeDeletedDevices(existingRaw);
   const merged = [...existingRaw];
+  const addedDevices = [];
+  let added = 0;
   valid.forEach(d => {
     if (d.serial && activeExisting.find(e => e.serial === d.serial)) return;
+    if (d.assetIt && activeExisting.find(e => e.assetIt === d.assetIt)) return;
     merged.push(d);
+    addedDevices.push(d);
+    added++;
   });
   storeDevices(merged);
-  valid.forEach(d => {
+  addedDevices.forEach(d => {
     if (typeof saveDeviceAsync === 'function') saveDeviceAsync(d).catch(e => console.warn('Device bulk sync failed', e));
   });
   renderDevice();
-  alert('✓ Import อุปกรณ์สำเร็จ — เพิ่ม ' + valid.length + ' รายการ (ซ้ำ serial: ข้ามแล้ว)');
+  alert('✓ Import อุปกรณ์สำเร็จ — เพิ่ม ' + added + ' รายการ (ซ้ำ Serial/Asset IT: ข้ามแล้ว)');
 }
 
 function renderDevice() {
@@ -780,7 +897,7 @@ function _filteredDevices(allDevices) {
   if(projFilter.length) devices = devices.filter(d => projFilter.includes(d.project));
   if(compFilter.length) devices = devices.filter(d => compFilter.includes(d.company));
   if(search) devices = devices.filter(d => [
-    d.name, d.brand, d.serial, d.assetTag, d.pbxNumber,
+    d.name, d.brand, d.serial, d.assetIt, d.assetTag, d.pbxNumber,
     d.owner, d.position, d.project, d.company, d.osVersion,
     d.qaOwner, d.note, d.memoNo, d.type, d.platform,
     PLATFORM_LABEL[d.platform||'other'], TYPE_LABEL[d.type||'other']
@@ -826,38 +943,58 @@ function _backToMemoFromDeviceRegistry() {
   const memoNo = _devDeepLinkFilter?.memoNo;
   _devDeepLinkFilter = null;
   _renderDeviceTable();
-  if(memoNo && typeof openMemoReadOnly === 'function') openMemoReadOnly(memoNo);
+  if(memoNo && typeof openCanonicalTransactionDetailForMemo === 'function') openCanonicalTransactionDetailForMemo(memoNo);
 }
 function _clearDevDeepLinkFilter() {
   _devDeepLinkFilter = null;
   _renderDeviceTable();
 }
 
+function _deviceEmptyStateMessage(filteredDevices, allDevices) {
+  if (filteredDevices.length) return '';
+  if (_devDeepLinkFilter?.source === 'po' && _devDeepLinkFilter.poId) {
+    const poDevices = allDevices.filter(d => d.purchaseOrderId === _devDeepLinkFilter.poId);
+    if (!poDevices.length) return 'No devices have been registered for this Purchase Order';
+  }
+  const hasActiveRegistryFilters = !!(document.getElementById('dev-search')?.value || '').trim()
+    || msValues('dev-filter-platform').length
+    || msValues('dev-filter-type').length
+    || msValues('dev-filter-status').length
+    || msValues('dev-filter-project').length
+    || msValues('dev-filter-company').length
+    || !!_devDeepLinkFilter;
+  return hasActiveRegistryFilters || allDevices.length
+    ? 'No devices found. Try changing filters.'
+    : 'No devices found — click Add Device or Import Excel.';
+}
+
 function _renderDeviceTable() {
   _renderDevRegistryContextBanner();
 
   const allDevices = loadDevices();
+  const devices = _filteredDevices(allDevices);
 
-  // Metrics (unfiltered)
-  const total    = allDevices.length;
-  const inUse    = allDevices.filter(d => d.status==='in-use').length;
-  const available= allDevices.filter(d => d.status==='available').length;
-  const wExp     = allDevices.filter(d => d.warranty && new Date(d.warranty) < new Date()).length;
+  // Metrics reflect the same filtered dataset as the summaries and list.
+  const total    = devices.length;
+  const inUse    = devices.filter(d => d.status==='in-use').length;
+  const available= devices.filter(d => d.status==='available').length;
+  const wExp     = devices.filter(d => d.warranty && new Date(d.warranty) < new Date()).length;
   document.getElementById('dev-total').textContent           = total;
   document.getElementById('dev-total-sub').textContent       = total ? `${inUse} in use` : '';
   document.getElementById('dev-inuse').textContent           = inUse;
   document.getElementById('dev-available').textContent       = available;
   document.getElementById('dev-warranty-expired').textContent= wExp;
 
-  // Summary tables (unfiltered)
-  renderDeviceSummaries(allDevices);
+  // Summary tables use the same filtered dataset as metrics and list.
+  renderDeviceSummaries(devices);
 
   const search = (document.getElementById('dev-search')?.value||'').toLowerCase();
-  const devices = _filteredDevices(allDevices);
 
   const tbody = document.getElementById('dev-table-body');
   if(!devices.length) {
-    tbody.innerHTML = `<tr><td colspan="12" class="hist-empty">${search ? 'No devices found. Try changing filters.' : 'No devices found — click Add Device or Import Excel.'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="hist-empty">${esc(_deviceEmptyStateMessage(devices, allDevices))}</td></tr>`;
+    const footer = document.getElementById('dev-load-more-footer');
+    if(footer) { footer.style.display = 'none'; footer.innerHTML = ''; }
     return;
   }
 
@@ -869,19 +1006,20 @@ function _renderDeviceTable() {
     statFilter: msValues('dev-filter-status'),
     projFilter: msValues('dev-filter-project'),
     compFilter: msValues('dev-filter-company'),
+    deepLinkFilter: _devDeepLinkFilter,
   });
   if(typeof _devLastFilter !== 'undefined' && _devLastFilter !== filterKey) _devVisibleCount = DEV_PAGE_SIZE;
   window._devLastFilter = filterKey;
 
   const visibleDevices = devices.slice(0, _devVisibleCount);
   const remaining = devices.length - _devVisibleCount;
-  const canManageDevices = deviceHasPermission('device.manage');
 
   tbody.innerHTML = visibleDevices.map(d => {
     const statusB = deviceStatusBadge(d.status);
     const platLbl = PLATFORM_LABEL[d.platform||'other'] || d.platform || '—';
     const typeLbl = TYPE_LABEL[d.type||'other'] || d.type || '—';
     const updDate = d.updatedAt ? shortDate(d.updatedAt) : (d.assignedDate ? shortDate(d.assignedDate) : '—');
+    const primaryLabel = devicePrimaryLabel(d);
     // Device ids are BIGINT (numeric) once synced from Supabase but stay as a
     // string placeholder (nextDeviceId()) until then — quoting here (and
     // comparing via String(...) in openDeviceModal/openDeviceDetail/
@@ -890,34 +1028,25 @@ function _renderDeviceTable() {
     // instead of throwing a ReferenceError on an unquoted bare identifier.
     return `<tr style="cursor:pointer" onclick="openDeviceDetail('${esc(String(d.id))}')">
       <td style="padding-left:16px;font-weight:500">
-        ${esc(d.name)}
-        ${d.brand?`<div style="font-size:10px;color:var(--text-3);font-weight:400">${esc(d.brand)}</div>`:''}
+        ${esc(primaryLabel)}
+        ${deviceIdentificationBadgeHtml(d)}
       </td>
       <td style="font-size:12px">${esc(platLbl)}</td>
       <td style="font-size:12px">${esc(typeLbl)}</td>
+      <td style="font-family:monospace;font-size:11px">${esc(d.assetIt||'—')}</td>
       <td style="font-family:monospace;font-size:11px">${esc(d.assetTag||'—')}</td>
       <td style="font-family:monospace;font-size:11px">${esc(d.serial||'—')}</td>
       <td style="font-size:12px">
-        ${esc(d.owner||'—')}
-        ${d.position?`<div style="font-size:10px;color:var(--text-3)">${esc(d.position)}</div>`:''}
+        ${esc(d.qaOwner||'—')}
       </td>
       <td style="font-size:12px">${esc(d.project||'—')}</td>
       <td style="text-align:center"><span class="badge ${statusB.cls}">${esc(statusB.label)}</span></td>
       <td style="font-size:11px;color:var(--text-3)">${updDate}</td>
       <td style="text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
-        ${canManageDevices ? `<button class="btn-sm" onclick="event.stopPropagation();openDeviceModal('${esc(String(d.id))}')" style="padding:3px 7px;font-size:11px" title="แก้ไข">✎</button>
-        <button class="btn-sm" onclick="event.stopPropagation();deleteDevice('${esc(String(d.id))}')" style="padding:3px 7px;font-size:11px;color:var(--red)" title="ลบ">✕</button>` : '<span style="font-size:10px;color:var(--text-3)">View</span>'}
+        <button class="btn-sm" onclick="event.stopPropagation();openDeviceDetail('${esc(String(d.id))}')" style="padding:3px 9px;font-size:11px" title="View Detail">View</button>
       </td>
     </tr>`;
   }).join('');
-
-  tbody.onclick = function(e) {
-    const btn = e.target.closest('[data-action]');
-    if(!btn) return;
-    const id = Number(btn.dataset.id);
-    if(btn.dataset.action==='edit')   openDeviceModal(id);
-    if(btn.dataset.action==='delete') deleteDevice(id);
-  };
 
   // Load more footer
   const footer = document.getElementById('dev-load-more-footer');
@@ -957,9 +1086,9 @@ function openDeviceModal(id) {
     refreshDeviceProjectOptions(d.project || '');
     document.getElementById('dev-modal-title').textContent = 'Edit Device';
     document.getElementById('dev-edit-id').value = d.id;
-    setVal('dev-name', d.name);        setVal('dev-brand', d.brand);
+    setVal('dev-name', d.name);        setVal('dev-brand', d.brand || d.name);
     setVal('dev-platform', d.platform||'other'); setVal('dev-type', d.type||'mobile');
-    setVal('dev-asset', d.assetTag);   setVal('dev-serial', d.serial);
+    setVal('dev-asset-it', d.assetIt); setVal('dev-asset', d.assetTag);   setVal('dev-serial', d.serial);
     setVal('dev-pbx-number', d.pbxNumber);
     setVal('dev-os-version', d.osVersion);
     setVal('dev-company', d.company);  setVal('dev-project', d.project);
@@ -967,7 +1096,7 @@ function openDeviceModal(id) {
     setVal('dev-assigned-date', d.assignedDate);
     setVal('dev-return-date', d.returnDate); setVal('dev-memo-ref', d.memoNo);
     setVal('dev-warranty', d.warranty);
-    setVal('dev-status', d.status||'not_identified'); setVal('dev-note', d.note);
+    setVal('dev-status', normalizeDeviceStatus(d.status, d.qaOwner)); setVal('dev-note', d.note);
     setVal('dev-qa-owner', d.qaOwner);
     // Audit follow-up: a device created from a PO/Hardware Memo arrival (source
     // === 'memo') keeps its memo link read-only; manual devices stay editable.
@@ -976,15 +1105,30 @@ function openDeviceModal(id) {
     refreshDeviceProjectOptions('');
     document.getElementById('dev-modal-title').textContent = 'Add Device';
     document.getElementById('dev-edit-id').value = '';
-    ['dev-name','dev-brand','dev-asset','dev-serial','dev-owner','dev-return-date',
+    ['dev-name','dev-brand','dev-asset-it','dev-asset','dev-serial','dev-owner','dev-return-date',
      'dev-warranty','dev-memo-ref','dev-note'].forEach(id => setVal(id,''));
     setVal('dev-platform','ios'); setVal('dev-type','mobile');
     setVal('dev-company',''); setVal('dev-project','');
     setVal('dev-pbx-number',''); setVal('dev-os-version',''); setVal('dev-position',''); setVal('dev-qa-owner','');
-    setVal('dev-status','not_identified');
+    setVal('dev-status', defaultDeviceStatusFromQaOwner(''));
     setVal('dev-assigned-date', new Date().toISOString().slice(0,10));
     _setDeviceMemoLinkUI(false, '');
   }
+  _initDeviceStatusSuggestion();
+}
+
+let _devLastSuggestedStatus = 'available';
+
+function _initDeviceStatusSuggestion() {
+  const qaOwnerEl = document.getElementById('dev-qa-owner');
+  const statusEl = document.getElementById('dev-status');
+  if(!qaOwnerEl || !statusEl) return;
+  _devLastSuggestedStatus = defaultDeviceStatusFromQaOwner(qaOwnerEl.value);
+  qaOwnerEl.oninput = () => {
+    const nextSuggestion = defaultDeviceStatusFromQaOwner(qaOwnerEl.value);
+    if(statusEl.value === _devLastSuggestedStatus) statusEl.value = nextSuggestion;
+    _devLastSuggestedStatus = nextSuggestion;
+  };
 }
 
 // Toggles the Link HW Memo field between read-only (PO/memo-sourced device) and
@@ -1024,29 +1168,26 @@ function refreshDeviceProjectOptions(selectedDeviceProject = '') {
   refreshProjectMultiSelectOptions('po-filter-project');
 }
 
-// ── Dedup check — find existing device by serial or assetTag ──
+// ── Dedup check — find existing device by serial or Asset IT ──
 function findExistingDevice(devices, data) {
-  if (!devices || !devices.length) return -1;
-  return devices.findIndex(d => {
-    if (data.serial    && data.serial    !== '' && d.serial    === data.serial)    return true;
-    if (data.assetTag  && data.assetTag  !== '' && d.assetTag  === data.assetTag)  return true;
-    return false;
-  });
+  const { serialMatches, assetItMatches } = findDeviceIdentityMatches(devices, data);
+  const match = serialMatches[0] || assetItMatches[0] || null;
+  return match ? devices.findIndex(d => String(d.id) === String(match.id)) : -1;
 }
 
 function saveDevice() {
   if(!requireDevicePermission('device.manage')) return;
-  const name = document.getElementById('dev-name').value.trim();
-  if(!name) { alert('กรุณากรอก Device Name'); return; }
   const editId = document.getElementById('dev-edit-id').value;
-  const devices = loadDevices();
   const now = new Date().toISOString();
   const g = id => document.getElementById(id)?.value?.trim()||'';
+  const brandModel = g('dev-brand');
+  const legacyName = g('dev-name');
   const data = {
-    name,
-    brand:        g('dev-brand'),
+    name:         brandModel || legacyName || 'Unnamed Device',
+    brand:        brandModel,
     platform:     g('dev-platform') || 'other',
     type:         g('dev-type') || 'mobile',
+    assetIt:      g('dev-asset-it'),
     assetTag:     g('dev-asset'),
     pbxNumber:    g('dev-pbx-number'),
     serial:       g('dev-serial'),
@@ -1060,12 +1201,17 @@ function saveDevice() {
     memoNo:       g('dev-memo-ref'),
     warranty:     g('dev-warranty'),
     qaOwner:      g('dev-qa-owner'),
-    status:       g('dev-status') || 'not_identified',
+    status:       normalizeDeviceStatus(g('dev-status'), g('dev-qa-owner')),
     note:         g('dev-note'),
     updatedAt:    now,
     // Milestone 2 Task 2.3 — Created By / Updated By metadata.
     updatedBy:    currentUser(),
   };
+  const duplicateCheck = validateDeviceIdentityUnique(loadDevices(), data, { excludeId: editId || null });
+  if(!duplicateCheck.ok) {
+    alert(duplicateCheck.message);
+    return;
+  }
   if(editId) {
     const allDevs = loadDevices();
     const idx = allDevs.findIndex(d => String(d.id) === String(editId));
@@ -1083,26 +1229,9 @@ function saveDevice() {
     appendDeviceAuditLog(updated, 'Edited', { statusBefore: orig.status||null, statusAfter: updated.status||null });
     saveDeviceAsync(updated).catch(e => console.warn('Device save failed', e));
   } else {
-    const allDevs = loadDevices();
-    const dupIdx = findExistingDevice(allDevs, data);
-    if(dupIdx >= 0) {
-      const dup = allDevs[dupIdx];
-      const matchField = (data.assetTag && data.assetTag === dup.assetTag) ? `Asset: ${data.assetTag}` : `Serial: ${data.serial}`;
-      if(!confirm(`พบอุปกรณ์ซ้ำ (${matchField})\nอัปเดตข้อมูลอันเดิมแทน?`)) return;
-      const isMemoSourced = dup.source === 'memo';
-      const merged = {
-        ...dup, ...data,
-        memoNo: isMemoSourced ? dup.memoNo : data.memoNo,
-        source: dup.source || 'manual',
-        auditLog: [...(dup.auditLog||[])],
-      };
-      appendDeviceAuditLog(merged, 'Edited', { comment: `Merged duplicate (${matchField})`, statusBefore: dup.status||null, statusAfter: merged.status||null });
-      saveDeviceAsync(merged).catch(e => console.warn('Device save failed', e));
-    } else {
-      const created = { id: nextDeviceId(), ...data, source: 'manual', createdAt: now, createdBy: currentUser(), auditLog: [] };
-      appendDeviceAuditLog(created, 'Created');
-      saveDeviceAsync(created).catch(e => console.warn('Device save failed', e));
-    }
+    const created = { id: nextDeviceId(), ...data, source: 'manual', createdAt: now, createdBy: currentUser(), auditLog: [] };
+    appendDeviceAuditLog(created, 'Created');
+    saveDeviceAsync(created).catch(e => console.warn('Device save failed', e));
   }
   closeDeviceModal();
   // UAT smoke-test fix: saveDevice() previously called renderDevice() here,
@@ -1120,8 +1249,8 @@ function saveDevice() {
 function deleteDevice(id) {
   if(!requireDevicePermission('device.manage')) return;
   const d = loadDevices().find(dev => String(dev.id) === String(id));
-  if(!d) return;
-  if(!confirm(`ลบ "${d.name}" ออกจากระบบ?`)) return;
+  if(!d) return Promise.resolve(false);
+  if(!confirm(`ลบ "${devicePrimaryLabel(d)}" ออกจากระบบ?`)) return Promise.resolve(false);
   // Milestone 3B fix: deleteDeviceAsync() already updates the local cache/
   // localStorage synchronously before its own Supabase PATCH goes out. Calling
   // renderDevice() here (instead of re-rendering directly) would fire a fresh
@@ -1131,9 +1260,19 @@ function deleteDevice(id) {
   // Awaiting the delete, then re-rendering from the already-updated local
   // cache directly (no redundant fetch), matches the pattern already used by
   // submitMarkArrived().
-  deleteDeviceAsync(id).then(() => {
+  return deleteDeviceAsync(id).then(() => {
     _renderDeviceTable();
+    return true;
   }).catch(e => console.warn('Delete failed', e));
+}
+
+function deleteDeviceFromDetail(id) {
+  deleteDevice(id).then(deleted => {
+    if(deleted) {
+      const panel = document.getElementById('dev-detail-modal');
+      if(panel) panel.style.display = 'none';
+    }
+  });
 }
 
 // ── Export CSV ──
@@ -1144,13 +1283,13 @@ function exportDeviceCsv() {
   // full unfiltered registry — see MASTER_SPEC.md "Export Rules".
   const devices = _filteredDevices(loadDevices());
   if(!devices.length) { alert('ไม่มีข้อมูลสำหรับ Export'); return; }
-  const headers = ['PBX Number','OS','Type','Brand / Model','Asset ACC',
+  const headers = ['PBX Number','OS','Type','Brand / Model','Asset IT','Asset ACC',
     'Serial','Assignee','Position','Project','Received date','QA Owner',
     'Updated Date','Remark','OS version','Status','Warranty','Memo Ref'];
   const rows = devices.map(d => [
     d.pbxNumber||'', PLATFORM_LABEL[d.platform||'other']||d.platform||'',
-    TYPE_LABEL[d.type||'other']||d.type||'', d.name||'',
-    d.assetTag||'', d.serial||'', d.owner||'', d.position||'',
+    TYPE_LABEL[d.type||'other']||d.type||'', devicePrimaryLabel(d),
+    d.assetIt||'', d.assetTag||'', d.serial||'', d.owner||'', d.position||'',
     d.project||'', d.assignedDate||'', d.qaOwner||'',
     d.updatedAt ? d.updatedAt.slice(0,10) : '', d.note||'', d.osVersion||'',
     d.status||'', d.warranty||'', d.memoNo||''
@@ -1184,12 +1323,43 @@ function openDeviceDetail(id) {
   const d = loadDevices().find(dev => String(dev.id) === String(id));
   if(!d) return;
   const idStr = esc(String(d.id));
+  const memoNo = d.memoNo || '';
+  const memoNoEsc = esc(memoNo);
   const platLbl = PLATFORM_LABEL[d.platform||'other'] || d.platform || '—';
   const typeLbl = TYPE_LABEL[d.type||'other'] || d.type || '—';
   const statusB = deviceStatusBadge(d.status);
   const typeIcon = { mobile:'📱', tablet:'📟', laptop:'💻', other:'🖥' }[d.type||'other'] || '🖥';
   const canManageDevices = deviceHasPermission('device.manage');
   const canInspectDevices = deviceHasPermission('device.inspect');
+  const primaryLabel = devicePrimaryLabel(d);
+  const sourceMemoCell = memoNo
+    ? `<div style="background:var(--bg);border-radius:var(--r-sm);padding:8px 10px">
+        <div style="font-size:9px;color:var(--text-3);margin-bottom:2px">${esc('Source Memo Number')}</div>
+        <div style="display:flex;gap:6px;align-items:center;justify-content:space-between">
+          <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis">${memoNoEsc}</div>
+          <button class="btn-sm" style="font-size:10px;padding:2px 7px;white-space:nowrap" onclick="typeof openCanonicalTransactionDetailForMemo==='function'&&openCanonicalTransactionDetailForMemo('${memoNoEsc}',{source:'device-detail'})">View Source Memo</button>
+        </div>
+      </div>`
+    : infoCell('Source Memo Number', '—');
+
+  // Batch 2B — optional link to a Hardware Manual Spending record (separate
+  // join table, historical_spending_device_links; never duplicates device
+  // data, never touches the memo_ref/PO-arrival path above).
+  const spendLink = deviceLinkForDevice(d.id);
+  const spendMemo = spendLink ? loadHistoricalMemos().find(m => String(m.id) === String(spendLink.historicalMemoId)) : null;
+  const sourceTypeLabel = memoNo ? 'Memo' : spendMemo ? 'Manual Spending (Historical)' : (d.source === 'bulk-import' ? 'Bulk Import' : 'Manual Entry');
+  const sourceSpendingCell = spendMemo
+    ? `<div style="background:var(--bg);border-radius:var(--r-sm);padding:8px 10px">
+        <div style="font-size:9px;color:var(--text-3);margin-bottom:2px">Source Spending No.</div>
+        <div style="display:flex;gap:6px;align-items:center;justify-content:space-between">
+          <div style="font-size:12px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis">${esc(spendMemo.memoNo)}</div>
+          <div style="display:flex;gap:4px">
+            <button class="btn-sm" style="font-size:10px;padding:2px 7px;white-space:nowrap" onclick="document.getElementById('dev-detail-modal').style.display='none';typeof showSpendingDetail==='function'&&showSpendingDetail('historical','${esc(spendMemo.id)}')">View Source Spending</button>
+            ${canManageDevices ? `<button class="btn-sm" style="font-size:10px;padding:2px 7px;color:var(--red)" onclick="unlinkDeviceFromLine('${idStr}')">Unlink</button>` : ''}
+          </div>
+        </div>
+      </div>`
+    : '';
 
   let panel = document.getElementById('dev-detail-modal');
   if(!panel) {
@@ -1206,13 +1376,15 @@ function openDeviceDetail(id) {
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:42px;height:42px;border-radius:var(--r-sm);background:var(--blue-50);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">${typeIcon}</div>
         <div>
-          <div style="font-size:15px;font-weight:700;color:var(--text)">${esc(d.name)}</div>
+          <div style="font-size:15px;font-weight:700;color:var(--text)">${esc(primaryLabel)}</div>
           <div style="font-size:11px;color:var(--text-3)">${esc(d.brand||'')} · ${esc(platLbl)} · ${esc(typeLbl)}</div>
         </div>
       </div>
       <div style="display:flex;gap:6px;align-items:center">
+        ${deviceIdentificationBadgeHtml(d)}
         <span class="badge ${statusB.cls}">${esc(statusB.label)}</span>
-        ${canManageDevices ? `<button class="btn-sm" onclick="document.getElementById('dev-detail-modal').style.display='none';openDeviceModal('${idStr}')" style="font-size:11px;padding:3px 8px">✎ Edit</button>` : ''}
+        ${canManageDevices ? `<button class="btn-sm" onclick="document.getElementById('dev-detail-modal').style.display='none';openDeviceModal('${idStr}')" style="font-size:11px;padding:3px 8px">✎ Edit</button>
+        <button class="btn-sm" onclick="deleteDeviceFromDetail('${idStr}')" style="font-size:11px;padding:3px 8px;color:var(--red)">✕ Delete</button>` : ''}
         <button class="btn-sm" onclick="document.getElementById('dev-detail-modal').style.display='none'" style="font-size:11px;padding:3px 8px">✕</button>
       </div>
     </div>
@@ -1222,13 +1394,16 @@ function openDeviceDetail(id) {
       <div>
         <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Device info</div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
-          ${infoCell('OS', platLbl)}
-          ${infoCell('OS version', d.osVersion||'—')}
+          ${infoCell('Platform / OS', platLbl)}
+          ${infoCell('OS Version', d.osVersion||'—')}
           ${infoCell('Type', typeLbl)}
+          ${infoCell('Brand / Model', devicePrimaryLabel(d))}
           ${infoCell('Serial no.', d.serial||'—')}
+          ${infoCell('Asset IT', d.assetIt||'—')}
           ${infoCell('Asset ACC', d.assetTag||'—')}
           ${infoCell('PBX Number', d.pbxNumber||'—')}
           ${infoCell('Warranty', d.warranty ? shortDate(d.warranty) : '—')}
+          ${infoCell('Status', statusB.label)}
         </div>
       </div>
 
@@ -1237,10 +1412,24 @@ function openDeviceDetail(id) {
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
           ${infoCell('Assignee', d.owner||'—')}
           ${infoCell('Position', d.position||'—')}
-          ${infoCell('Project', d.project||'—')}
-          ${infoCell('Received date', d.assignedDate ? shortDate(d.assignedDate) : '—')}
           ${infoCell('QA Owner', d.qaOwner||'—')}
-          ${infoCell('Updated', d.updatedAt ? shortDate(d.updatedAt) : '—')}
+          ${infoCell('Project', d.project||'—')}
+          ${infoCell('Company', d.company||'—')}
+          ${infoCell('Received date', d.assignedDate ? shortDate(d.assignedDate) : '—')}
+          ${infoCell('Return Date', d.returnDate ? shortDate(d.returnDate) : '—')}
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Source and audit</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+          ${infoCell('Source Type', sourceTypeLabel)}
+          ${sourceMemoCell}
+          ${sourceSpendingCell}
+          ${infoCell('Created By', d.createdBy||'—')}
+          ${infoCell('Created Date', d.createdAt ? shortDate(d.createdAt) : '—')}
+          ${infoCell('Updated By', d.updatedBy||'—')}
+          ${infoCell('Updated Date', d.updatedAt ? shortDate(d.updatedAt) : '—')}
         </div>
       </div>
 
@@ -1393,13 +1582,12 @@ function _devicesCountForPO(po) {
   return loadDevices().filter(d => d.purchaseOrderId === po.id).length;
 }
 
-// Device Management D2 (Part 3) — PO -> Device Registry drill-down. No-op
-// when the PO has zero devices created yet (rendered as plain, non-clickable
-// text in _renderPOTable(), never wired to this handler at all).
+// Device Management D2 (Part 3) — PO -> Device Registry drill-down. Always
+// opens the registry with PO context; zero-device POs render an inline empty
+// state there instead of failing silently.
 function viewDevicesForPO(poId) {
   const po = loadPurchaseOrders().find(p => p.id === poId);
   if(!po) return;
-  if(!_devicesCountForPO(po)) return;
   _devDeepLinkFilter = { poId: po.id, memoNo: po.memoNo, itemName: po.itemName, source: 'po' };
   // switchDevTab('registry', ...) only toggles panel visibility — it does not
   // re-render (unlike the 'orders' branch, which calls renderPurchaseOrders())
@@ -1430,7 +1618,7 @@ function _backToMemoFromPO() {
   const memoNo = _poDeepLinkFilter?.memoNo;
   _poDeepLinkFilter = null;
   _renderPOTable();
-  if(memoNo && typeof openMemoReadOnly === 'function') openMemoReadOnly(memoNo);
+  if(memoNo && typeof openCanonicalTransactionDetailForMemo === 'function') openCanonicalTransactionDetailForMemo(memoNo);
 }
 function _clearPODeepLinkFilter() {
   _poDeepLinkFilter = null;
@@ -1585,11 +1773,6 @@ function poActionBtn(po) {
     return `<button class="btn-sm" style="font-size:11px" onclick="advancePOStatus('${esc(po.id)}','awaiting')">Mark awaiting</button>`;
   if (s === 'awaiting' || s === 'partial_arrived')
     return `<button class="btn-sm" style="font-size:11px;background:#185FA5;color:#fff;border-color:transparent" onclick="openMarkArrivedModal('${esc(po.id)}')">+ Mark arrived</button>`;
-  if (s === 'fulfilled')
-    // Device Management D2 (Part 3) — scoped to this PO's own devices, same
-    // as the Devices column's drill-down link, instead of jumping to an
-    // unfiltered Device Registry.
-    return `<button class="btn-sm" style="font-size:11px;color:var(--text-3)" onclick="viewDevicesForPO('${esc(po.id)}')">View devices</button>`;
   return '';
 }
 
@@ -1606,6 +1789,12 @@ function advancePOStatus(poId, newStatus) {
   savePurchaseOrderAsync(po).catch(e => console.warn('PO advance failed', e));
   _poCache = null;
   _renderPOTable();
+}
+
+function _setPOActionsColumnVisible(show) {
+  const tbody = document.getElementById('po-table-body');
+  const actionHead = tbody?.closest('table')?.querySelector('thead tr th:last-child');
+  if(actionHead) actionHead.style.display = show ? '' : 'none';
 }
 
 function _renderPOTable() {
@@ -1631,7 +1820,8 @@ function _renderPOTable() {
   if (!tbody) return;
 
   if (!pos.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="hist-empty">No purchase orders found — approve a Hardware memo to create one automatically.</td></tr>`;
+    _setPOActionsColumnVisible(false);
+    tbody.innerHTML = `<tr><td colspan="9" class="hist-empty">No purchase orders found — approve a Hardware memo to create one automatically.</td></tr>`;
     const countEl = document.getElementById('po-visible-count');
     if(countEl) countEl.textContent = '';
     return;
@@ -1642,22 +1832,26 @@ function _renderPOTable() {
   if(countEl) countEl.textContent = visible.length === pos.length ? `${pos.length} orders` : `Showing ${visible.length} of ${pos.length} orders`;
 
   if (!visible.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="hist-empty">No purchase orders found. Try changing filters.</td></tr>`;
+    _setPOActionsColumnVisible(false);
+    tbody.innerHTML = `<tr><td colspan="9" class="hist-empty">No purchase orders found. Try changing filters.</td></tr>`;
     return;
   }
 
   // Sort: active first (by status order), then fulfilled, then voided source
   const statusOrder = { pending_order:0, ordered:1, awaiting:2, partial_arrived:3, fulfilled:4, voided_source:5 };
   const sorted = [...visible].sort((a,b) => (statusOrder[poEffectiveStatus(a)]||99) - (statusOrder[poEffectiveStatus(b)]||99));
+  const rows = sorted.map(po => ({ po, actionHtml: poActionBtn(po) }));
+  const showActions = rows.some(row => row.actionHtml);
+  _setPOActionsColumnVisible(showActions);
 
-  tbody.innerHTML = sorted.map(po => {
+  tbody.innerHTML = rows.map(({ po, actionHtml }) => {
     const pct = po.orderedQty > 0 ? Math.round(po.arrivedQty / po.orderedQty * 100) : 0;
     const barColor = pct >= 100 ? '#3B6D11' : '#185FA5';
     const voidTooltip = poVoidTooltip(po);
     const remaining = po.orderedQty - po.arrivedQty; // derived only, never persisted
     const devCount = _devicesCountForPO(po);
     return `<tr style="${po.status==='fulfilled'||poIsVoidedSource(po)?'opacity:0.7':''}">
-      <td style="color:#185FA5;font-weight:500;cursor:pointer;padding:9px 12px" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${esc(po.memoNo)}')">${esc(po.memoNo)}</td>
+      <td style="color:#185FA5;font-weight:500;cursor:pointer;padding:9px 12px" onclick="typeof openCanonicalTransactionDetailForMemo==='function'&&openCanonicalTransactionDetailForMemo('${esc(po.memoNo)}')">${esc(po.memoNo)}</td>
       <td style="padding:9px 12px;font-size:12px">${esc(po.itemName)}</td>
       <td style="padding:9px 12px;font-size:12px">${esc(po.project||'—')}</td>
       <td style="padding:9px 12px;text-align:center;font-size:12px">${po.orderedQty}</td>
@@ -1675,7 +1869,7 @@ function _renderPOTable() {
       <td style="padding:9px 12px;text-align:center">${devCount > 0
         ? `<span style="color:#185FA5;font-weight:500;cursor:pointer;text-decoration:underline" onclick="viewDevicesForPO('${esc(po.id)}')">${devCount} device${devCount>1?'s':''}</span>`
         : `<span style="color:var(--text-3)">0</span>`}</td>
-      <td style="padding:9px 12px;white-space:nowrap">${poActionBtn(po)}</td>
+      ${showActions ? `<td style="padding:9px 12px;white-space:nowrap">${actionHtml}</td>` : ''}
     </tr>`;
   }).join('');
 }
@@ -1720,3 +1914,178 @@ function submitMarkArrived() {
 document.addEventListener('click', e => {
   if (e.target === document.getElementById('mark-arrived-modal')) closeMarkArrivedModal();
 });
+
+// ─────────────────────────────────────────
+// Batch 2B — Hardware Spending <-> Device Registry linking
+// Optional link between an existing Device and one hardware line of a
+// historical (Manual Spending) memo. No Purchase Orders, no device creation —
+// see docs/specs/Batch_2B_Hardware_Device_Linking.md.
+// ─────────────────────────────────────────
+
+// Rendered inside the Hardware Spending Detail modal (views/budget.js's
+// renderMemoSpendTypeDetail), right after the shared _buildMemoTypeSection()
+// hw table. Only ever called for historical hw memos — approved-Memo hw
+// detail (the PO/arrival workflow) is untouched.
+function renderHardwareDeviceLinkSection(memo) {
+  if (!memo || memo.type !== 'hw' || !(memo.isHistoricalMemo || memo.sourceKind === 'historical')) return '';
+  const hwItems = memo.hwItems || [];
+  if (!hwItems.length) return '';
+  const devices = loadDevices();
+  const canManageDevices = deviceHasPermission('device.manage');
+  const rows = hwItems.map((item, index) => {
+    const lineId = item.id || historicalHwLineId(memo, index);
+    const links = deviceLinksForLine(memo.id, lineId);
+    const qty = Math.max(1, Number(item.qty) || 1);
+    const linkedDevices = links
+      .map(l => devices.find(d => String(d.id) === String(l.deviceId)))
+      .filter(Boolean);
+    const chips = linkedDevices.map(d => `
+      <span class="badge badge-gray" style="display:inline-flex;align-items:center;gap:5px;margin:2px 4px 2px 0;padding:3px 7px">
+        <a href="javascript:void(0)" onclick="document.getElementById('actual-spend-record-detail')?.remove();openDeviceDetail('${esc(String(d.id))}')" style="color:inherit;text-decoration:underline">${esc(devicePrimaryLabel(d))}</a>
+        ${canManageDevices ? `<button type="button" title="Unlink" style="border:none;background:none;cursor:pointer;color:var(--red);font-size:11px;line-height:1;padding:0" onclick="unlinkDeviceFromLine('${esc(String(d.id))}')">✕</button>` : ''}
+      </span>`).join('');
+    const countColor = linkedDevices.length >= qty ? 'var(--green,#2e7d32)' : 'var(--amber,#b26a00)';
+    return `<tr>
+      <td style="padding:6px 9px;font-size:11px">${index + 1}</td>
+      <td style="padding:6px 9px;font-size:11px">${esc(item.name || '—')}</td>
+      <td style="padding:6px 9px;font-size:11px;text-align:center">${qty}</td>
+      <td style="padding:6px 9px;font-size:11px;text-align:center;color:${countColor};font-weight:600">${linkedDevices.length} / ${qty}</td>
+      <td style="padding:6px 9px;font-size:11px">${chips || '<span style="color:var(--text-3)">— none —</span>'}</td>
+      <td style="padding:6px 9px;text-align:right">
+        ${canManageDevices ? `<button class="btn-sm" type="button" style="font-size:10px;padding:3px 8px" ${linkedDevices.length >= qty ? 'disabled title="ครบจำนวนแล้ว"' : ''} onclick="openDeviceLinkPicker('${esc(memo.id)}',${index})">+ Link Devices</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+  return `<div style="margin-top:14px">
+    <div style="font-size:9px;font-weight:500;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px">Linked Devices</div>
+    <div style="border:0.5px solid var(--border);border-radius:var(--r-sm);overflow:hidden">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--bg-2)">
+          <th style="text-align:left;padding:5px 9px;font-size:10px;color:var(--text-3)">#</th>
+          <th style="text-align:left;padding:5px 9px;font-size:10px;color:var(--text-3)">Item</th>
+          <th style="padding:5px 9px;font-size:10px;color:var(--text-3)">Qty</th>
+          <th style="padding:5px 9px;font-size:10px;color:var(--text-3)">Linked</th>
+          <th style="text-align:left;padding:5px 9px;font-size:10px;color:var(--text-3)">Devices</th>
+          <th style="padding:5px 9px"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+// Device selector dialog (Batch 2B.1) — shows ONLY eligible devices (active,
+// not deleted, no approved-Memo/PO source, not linked to any other hardware
+// line — see deviceEligibleForSpendingLink() in app.js). Ineligible devices
+// are not listed at all, not shown-disabled: there is nothing useful the
+// user can do with them from this dialog, so surfacing them just adds noise
+// (and, for Memo-sourced devices, risks implying they could be unlinked here).
+function _deviceLinkPickerSearchKey(d) {
+  return `${devicePrimaryLabel(d)} ${d.assetIt || ''} ${d.serial || ''}`.toLowerCase();
+}
+
+function openDeviceLinkPicker(historicalMemoId, lineIndex) {
+  if (!requireDevicePermission('device.manage')) return;
+  const memo = loadHistoricalMemos().find(m => String(m.id) === String(historicalMemoId));
+  if (!memo) return;
+  const item = memo.hwItems?.[lineIndex];
+  if (!item) return;
+  const qty = Math.max(1, Number(item.qty) || 1);
+  const lineId = item.id || historicalHwLineId(memo, lineIndex);
+  const currentLinks = deviceLinksForLine(historicalMemoId, lineId);
+  const remaining = Math.max(qty - currentLinks.length, 0);
+  const linkedElsewhere = allLinkedDeviceIds();
+  const eligible = loadDevices()
+    .filter(d => deviceEligibleForSpendingLink(d, linkedElsewhere))
+    .sort((a, b) => devicePrimaryLabel(a).localeCompare(devicePrimaryLabel(b)));
+
+  document.getElementById('device-link-picker-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'device-link-picker-modal';
+  modal.className = 'txn-modal-backdrop';
+  modal.style.zIndex = '450';
+  modal.innerHTML = `<div class="card txn-modal-card txn-modal-card--form" style="width:560px">
+    <div class="pmo-modal-header">
+      <div>
+        <div class="txn-title">Link Devices — ${esc(item.name || '')}</div>
+        <div class="txn-form-subtitle">เลือกได้อีก ${remaining} เครื่อง (จากทั้งหมด ${qty})</div>
+      </div>
+      <button class="pmo-modal-close" onclick="document.getElementById('device-link-picker-modal').remove()">✕</button>
+    </div>
+    ${eligible.length ? `
+    <div style="margin-bottom:8px">
+      <input type="text" id="device-link-search" class="ri" placeholder="Search by Brand/Model, Asset IT, or Serial No." oninput="filterDeviceLinkPickerRows(this.value)">
+    </div>
+    <div style="max-height:360px;overflow-y:auto">
+      <table style="width:100%;border-collapse:collapse" id="device-link-picker-table">
+        <thead><tr style="background:var(--bg-2)">
+          <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text-3)">Brand / Model</th>
+          <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text-3)">Asset IT</th>
+          <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text-3)">Serial Number</th>
+          <th style="padding:5px 8px;font-size:10px;color:var(--text-3)">Select</th>
+        </tr></thead>
+        <tbody>
+          ${eligible.map(d => `<tr class="dev-link-row" data-search="${esc(_deviceLinkPickerSearchKey(d))}">
+            <td style="padding:6px 8px;font-size:12px">${esc(devicePrimaryLabel(d))}</td>
+            <td style="padding:6px 8px;font-size:12px">${esc(d.assetIt || '—')}</td>
+            <td style="padding:6px 8px;font-size:12px">${esc(d.serial || '—')}</td>
+            <td style="padding:6px 8px;text-align:center"><input type="checkbox" class="dev-link-pick" value="${esc(String(d.id))}"></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : `
+    <div style="padding:16px;text-align:center;font-size:12px;color:var(--text-3);line-height:1.5">
+      No available devices found. If the device is linked to another source, unlink it there first before linking it to this spending record.
+    </div>`}
+    <div class="pmo-modal-footer">
+      <button class="btn-ghost" onclick="document.getElementById('device-link-picker-modal').remove()">Cancel</button>
+      <button class="btn-primary" onclick="confirmDeviceLinkPicker('${esc(historicalMemoId)}', ${lineIndex})">Link Selected</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+function filterDeviceLinkPickerRows(query) {
+  const q = String(query || '').toLowerCase().trim();
+  document.querySelectorAll('#device-link-picker-table .dev-link-row').forEach(row => {
+    row.style.display = !q || (row.dataset.search || '').includes(q) ? '' : 'none';
+  });
+}
+
+async function confirmDeviceLinkPicker(historicalMemoId, lineIndex) {
+  const modal = document.getElementById('device-link-picker-modal');
+  const checked = [...(modal?.querySelectorAll('.dev-link-pick:checked') || [])].map(el => el.value);
+  if (!checked.length) { modal?.remove(); return; }
+  try {
+    await linkDevicesToHardwareLineAsync(historicalMemoId, lineIndex, checked);
+    modal?.remove();
+    if (typeof refreshSpendingDetailAfterDeviceLink === 'function') refreshSpendingDetailAfterDeviceLink(historicalMemoId);
+  } catch(e) { alert('เชื่อมโยงไม่สำเร็จ: ' + e.message); }
+}
+
+function unlinkDeviceFromLine(deviceId) {
+  if (!requireDevicePermission('device.manage')) return;
+  const link = deviceLinkForDevice(deviceId);
+  if (!link) return;
+  if (!confirm('ยกเลิกการเชื่อมโยง Device นี้กับ Hardware Spending?')) return;
+  unlinkDeviceFromSpendingAsync(deviceId).then(() => {
+    if (typeof refreshSpendingDetailAfterDeviceLink === 'function') refreshSpendingDetailAfterDeviceLink(link.historicalMemoId);
+    const panel = document.getElementById('dev-detail-modal');
+    if (panel && panel.style.display !== 'none') openDeviceDetail(deviceId);
+  }).catch(e => alert('ยกเลิกไม่สำเร็จ: ' + e.message));
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    openDeviceDetail,
+    storeDevices,
+    loadDevices,
+    deleteDeviceAsync,
+    renderHardwareDeviceLinkSection,
+    openDeviceLinkPicker,
+    filterDeviceLinkPickerRows,
+    confirmDeviceLinkPicker,
+    unlinkDeviceFromLine,
+  };
+}

@@ -7,7 +7,7 @@ const SUPA_URL = String(PMO_CONFIG.supabaseUrl || '').replace(/\/$/, '');
 const SUPA_KEY = String(PMO_CONFIG.supabaseAnonKey || '');
 
 // ── Supabase REST helper ──
-const SUPA_FETCH_TIMEOUT_MS = 6000;
+const SUPA_FETCH_TIMEOUT_MS = 15000;
 
 async function supaFetch(table, method='GET', body=null, query='') {
   if(!SUPA_URL || !SUPA_KEY) {
@@ -37,6 +37,38 @@ async function supaFetch(table, method='GET', body=null, query='') {
   } finally {
     if(timeout) clearTimeout(timeout);
   }
+}
+const DUPLICATE_MEMO_NO_MESSAGE = 'Memo No. already exists. Please generate or enter a different Memo No.';
+
+function isDuplicateMemoNoError(error) {
+  const message = String(error?.message || error || '');
+  return message.includes('23505') || /duplicate key|unique constraint|memos_memo_no/i.test(message);
+}
+function normalizeMemoPersistenceError(error) {
+  if (isDuplicateMemoNoError(error)) return new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  return error;
+}
+
+function isSameMemoRecord(existing, data) {
+  if (!existing || !data) return false;
+  const existingId = String(existing.id || existing.memoNo || '').trim();
+  const dataId = String(data.id || '').trim();
+  return !!existingId && !!dataId && existingId === dataId;
+}
+
+function findMemoByRecordIdentity(memos, data) {
+  const dataId = String(data?.id || '').trim();
+  if (dataId) {
+    const match = (memos || []).find(m => String(m.id || m.memoNo || '').trim() === dataId);
+    if (match) return match;
+  }
+  return (memos || []).find(m => String(m.memoNo || '').trim() === String(data?.memoNo || '').trim()) || null;
+}
+
+function findMemoNumberCollision(memos, data) {
+  const memoNo = String(data?.memoNo || '').trim();
+  if (!memoNo) return null;
+  return (memos || []).find(m => String(m.memoNo || '').trim() === memoNo && !isSameMemoRecord(m, data)) || null;
 }
 
 // ── Memo field mapping: JS camelCase ↔ DB snake_case ──
@@ -70,15 +102,23 @@ const SPEND_TYPE_TO_MEMO_TYPE = Object.freeze({
   [SPEND_TYPES.OTHERS]: 'other',
 });
 const ACTUAL_SPEND_SOURCES = Object.freeze({
-  APPROVED_MEMO: 'Approved Memo',
-  MANUAL_EXPENSE: 'Manual / Historical Expense',
-  INFRA_COST: 'Infra Cost',
+  APPROVED_MEMO: 'memo',
+  HISTORICAL_MEMO: 'manual_spending',
+  MANUAL_EXPENSE: 'manual_spending',
+  INFRA_COST: 'manual_spending',
 });
-const ACTUAL_SPEND_SOURCE_VALUES = Object.freeze(Object.values(ACTUAL_SPEND_SOURCES));
+const ACTUAL_SPEND_SOURCE_VALUES = Object.freeze([...new Set(Object.values(ACTUAL_SPEND_SOURCES))]);
+const ACTUAL_SPEND_STORAGE_KINDS = Object.freeze({
+  MEMO: 'memo',
+  HISTORICAL_MEMOS: 'historical_memos',
+  MANUAL_EXPENSE: 'manual_expense',
+  INFRA_COST: 'infra_cost',
+});
 const FINANCIAL_STORAGE_KEYS = Object.freeze({
   actualSpend: 'orbit-pmo-actual-spend-v1',
   budgetPools: 'orbit-pmo-budget-pools-v1',
 });
+const SUPPORTED_CURRENCIES = Object.freeze(['THB']);
 const BUDGET_STATUSES = Object.freeze({
   MANUAL_OVERRIDE: 'Manual Override',
   MAPPED: 'Mapped',
@@ -145,6 +185,23 @@ function normalizeActualSpendDetailLines(detailLines) {
 
 function createActualSpendRecord(input = {}) {
   const now = new Date().toISOString();
+  const sourceAliases = {
+    'Approved Memo': ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    'approved memo': ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    'historical memo': ACTUAL_SPEND_SOURCES.HISTORICAL_MEMO,
+    'manual / historical expense': ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
+    'Infra Cost': ACTUAL_SPEND_SOURCES.INFRA_COST,
+    'infra cost': ACTUAL_SPEND_SOURCES.INFRA_COST,
+    historical_memo: ACTUAL_SPEND_SOURCES.HISTORICAL_MEMO,
+    historical: ACTUAL_SPEND_SOURCES.HISTORICAL_MEMO,
+    manual_entry: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
+    manual: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
+    manual_spending: ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE,
+    memo: ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    infra: ACTUAL_SPEND_SOURCES.INFRA_COST,
+  };
+  const rawSource = String(input.source || '');
+  const source = sourceAliases[rawSource] || sourceAliases[rawSource.toLowerCase()] || rawSource;
   const startDate = input.startDate || null;
   const endDate = input.endDate || null;
   const coverageMonths = inclusiveCoverageMonths(startDate, endDate);
@@ -153,7 +210,8 @@ function createActualSpendRecord(input = {}) {
   const effectiveDate = startDate || input.date || null;
   return {
     id: input.id || generateFinancialRecordId('actual-spend'),
-    source: input.source || '',
+    source,
+    storageKind: input.storageKind || null,
     referenceNo: input.referenceNo || '',
     memoId: input.memoId || null,
     project: input.project || '',
@@ -454,7 +512,7 @@ function validateBudgetPoolImportBatch(rows, existingPools = []) {
   return { valid, rowResults, records: valid ? accepted : [] };
 }
 
-function budgetPoolDeletionBlockers(poolId, records = [], manualExpenses = [], memos = []) {
+function budgetPoolDeletionBlockers(poolId, records = [], manualExpenses = [], memos = [], historicalMemos = []) {
   // A cross-year Manual Override being blocked (Phase 7A-3) clears the CANONICAL Actual Spend
   // record's manualBudgetPoolId/finalBudgetPoolId — but it never touches the underlying manual
   // expense's or memo's own persisted budgetPoolId field. Deletion must still be blocked if any
@@ -463,7 +521,8 @@ function budgetPoolDeletionBlockers(poolId, records = [], manualExpenses = [], m
   const canonicalBlockers = records.filter(record => getFinalBudgetPoolId(record) === poolId);
   const manualBlockers = manualExpenses.filter(expense => expense && expense.budgetPoolId === poolId);
   const memoBlockers = memos.filter(memo => memo && memo.budgetPoolId === poolId);
-  return [...canonicalBlockers, ...manualBlockers, ...memoBlockers];
+  const historicalBlockers = historicalMemos.filter(memo => memo && memo.budgetPoolId === poolId);
+  return [...canonicalBlockers, ...manualBlockers, ...memoBlockers, ...historicalBlockers];
 }
 
 function loadFinancialRecords(storageKey) {
@@ -598,7 +657,8 @@ function mapBudgetPool(actualSpend, pools = []) {
       budgetStatus: BUDGET_STATUSES.MANUAL_OVERRIDE,
     };
   }
-  if (actualSpend.source === ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE) {
+  if (actualSpend.source === ACTUAL_SPEND_SOURCES.MANUAL_EXPENSE &&
+      actualSpend.storageKind !== ACTUAL_SPEND_STORAGE_KINDS.HISTORICAL_MEMOS) {
     return {
       ...actualSpend,
       autoBudgetPoolId: null,
@@ -658,48 +718,198 @@ function calculateActualSpendInRange(records = [], fromMonth, toMonth, filters =
   }, 0);
 }
 
-function calculateForecast(records = [], asOfDate = new Date(), filters = {}) {
+function forecastAnchorDate(asOfDate = new Date()) {
   const anchor = new Date(asOfDate);
+  if (Number.isNaN(anchor.getTime())) return new Date();
+  return anchor;
+}
+
+function forecastMonthKey(asOfDate = new Date()) {
+  const anchor = forecastAnchorDate(asOfDate);
+  return `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function addMonthsToKey(monthKey, offset) {
+  const [year, month] = String(monthKey || '').split('-').map(Number);
+  if (!year || !month) return '';
+  const date = new Date(year, month - 1 + offset, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function forecastMonths(asOfDate = new Date()) {
+  const anchor = forecastAnchorDate(asOfDate);
   const anchorYear = anchor.getFullYear();
   const anchorMonth = anchor.getMonth();
   const months = [];
-  for (let offset = -5; offset <= 6; offset++) {
+  for (let offset = -6; offset <= 5; offset++) {
     const date = new Date(anchorYear, anchorMonth + offset, 1);
     months.push({
       key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
-      kind: offset <= 0 ? 'actual' : 'forecast',
+      kind: offset < 0 ? 'actual' : 'forecast',
     });
   }
-  const eligible = queryActualSpend(filters, records).filter(record =>
-    (record.spendType === SPEND_TYPES.SOFTWARE || record.spendType === SPEND_TYPES.INFRA) &&
-    record.coverageStatus === 'Complete'
-  );
-  const grouped = new Map();
+  return months;
+}
+
+function forecastComponentMonthlyAmount(component = {}) {
+  const monthlyCost = Number(component.monthlyCost) || 0;
+  if (monthlyCost > 0) return monthlyCost;
+  const coverageMonths = Number(component.coverageMonths) || inclusiveCoverageMonths(component.coverageStart, component.coverageEnd);
+  return coverageMonths ? (Number(component.amount) || 0) / coverageMonths : 0;
+}
+
+function isForecastEligibleSpendType(spendType) {
+  const normalized = String(spendType || '').trim().toLowerCase();
+  return normalized === SPEND_TYPES.SOFTWARE.toLowerCase() || normalized === 'software license' ||
+    normalized === SPEND_TYPES.INFRA.toLowerCase();
+}
+
+function forecastCascadingOptions(rows = [], selectedProjects = [], selectedPrograms = []) {
+  const eligibleRows = rows.filter(row => isForecastEligibleSpendType(row.spendType));
+  const projectRows = eligibleRows.filter(row => !selectedProjects.length || selectedProjects.includes(row.project));
+  const programRows = projectRows.filter(row => !selectedPrograms.length || selectedPrograms.includes(row.program));
+  return {
+    projects: [...new Set(eligibleRows.map(row => row.project).filter(Boolean))].sort(),
+    programs: [...new Set(projectRows.map(row => row.program).filter(Boolean))].sort(),
+    plans: [...new Set(programRows.map(row => row.plan).filter(Boolean))].sort(),
+  };
+}
+
+function forecastComponents(records = [], filters = {}) {
+  const eligible = queryActualSpend(filters, records).filter(record => record.coverageStatus === 'Complete');
+  const components = [];
   eligible.forEach(record => {
-    const program = record.vendorProgram || record.description || record.referenceNo || record.spendType;
-    const key = [record.project, program, record.spendType].join('\u0000');
-    if (!grouped.has(key)) grouped.set(key, {
-      project: record.project,
-      program,
-      spendType: record.spendType,
-      values: Object.fromEntries(months.map(month => [month.key, 0])),
-    });
-    const row = grouped.get(key);
-    const allocations = actualSpendMonthlyAllocations(record);
-    const coverageEnd = String(record.endDate).slice(0, 7);
-    const monthlyCost = (Number(record.amount) || 0) / record.coverageMonths;
-    months.forEach(month => {
-      const allocated = Number(allocations[month.key]) || 0;
-      const carriedForecast = month.kind === 'forecast' && month.key > coverageEnd ? monthlyCost : 0;
-      row.values[month.key] += allocated || carriedForecast;
+    const recordProgram = record.vendorProgram || record.description || record.referenceNo || record.spendType;
+    const recordCoverageStart = String(record.startDate || '').slice(0, 7);
+    const recordCoverageEnd = String(record.endDate || '').slice(0, 7);
+    const recordCoverageMonths = Number(record.coverageMonths) || inclusiveCoverageMonths(recordCoverageStart, recordCoverageEnd);
+    const base = {
+      parentRecordId: record.id,
+      memoId: record.memoId || null,
+      referenceNo: record.referenceNo || '',
+      source: record.source || '',
+      storageKind: record.storageKind || null,
+      project: record.project || '',
+      spendType: record.spendType || '',
+      description: record.description || '',
+      recordVendorProgram: record.vendorProgram || '',
+    };
+    const detailLines = (record.source === ACTUAL_SPEND_SOURCES.APPROVED_MEMO || record.storageKind === ACTUAL_SPEND_STORAGE_KINDS.HISTORICAL_MEMOS) &&
+      record.spendType === SPEND_TYPES.SOFTWARE && Array.isArray(record.detailLines)
+      ? record.detailLines.filter(line => line && (line.program || line.plan || Number(line.monthlyCost) || Number(line.lineAmount) || line.coverageStart || line.coverageEnd))
+      : [];
+    if (detailLines.length) {
+      detailLines.forEach((line, index) => {
+        const coverageStart = String(line.coverageStart || recordCoverageStart).slice(0, 7);
+        const coverageEnd = String(line.coverageEnd || recordCoverageEnd).slice(0, 7);
+        const coverageMonths = Number(line.coverageMonths) || inclusiveCoverageMonths(coverageStart, coverageEnd);
+        const monthlyCost = Number(line.monthlyCost) || (coverageMonths ? (Number(line.lineAmount) || 0) / coverageMonths : 0);
+        components.push({
+          ...base,
+          componentId: `${record.id}:detail:${index}`,
+          componentType: 'detailLine',
+          detailLineIndex: index,
+          program: line.program || recordProgram,
+          plan: line.plan || '',
+          quantity: Number(line.quantity) || 0,
+          unitCost: Number(line.unitCost) || 0,
+          monthlyCost,
+          amount: Number(line.lineAmount) || monthlyCost * (coverageMonths || 0),
+          coverageStart,
+          coverageEnd,
+          coverageMonths,
+        });
+      });
+      return;
+    }
+    components.push({
+      ...base,
+      componentId: `${record.id}:record`,
+      componentType: 'record',
+      detailLineIndex: null,
+      program: recordProgram,
+      plan: '',
+      quantity: null,
+      unitCost: null,
+      monthlyCost: recordCoverageMonths ? (Number(record.amount) || 0) / recordCoverageMonths : 0,
+      amount: Number(record.amount) || 0,
+      coverageStart: recordCoverageStart,
+      coverageEnd: recordCoverageEnd,
+      coverageMonths: recordCoverageMonths,
     });
   });
-  const rows = [...grouped.values()].sort((a, b) =>
-    a.project.localeCompare(b.project) || a.spendType.localeCompare(b.spendType) || a.program.localeCompare(b.program)
-  ).map(row => ({
+  return components;
+}
+
+function calculateForecast(records = [], asOfDate = new Date(), filters = {}) {
+  const months = forecastMonths(asOfDate);
+  const referenceMonth = forecastMonthKey(asOfDate);
+  const lookbackStart = addMonthsToKey(referenceMonth, -12);
+  const grouped = new Map();
+  forecastComponents(records, filters).filter(component => isForecastEligibleSpendType(component.spendType)).forEach(component => {
+    const recurring = true;
+    const coverageStart = String(component.coverageStart || '').slice(0, 7);
+    const coverageEnd = String(component.coverageEnd || coverageStart).slice(0, 7);
+    if (!coverageStart || !coverageEnd) return;
+    if (recurring && coverageEnd < lookbackStart) return;
+    const program = component.program || component.referenceNo || component.spendType;
+    const plan = component.plan || '';
+    const key = [component.project, program, plan, component.spendType].join('\u0000');
+    if (!grouped.has(key)) grouped.set(key, {
+      project: component.project,
+      program,
+      plan,
+      spendType: component.spendType,
+      values: Object.fromEntries(months.map(month => [month.key, 0])),
+      supportedValues: Object.fromEntries(months.map(month => [month.key, 0])),
+      contributors: Object.fromEntries(months.map(month => [month.key, []])),
+      cellKinds: Object.fromEntries(months.map(month => [month.key, null])),
+      actualByMonth: {},
+      actualContributorsByMonth: {},
+    });
+    const row = grouped.get(key);
+    const monthlyCost = forecastComponentMonthlyAmount(component);
+    const actualMonths = recurring
+      ? Math.max(1, Number(component.coverageMonths) || inclusiveCoverageMonths(coverageStart, coverageEnd))
+      : 1;
+    for (let index = 0; index < actualMonths; index++) {
+      const actualMonth = addMonthsToKey(coverageStart, index);
+      if (!actualMonth || actualMonth > coverageEnd) break;
+      const actualAmount = recurring ? monthlyCost : Number(component.amount) || 0;
+      if (actualAmount <= 0) continue;
+      row.actualByMonth[actualMonth] = (row.actualByMonth[actualMonth] || 0) + actualAmount;
+      if (!row.actualContributorsByMonth[actualMonth]) row.actualContributorsByMonth[actualMonth] = [];
+      row.actualContributorsByMonth[actualMonth].push({ ...component, month: actualMonth, amount: actualAmount });
+    }
+  });
+  grouped.forEach(row => {
+    const recurring = true;
+    const baselineMonths = Object.keys(row.actualByMonth)
+      .filter(month => month >= lookbackStart && month < referenceMonth)
+      .sort();
+    let latestActual = baselineMonths.length ? row.actualByMonth[baselineMonths[baselineMonths.length - 1]] : 0;
+    months.forEach(month => {
+      const actualAmount = Number(row.actualByMonth[month.key]) || 0;
+      if (actualAmount > 0) {
+        row.values[month.key] = actualAmount;
+        row.supportedValues[month.key] = actualAmount;
+        row.contributors[month.key] = row.actualContributorsByMonth[month.key] || [];
+        row.cellKinds[month.key] = 'actual';
+        latestActual = actualAmount;
+      } else if (month.kind === 'forecast' && recurring && latestActual > 0) {
+        row.values[month.key] = latestActual;
+        row.cellKinds[month.key] = 'forecast';
+      }
+    });
+  });
+  const rows = [...grouped.values()].map(row => ({
     ...row,
     total: months.reduce((sum, month) => sum + row.values[month.key], 0),
-  }));
+    supportedTotal: months.reduce((sum, month) => sum + row.supportedValues[month.key], 0),
+  })).map(({ actualByMonth, actualContributorsByMonth, ...row }) => row).filter(row => row.total > 0).sort((a, b) =>
+    a.project.localeCompare(b.project) || a.spendType.localeCompare(b.spendType) ||
+    a.program.localeCompare(b.program) || String(a.plan || '').localeCompare(String(b.plan || ''))
+  );
   return { months, rows };
 }
 
@@ -707,9 +917,9 @@ function forecastExportDataset(forecast = { months:[], rows:[] }) {
   const months = forecast.months || [];
   const rows = forecast.rows || [];
   return {
-    headers: ['Project','Program','Spend Type', ...months.map(month => `${month.key} ${month.kind}`), 'Total'],
+    headers: ['Project','Program','Plan','Spend Type', ...months.map(month => `${month.key} ${month.kind}`), 'Total'],
     rows: rows.map(row => [
-      row.project, row.program, row.spendType,
+      row.project, row.program, row.plan || '', row.spendType,
       ...months.map(month => row.values[month.key] || 0),
       row.total,
     ]),
@@ -871,7 +1081,7 @@ function actualSpendOverlapsYear(record = {}, year) {
 }
 
 // Free-text search shared by the Budget vs Actual filter bar — same substring-over-lowercased-
-// fields convention as Manual Entries' search (renderManualEntries(), views/budget.js), so search
+// fields convention as Manual Spending search (renderManualEntries(), views/budget.js), so search
 // behavior stays identical across the app instead of a second implementation.
 function bvaRecordMatchesSearch(record = {}, search = '') {
   if (!search) return true;
@@ -974,6 +1184,10 @@ const FINANCIAL_HELPERS = Object.freeze({
   calculateActualSpend,
   actualSpendMonthlyAllocations,
   calculateActualSpendInRange,
+  forecastMonths,
+  forecastComponents,
+  isForecastEligibleSpendType,
+  forecastCascadingOptions,
   calculateForecast,
   forecastExportDataset,
   calculateBudgetUtilization,
@@ -982,6 +1196,109 @@ const FINANCIAL_HELPERS = Object.freeze({
   calculateBudgetVsActualDataset,
   budgetVsActualExportDataset,
 });
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    SPEND_TYPES,
+    ACTUAL_SPEND_SOURCES,
+    ACTUAL_SPEND_STORAGE_KINDS,
+    BUDGET_STATUSES,
+    createActualSpendRecord,
+    validateActualSpendRecord,
+    mapActualSpendRecords,
+    queryActualSpend,
+    inclusiveCoverageMonths,
+    actualSpendMonthlyAllocations,
+    forecastMonths,
+    forecastComponents,
+    isForecastEligibleSpendType,
+    forecastCascadingOptions,
+    calculateForecast,
+    forecastExportDataset,
+    esc,
+    money,
+    msValues,
+    initMultiSelect,
+    refreshMultiSelectUI,
+    DUPLICATE_MEMO_NO_MESSAGE,
+    isDuplicateMemoNoError,
+    normalizeMemoPersistenceError,
+    isSameMemoRecord,
+    findMemoByRecordIdentity,
+    findMemoNumberCollision,
+    memoToDb,
+    dbToMemo,
+    saveMemo,
+    saveMemoAsync,
+    syncLocalToSupabase,
+    loadMemos,
+    storeMemos,
+    normalizeHistoricalMemo,
+    historicalMemoToDb,
+    dbToHistoricalMemo,
+    loadHistoricalMemos,
+    storeHistoricalMemos,
+    saveHistoricalMemo,
+    saveHistoricalMemoAsync,
+    deleteHistoricalMemoAsync,
+    historicalMemoNoConflict,
+    checkHistoricalMemoNoConflict,
+    historicalHwLineId,
+    nextHardwareLineId,
+    spendingDeviceLinkToDb,
+    dbToSpendingDeviceLink,
+    loadSpendingDeviceLinks,
+    storeSpendingDeviceLinks,
+    loadSpendingDeviceLinksAsync,
+    deviceLinksForLine,
+    deviceLinksForMemo,
+    deviceLinkForDevice,
+    allLinkedDeviceIds,
+    deviceEligibleForSpendingLink,
+    hardwareLineEditBlockMessage,
+    linkDevicesToHardwareLineAsync,
+    unlinkDeviceFromSpendingAsync,
+    loadActualSpendRecords,
+    storeActualSpendRecords,
+    loadBudgetPoolRecords,
+    storeBudgetPoolRecords,
+    getFinalBudgetPoolId,
+    spendTypeFromMemoType,
+    actualSpendFromMemo,
+    updateActualSpendBudgetOverride,
+    softwareMemoDetailLines,
+    shortDate,
+    badgeClass,
+    memoStatusKey,
+    histStatusLabel,
+    histStatusBadgeClass,
+    normalizeAuthorityTitle,
+    normalizeAuthorityLimitRow,
+    resolveAuthorityLimit,
+    memoFinalApproverRow,
+    buildAuthoritySnapshot,
+    applyAuthoritySnapshotsOnApproval,
+    renderConfiguredClosingParagraph,
+    renderMemoPdf,
+    downloadMemoPdf,
+    cleanupMemoPdfStaging,
+    warnLocalStorageWriteFailed,
+    loadUserSignatureForPdfAsync,
+    getSignatureFromCache,
+    _preloadSignatures,
+    getAuthorityLimit,
+    findUserByName,
+    getApprovers,
+    getCanonicalProjectList,
+    loadOrganizationProjectsAsync,
+    loadUserProfilesAsync,
+    normalizeOrganizationProject,
+    projectOptionsHtml,
+    currentUser,
+    isPMO,
+    checkSupa,
+  };
+}
 
 function importActualSpendRecords(rows) {
   const existing = loadActualSpendRecords();
@@ -1032,15 +1349,18 @@ function softwareMemoDetailLines(slItems) {
 
 function actualSpendFromMemo(memo, existing = null) {
   if (!memo || memo.status !== 'completed') return null;
+  const isHistorical = memo.sourceKind === 'historical' || memo.isHistoricalMemo;
   const coverage = memoCoveragePeriod(memo);
   const effectiveDate = String(memo.approvedAt || memo.updatedAt || memo.createdAt || '').slice(0, 10);
   const hasStructuredSoftwareItems = memo.type === 'sl' && Array.isArray(memo.slItems) && memo.slItems.length > 0;
+  const historicalId = memo.id || memo.memoNo;
   return createActualSpendRecord({
     ...existing,
-    id: existing?.id || `actual-spend-memo-${memo.memoNo}`,
-    source: ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    id: existing?.id || (isHistorical ? `actual-spend-historical-${historicalId}` : `actual-spend-memo-${memo.memoNo}`),
+    source: isHistorical ? ACTUAL_SPEND_SOURCES.HISTORICAL_MEMO : ACTUAL_SPEND_SOURCES.APPROVED_MEMO,
+    storageKind: isHistorical ? ACTUAL_SPEND_STORAGE_KINDS.HISTORICAL_MEMOS : ACTUAL_SPEND_STORAGE_KINDS.MEMO,
     referenceNo: memo.memoNo,
-    memoId: memo.memoNo,
+    memoId: isHistorical ? `historical:${historicalId}` : memo.memoNo,
     project: memo.project,
     spendType: spendTypeFromMemoType(memo.type),
     amount: memo.total,
@@ -1090,6 +1410,126 @@ function updateActualSpendBudgetOverride(memoNo, manualBudgetPoolId, pools = loa
 // ══════════════════════════════════════════════════════════════════
 let _userProfilesCache = null;
 let _authorityCache    = null;
+let _authorityTitleCache = null;
+let _memoClosingTemplateCache = null;
+
+const AUTHORITY_LIMIT_FALLBACKS = Object.freeze({
+  'ประธานเจ้าหน้าที่บริหาร':          {sl:2000000,hw:2000000,int:0,ent:150000,dep:2000000},
+  'ประธานเจ้าหน้าที่สายการเงิน (CFO)':{sl:1000000,hw:500000, int:0,ent:50000, dep:500000},
+  'ผู้อำนวยการ (Team Director)':       {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
+  'ผู้อำนวยการโครงการ':                {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
+  'Senior Manager / Manager':          {sl:50000,  hw:50000,  int:0,ent:10000, dep:50000},
+  'Team Leader':                       {sl:30000,  hw:30000,  int:0,ent:5000,  dep:30000},
+});
+
+function normalizeAuthorityTitle(row = {}, index = 0) {
+  const titleTh = String(row.title_th || row.titleTh || row.title_name || row.title || '').trim();
+  return {
+    id: row.id != null ? Number(row.id) : null,
+    titleTh,
+    titleEn: String(row.title_en || row.titleEn || '').trim(),
+    sortOrder: Math.max(1, Math.floor(Number(row.sort_order || row.sortOrder || index + 1))),
+    isActive: row.is_active != null ? row.is_active !== false : row.active !== false,
+  };
+}
+
+async function loadAuthorityTitlesAsync() {
+  if(_authorityTitleCache) return _authorityTitleCache;
+  try {
+    const rows = await supaFetch('authority_titles','GET',null,'?order=sort_order.asc,title_th.asc');
+    if(Array.isArray(rows) && rows.length) {
+      _authorityTitleCache = rows.map(normalizeAuthorityTitle).filter(row => row.titleTh);
+      return _authorityTitleCache;
+    }
+  } catch(e){ console.warn('authority_titles load failed', e.message); }
+  _authorityTitleCache = Object.keys(AUTHORITY_LIMIT_FALLBACKS).map((title, index) => normalizeAuthorityTitle({
+    id: null,
+    title_th: title,
+    sort_order: (index + 1) * 10,
+    is_active: true,
+  }, index));
+  return _authorityTitleCache;
+}
+
+function findAuthorityTitle(value) {
+  const id = Number(value);
+  const titles = _authorityTitleCache || [];
+  if(Number.isFinite(id) && id > 0) {
+    const byId = titles.find(title => Number(title.id) === id);
+    if(byId) return byId;
+  }
+  const text = String(value || '').trim().toLowerCase();
+  return text ? titles.find(title => title.titleTh.toLowerCase() === text || title.titleEn.toLowerCase() === text) || null : null;
+}
+
+function normalizeAuthorityLimitRow(row = {}) {
+  return {
+    ...row,
+    authority_title_id: row.authority_title_id != null ? Number(row.authority_title_id) : null,
+    title: String(row.title || row.title_th || '').trim(),
+    memo_type: String(row.memo_type || row.memoType || '').trim().toLowerCase(),
+    limit_thb: Number(row.limit_thb) || 0,
+    is_unlimited: row.is_unlimited === true,
+  };
+}
+
+function resolveAuthorityLimit(authorityTitleOrId, memoType) {
+  const type = String(memoType || '').trim().toLowerCase();
+  const title = findAuthorityTitle(authorityTitleOrId);
+  const titleText = title?.titleTh || String(authorityTitleOrId || '').trim();
+  if(_authorityCache){
+    const normalizedRows = _authorityCache.map(normalizeAuthorityLimitRow);
+    const byId = title?.id != null
+      ? normalizedRows.find(row => row.authority_title_id != null && Number(row.authority_title_id) === Number(title.id) && row.memo_type === type)
+      : null;
+    const byTitle = normalizedRows.find(row => row.title === titleText && row.memo_type === type);
+    const row = byId || byTitle;
+    if(row) {
+      return {
+        authorityTitleId: row.authority_title_id || title?.id || null,
+        titleTh: titleText || row.title,
+        titleEn: title?.titleEn || '',
+        memoType: type,
+        limitThb: row.limit_thb,
+        isUnlimited: row.is_unlimited,
+        configured: true,
+      };
+    }
+  }
+  if(Object.prototype.hasOwnProperty.call(AUTHORITY_LIMIT_FALLBACKS, titleText) && Object.prototype.hasOwnProperty.call(AUTHORITY_LIMIT_FALLBACKS[titleText], type)) {
+    return {
+      authorityTitleId: title?.id || null,
+      titleTh: titleText,
+      titleEn: title?.titleEn || '',
+      memoType: type,
+      limitThb: AUTHORITY_LIMIT_FALLBACKS[titleText][type],
+      isUnlimited: false,
+      configured: true,
+    };
+  }
+  return {
+    authorityTitleId: title?.id || null,
+    titleTh: titleText,
+    titleEn: title?.titleEn || '',
+    memoType: type,
+    limitThb: 0,
+    isUnlimited: false,
+    configured: false,
+  };
+}
+
+async function loadMemoClosingTemplatesAsync() {
+  if(_memoClosingTemplateCache) return _memoClosingTemplateCache;
+  try {
+    const rows = await supaFetch('memo_closing_templates','GET',null,'?is_active=eq.true&order=memo_type.asc');
+    if(Array.isArray(rows)) {
+      _memoClosingTemplateCache = rows;
+      return rows;
+    }
+  } catch(e){ console.warn('memo_closing_templates load failed', e.message); }
+  _memoClosingTemplateCache = [];
+  return _memoClosingTemplateCache;
+}
 
 async function loadUserProfilesAsync() {
   if(_userProfilesCache) return _userProfilesCache;
@@ -1106,9 +1546,10 @@ async function loadUserProfilesAsync() {
 }
 async function loadAuthorityAsync() {
   if(_authorityCache) return _authorityCache;
+  try { await loadAuthorityTitlesAsync(); } catch(e) {}
   try {
     const rows = await supaFetch('authority_limits','GET',null,'?order=title.asc');
-    if(rows && rows.length){ _authorityCache = rows; return rows; }
+    if(rows && rows.length){ _authorityCache = rows.map(normalizeAuthorityLimitRow); return _authorityCache; }
   } catch(e){ console.warn('authority_limits load failed',e.message); }
   return null;
 }
@@ -1124,43 +1565,228 @@ function findUserByName(name) {
   const n = name.trim();
   return _userProfilesCache.find(u=>u.full_name===n||(u.name_aliases||[]).some(a=>a.toLowerCase()===n.toLowerCase()))||null;
 }
-function getAuthorityLimit(title, memoType) {
-  if(_authorityCache){
-    const r = _authorityCache.find(r=>r.title===title&&r.memo_type===memoType);
-    if(r) return Number(r.limit_thb)||0;
-  }
-  const fb={
-    'ประธานเจ้าหน้าที่บริหาร':          {sl:2000000,hw:2000000,int:0,ent:150000,dep:2000000},
-    'ประธานเจ้าหน้าที่สายการเงิน (CFO)':{sl:1000000,hw:500000, int:0,ent:50000, dep:500000},
-    'ผู้อำนวยการ (Team Director)':       {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
-    'ผู้อำนวยการโครงการ':                {sl:500000, hw:500000, int:0,ent:50000, dep:500000},
-    'Senior Manager / Manager':          {sl:50000,  hw:50000,  int:0,ent:10000, dep:50000},
-    'Team Leader':                       {sl:30000,  hw:30000,  int:0,ent:5000,  dep:30000},
-  };
-  return fb[title]?.[memoType]??0;
+function normalizeIdentityEmail(email) {
+  return String(email || '').trim().toLowerCase();
 }
-
-// isPMO — single source of truth (moved from budget.js)
-function currentUserProfileId() {
+function currentAuthSession() {
+  return typeof pmoCurrentSession === 'function' ? pmoCurrentSession() : null;
+}
+function currentAuthUserName() {
+  return String(currentAuthSession()?.user?.name || '').trim();
+}
+function currentAuthUserEmail() {
+  return normalizeIdentityEmail(currentAuthSession()?.user?.email);
+}
+function legacyCurrentUserName() {
+  return document.getElementById('sb-uname')?.textContent?.trim() || document.querySelector('.sb-uname')?.textContent?.trim() || '';
+}
+function legacyCurrentUserProfileId() {
   const raw = document.getElementById('sb-user-btn')?.dataset?.profileId;
   const id = Number(raw);
   return Number.isFinite(id) && id > 0 ? id : null;
 }
+function resolvedCurrentUserProfile() {
+  const profiles = _userProfilesCache || [];
+  const email = currentAuthUserEmail();
+  if(email) {
+    const byEmail = profiles.find(u => normalizeIdentityEmail(u.email) === email);
+    if(byEmail) return byEmail;
+  }
+  const legacyId = legacyCurrentUserProfileId();
+  if(legacyId != null) {
+    const byLegacyId = profiles.find(u => Number(u.id) === legacyId);
+    if(byLegacyId) return byLegacyId;
+  }
+  const legacyName = legacyCurrentUserName();
+  return legacyName && typeof findUserByName === 'function' ? findUserByName(legacyName) : null;
+}
+function getAuthorityLimit(title, memoType) {
+  const resolved = resolveAuthorityLimit(title, memoType);
+  return resolved.isUnlimited ? Infinity : Number(resolved.limitThb) || 0;
+}
+
+function memoApproverStage(row = {}) {
+  return String(row.stage || 'approve').trim().toLowerCase();
+}
+
+function isMemoApproveStage(row = {}) {
+  return memoApproverStage(row) === 'approve';
+}
+
+function memoFinalApproverRow(memo = {}) {
+  const approvers = Array.isArray(memo.approvers) ? memo.approvers : [];
+  const explicitStages = approvers.some(row => row && row.stage);
+  const candidates = explicitStages ? approvers.filter(isMemoApproveStage) : approvers;
+  return candidates.length ? candidates[candidates.length - 1] : null;
+}
+
+function memoClosingTemplateForType(memoType, templateRows) {
+  const type = String(memoType || '').trim().toLowerCase();
+  const rows = Array.isArray(templateRows) ? templateRows : (_memoClosingTemplateCache || []);
+  return rows.find(row =>
+    String(row.memo_type || row.memoType || '').trim().toLowerCase() === type &&
+    row.is_active !== false
+  ) || null;
+}
+
+function memoAuthorityValueForRow(row = {}, memo = {}) {
+  return row.authorityTitleId
+    ?? row.authority_title_id
+    ?? row.default_authority_title_id
+    ?? memo.approverAuthorityTitleId
+    ?? memo.authorityTitleId
+    ?? row.title
+    ?? memo.approverTitle
+    ?? memo.authorityTitle
+    ?? '';
+}
+
+function normalizeAuthoritySnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  return {
+    authorityTitleId: snapshot.authorityTitleId ?? snapshot.authority_title_id ?? null,
+    titleTh: String(snapshot.titleTh || snapshot.title_th || snapshot.title || '').trim(),
+    titleEn: String(snapshot.titleEn || snapshot.title_en || '').trim(),
+    memoType: String(snapshot.memoType || snapshot.memo_type || '').trim().toLowerCase(),
+    limitThb: snapshot.limitThb === null || snapshot.limit_thb === null
+      ? null
+      : Number(snapshot.limitThb ?? snapshot.limit_thb ?? 0),
+    isUnlimited: snapshot.isUnlimited === true || snapshot.is_unlimited === true,
+    configured: snapshot.configured === true,
+    policyRef: String(snapshot.policyRef || snapshot.policy_ref || '').trim(),
+    resolvedAt: snapshot.resolvedAt || snapshot.resolved_at || '',
+  };
+}
+
+function buildAuthoritySnapshot(memo = {}, row = {}, options = {}) {
+  const memoType = String(options.memoType || memo.type || memo.memo_type || '').trim().toLowerCase();
+  const authorityValue = memoAuthorityValueForRow(row, memo);
+  const resolver = typeof options.authorityResolver === 'function' ? options.authorityResolver : resolveAuthorityLimit;
+  const resolved = resolver(authorityValue, memoType) || {};
+  const title = findAuthorityTitle(authorityValue);
+  const template = memoClosingTemplateForType(memoType, options.templateRows);
+  const rawLimit = resolved.configured === true ? Number(resolved.limitThb) || 0 : null;
+  return {
+    authorityTitleId: resolved.authorityTitleId ?? title?.id ?? (Number(authorityValue) > 0 ? Number(authorityValue) : null),
+    titleTh: String(resolved.titleTh || title?.titleTh || row.title || '').trim(),
+    titleEn: String(resolved.titleEn || title?.titleEn || row.titleEn || '').trim(),
+    memoType,
+    limitThb: rawLimit,
+    isUnlimited: resolved.isUnlimited === true,
+    configured: resolved.configured === true,
+    policyRef: String(options.policyRef ?? template?.policy_ref ?? template?.policyRef ?? '').trim(),
+    resolvedAt: options.resolvedAt || new Date().toISOString(),
+  };
+}
+
+function applyAuthoritySnapshotsOnApproval(memo = {}, previousApprovers = [], nextApprovers = [], options = {}) {
+  const previousRows = Array.isArray(previousApprovers) ? previousApprovers : [];
+  const nextRows = Array.isArray(nextApprovers) ? nextApprovers : [];
+  return nextRows.map((row, index) => {
+    const before = previousRows[index] || {};
+    const becameApproved = before.status !== 'approved' && row?.status === 'approved';
+    if (!becameApproved || !isMemoApproveStage(row)) return row;
+    return {
+      ...row,
+      authoritySnapshot: buildAuthoritySnapshot(memo, row, options),
+    };
+  });
+}
+
+function resolveMemoAuthorityForPdf(memo = {}, options = {}) {
+  const finalApprover = memoFinalApproverRow(memo);
+  const existing = normalizeAuthoritySnapshot(finalApprover?.authoritySnapshot);
+  if (existing) return existing;
+  if (finalApprover) return buildAuthoritySnapshot(memo, finalApprover, options);
+  return buildAuthoritySnapshot(memo, {}, options);
+}
+
+function memoSoftwareMetrics(data = {}) {
+  let totalSeats = 0;
+  let months = 12;
+  (data.slItems || []).forEach(item => {
+    const qty = Number(item.qty || item.quantity || item.seats || item.count || 0);
+    const mo = Number(item.months || item.month || item.durationMonths || 0);
+    if (Number.isFinite(qty)) totalSeats += qty;
+    if (Number.isFinite(mo) && mo > 0) months = mo;
+  });
+  if (totalSeats) return { totalSeats, months };
+
+  const slSection = (data.sections || []).find(section => section.title === 'รายการ Software');
+  if (!slSection?.html) return { totalSeats, months };
+  if (typeof DOMParser !== 'undefined') {
+    const doc = new DOMParser().parseFromString(slSection.html, 'text/html');
+    doc.querySelectorAll('tbody tr').forEach(row => {
+      const cells = row.querySelectorAll('td');
+      if (cells.length >= 6) {
+        const mo = parseInt(cells[4]?.textContent, 10) || 0;
+        const qty = parseInt(cells[5]?.textContent, 10) || 0;
+        if (mo) months = mo;
+        totalSeats += qty;
+      }
+    });
+  }
+  return { totalSeats, months };
+}
+
+function authorityLimitText(snapshot = {}) {
+  const normalized = normalizeAuthoritySnapshot(snapshot) || {};
+  if (normalized.isUnlimited) return 'ไม่จำกัดวงเงิน';
+  if (normalized.configured && Number(normalized.limitThb) === 0) return '0 บาท';
+  if (Number(normalized.limitThb) > 0) return `ไม่เกิน ${(Number(normalized.limitThb)||0).toLocaleString('th-TH',{maximumFractionDigits:0})} บาท`;
+  return 'ในการอนุมัติงบประมาณ';
+}
+
+function renderConfiguredClosingParagraph(data = {}, options = {}) {
+  const memoType = String(data.type || data.memo_type || '').trim().toLowerCase();
+  const template = options.template || memoClosingTemplateForType(memoType, options.templateRows);
+  if (!template || !String(template.template_th || '').trim()) return '';
+
+  const authority = resolveMemoAuthorityForPdf(data, {
+    memoType,
+    templateRows: options.templateRows,
+    authorityResolver: options.authorityResolver,
+  });
+  const metrics = memoSoftwareMetrics(data);
+  const total = Number(data.total) || 0;
+  const amountNumber = total ? total.toLocaleString('th-TH', {maximumFractionDigits:0}) : '';
+  const amountWords = String(data.amountWords || data.amount_words || '-').trim();
+  const values = {
+    amount: total ? `<strong>${amountNumber} บาท</strong> (${esc(amountWords || '-')})` : '',
+    amount_text: esc(amountWords || '-'),
+    project_name: esc(data.project || data.entClient || data.project_name || '-'),
+    seat_count: metrics.totalSeats ? `จำนวนรวมทั้งหมด ${metrics.totalSeats} Seats` : '',
+    duration_months: metrics.months ? `ระยะเวลา ${metrics.months} เดือน` : '',
+    authority_title_th: esc(authority.titleTh || ''),
+    authority_title_en: esc(authority.titleEn || ''),
+    authority_limit: esc(authorityLimitText(authority)),
+    policy_ref: esc(authority.policyRef || template.policy_ref || template.policyRef || ''),
+  };
+
+  return esc(String(template.template_th || ''))
+    .replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, key) => (
+      Object.prototype.hasOwnProperty.call(values, key) ? values[key] : ''
+    ))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// isPMO — single source of truth (moved from budget.js)
+function currentUserProfileId() {
+  const profile = resolvedCurrentUserProfile();
+  return profile?.id != null ? profile.id : null;
+}
 function currentUserProfile() {
-  const id = currentUserProfileId();
-  if (id == null) return null;
-  return (_userProfilesCache || []).find(u => Number(u.id) === id) || null;
+  return resolvedCurrentUserProfile();
 }
 function isPMO() {
-  const simulated = document.getElementById('sb-user-btn')?.dataset?.isPmo;
-  if (simulated === 'true' || simulated === 'false') return simulated === 'true';
   const profile = currentUserProfile();
-  if (profile) return profile.is_pmo === true;
-  return (document.getElementById('sb-urole')?.textContent?.trim()||'') === 'PMO';
+  return profile?.is_pmo === true;
 }
 // currentUser — single source of truth (moved from pending.js)
 function currentUser() {
-  return document.getElementById('sb-uname')?.textContent?.trim()||'';
+  const profile = currentUserProfile();
+  return String(profile?.full_name || currentAuthUserName() || legacyCurrentUserName() || '').trim();
 }
 
 function profileMatches(profileId, name, targetProfileId = currentUserProfileId(), targetName = currentUser()) {
@@ -1183,19 +1809,36 @@ function memoCurrentApprover(memo) {
 function isMemoRequester(memo) {
   return profileMatches(memo?.requesterProfileId, memo?.requesterName);
 }
+function isMemoApproverInRoute(memo) {
+  if (!memo) return false;
+  if ((memo.approvers || []).some(a => profileMatches(a.profileId, a.name))) return true;
+  return profileMatches(null, memo.reviewerName) || profileMatches(null, memo.approverName);
+}
+function isPendingFamilyMemo(memo) {
+  return !memo?.status || memo.status === 'pending' || memo.status === 'pending_a2' || memo.status === 'pending_a3';
+}
+function canCurrentUserViewMemo(memo) {
+  if (!memo) return false;
+  return isPMO() || isMemoRequester(memo) || isMemoApproverInRoute(memo);
+}
+function canCurrentUserViewPendingMemo(memo) {
+  if (!isPendingFamilyMemo(memo)) return false;
+  return isPMO() || isMemoRequester(memo) || isMemoCurrentApprover(memo);
+}
+function canCurrentUserViewMemoHistory(memo) {
+  return canCurrentUserViewMemo(memo);
+}
 function isMemoCurrentApprover(memo) {
   const approver = memoCurrentApprover(memo);
   if (!approver) return false;
   return profileMatches(approver.profileId, approver.name);
 }
 function isMemoVisibleInPending(memo) {
-  if (!memo || !['pending','pending_a2','pending_a3'].includes(memo.status)) return false;
-  return isPMO() || isMemoRequester(memo) || isMemoCurrentApprover(memo);
+  return canCurrentUserViewPendingMemo(memo);
 }
 function canCurrentUserActOnMemo(memo) {
   if (!memo || !['pending','pending_a2','pending_a3'].includes(memo.status)) return false;
-  if (isMemoRequester(memo)) return false;
-  return isMemoCurrentApprover(memo) || isPMO();
+  return isMemoCurrentApprover(memo);
 }
 
 // Milestone 1A Task 1.3 — an approver step is "resolved" (locked, no longer the
@@ -1372,7 +2015,7 @@ function memoToDb(m) {
 }
 function dbToMemo(r) {
   return {
-    id: r.memo_no, memoNo: r.memo_no,
+    id: r.id || r.memo_no, memoNo: r.memo_no,
     type: r.type, typeLabel: r.type_label,
     status: r.status, project: r.project, subject: r.subject, reason: r.reason,
     to: r.to, date: r.date, total: Number(r.total)||0, amountWords: r.amount_words,
@@ -1385,6 +2028,490 @@ function dbToMemo(r) {
     submittedAt: r.submitted_at, approvedAt: r.approved_at, rejectedAt: r.rejected_at,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
+}
+
+const HISTORICAL_MEMO_KEY = 'orbit-pmo-historical-memos-v1';
+let _histMemoCache = null;
+
+const HISTORICAL_MEMO_TYPES = Object.freeze(['sl', 'hw', 'int', 'ent', 'dep']);
+const HISTORICAL_TYPE_LABELS = Object.freeze({
+  sl: 'Software License',
+  hw: 'Hardware',
+  int: 'Team Activity',
+  ent: 'Client Expense',
+  dep: 'Deployment',
+});
+
+function normalizeHistoricalMemo(input = {}) {
+  const type = String(input.type || '').trim().toLowerCase();
+  const now = new Date().toISOString();
+  return {
+    ...input,
+    id: input.id || input.memoNo || `hist-${Date.now().toString(36).toUpperCase()}`,
+    memoNo: String(input.memoNo || '').trim(),
+    type,
+    typeLabel: input.typeLabel || HISTORICAL_TYPE_LABELS[type] || String(type || '').toUpperCase(),
+    status: 'completed',
+    project: input.project || '',
+    subject: input.subject || '',
+    reason: input.reason || '',
+    date: input.date || null,
+    total: Number(input.total) || 0,
+    currency: 'THB',
+    sections: Array.isArray(input.sections) ? input.sections : [],
+    slItems: Array.isArray(input.slItems) ? input.slItems : [],
+    hwItems: Array.isArray(input.hwItems) ? input.hwItems : [],
+    acctCols: Array.isArray(input.acctCols) ? input.acctCols : [],
+    acctRows: Array.isArray(input.acctRows) ? input.acctRows : [],
+    intNames: Array.isArray(input.intNames) ? input.intNames : [],
+    depItems: Array.isArray(input.depItems) ? input.depItems : [],
+    auditLog: Array.isArray(input.auditLog) ? input.auditLog : [],
+    budgetPoolId: input.budgetPoolId || null,
+    budgetSource: input.budgetSource || null,
+    originalDocumentRef: input.originalDocumentRef || input.original_document_ref || '',
+    createdAt: input.createdAt || now,
+    updatedAt: input.updatedAt || now,
+    createdBy: input.createdBy || '',
+    updatedBy: input.updatedBy || '',
+    approvedAt: input.approvedAt || input.date || input.updatedAt || input.createdAt || now,
+    deleted: Boolean(input.deleted),
+    deletedAt: input.deletedAt || null,
+    deletedBy: input.deletedBy || '',
+    sourceKind: 'historical',
+    isHistoricalMemo: true,
+  };
+}
+
+function historicalMemoToDb(m) {
+  const memo = normalizeHistoricalMemo(m);
+  return {
+    id: memo.id,
+    memo_no: memo.memoNo,
+    type: memo.type,
+    type_label: memo.typeLabel,
+    project: memo.project,
+    subject: memo.subject,
+    reason: memo.reason,
+    date: memoDbDate(memo.date),
+    total: Number(memo.total) || 0,
+    currency: 'THB',
+    sections: memo.sections,
+    sl_items: memo.slItems,
+    hw_items: memo.hwItems,
+    hw_owner: memo.hwOwner || null,
+    acct_cols: memo.acctCols,
+    acct_rows: memo.acctRows,
+    int_names: memo.intNames,
+    dep_items: memo.depItems,
+    int_activity: memo.intActivity || null,
+    int_date: memoDbDate(memo.intDate),
+    int_headcount: memo.intHeadcount || null,
+    int_pp: memo.intPP || null,
+    ent_client: memo.entClient || null,
+    ent_date: memoDbDate(memo.entDate),
+    ent_time: memo.entTime || null,
+    ent_place: memo.entPlace || null,
+    ent_people: memo.entPeople || null,
+    dep_location: memo.depLocation || null,
+    dep_start: memoDbDate(memo.depStart),
+    dep_end: memoDbDate(memo.depEnd),
+    dep_emp_count: memo.depEmpCount || null,
+    budget_pool_id: memo.budgetPoolId || null,
+    budget_source: memo.budgetSource || null,
+    original_document_ref: memo.originalDocumentRef || null,
+    audit_log: memo.auditLog,
+    deleted: Boolean(memo.deleted),
+    deleted_at: memo.deletedAt || null,
+    deleted_by: memo.deletedBy || null,
+    created_at: memo.createdAt || new Date().toISOString(),
+    updated_at: memo.updatedAt || new Date().toISOString(),
+    created_by: memo.createdBy || null,
+    updated_by: memo.updatedBy || null,
+  };
+}
+
+function dbToHistoricalMemo(r) {
+  return normalizeHistoricalMemo({
+    id: r.id || r.memo_no,
+    memoNo: r.memo_no,
+    type: r.type,
+    typeLabel: r.type_label,
+    project: r.project,
+    subject: r.subject,
+    reason: r.reason,
+    date: r.date,
+    total: Number(r.total) || 0,
+    currency: r.currency || 'THB',
+    sections: r.sections || [],
+    slItems: r.sl_items || [],
+    hwItems: r.hw_items || [],
+    hwOwner: r.hw_owner || null,
+    acctCols: r.acct_cols || [],
+    acctRows: r.acct_rows || [],
+    intNames: r.int_names || [],
+    depItems: r.dep_items || [],
+    intActivity: r.int_activity || null,
+    intDate: r.int_date || null,
+    intHeadcount: r.int_headcount || null,
+    intPP: r.int_pp || null,
+    entClient: r.ent_client || null,
+    entDate: r.ent_date || null,
+    entTime: r.ent_time || null,
+    entPlace: r.ent_place || null,
+    entPeople: r.ent_people || null,
+    depLocation: r.dep_location || null,
+    depStart: r.dep_start || null,
+    depEnd: r.dep_end || null,
+    depEmpCount: r.dep_emp_count || null,
+    budgetPoolId: r.budget_pool_id || null,
+    budgetSource: r.budget_source || null,
+    originalDocumentRef: r.original_document_ref || '',
+    auditLog: r.audit_log || [],
+    deleted: r.deleted || false,
+    deletedAt: r.deleted_at || null,
+    deletedBy: r.deleted_by || '',
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    createdBy: r.created_by || '',
+    updatedBy: r.updated_by || '',
+  });
+}
+
+function _excludeDeletedHistoricalMemos(memos) {
+  return (memos || []).map(normalizeHistoricalMemo).filter(m => !m.deleted);
+}
+
+function loadHistoricalMemos() {
+  if (_histMemoCache !== null) return _excludeDeletedHistoricalMemos(_histMemoCache);
+  try {
+    const rows = JSON.parse(localStorage.getItem(HISTORICAL_MEMO_KEY) || '[]');
+    _histMemoCache = Array.isArray(rows) ? rows.map(normalizeHistoricalMemo) : [];
+  } catch(e) { _histMemoCache = []; }
+  return _excludeDeletedHistoricalMemos(_histMemoCache);
+}
+
+function storeHistoricalMemos(memos) {
+  _histMemoCache = Array.isArray(memos) ? memos.map(normalizeHistoricalMemo) : [];
+  try { localStorage.setItem(HISTORICAL_MEMO_KEY, JSON.stringify(_histMemoCache)); } catch(e) {}
+}
+
+async function loadHistoricalMemosAsync() {
+  if (await checkSupa()) {
+    try {
+      const rows = await supaFetch('historical_memos', 'GET', null, '?order=created_at.desc&limit=1000');
+      storeHistoricalMemos((rows || []).map(dbToHistoricalMemo));
+      return loadHistoricalMemos();
+    } catch(e) { console.warn('Historical memos load failed, using local backup', e.message); }
+  }
+  return loadHistoricalMemos();
+}
+
+function historicalMemoNoConflict(memoNo, currentId = '') {
+  const normalized = String(memoNo || '').trim();
+  if (!normalized) return null;
+  const approval = loadMemos().find(m => String(m.memoNo || '').trim() === normalized);
+  if (approval) return { source: 'memos', record: approval };
+  const historical = (_histMemoCache !== null ? _histMemoCache : loadHistoricalMemos())
+    .find(m => !m.deleted && String(m.memoNo || '').trim() === normalized && String(m.id || '') !== String(currentId || ''));
+  return historical ? { source: 'historical_memos', record: historical } : null;
+}
+
+async function checkHistoricalMemoNoConflict(memoNo, currentId = '') {
+  const local = historicalMemoNoConflict(memoNo, currentId);
+  if (local) return local;
+  if (await checkSupa()) {
+    const encoded = encodeURIComponent(String(memoNo || '').trim());
+    try {
+      const memos = await supaFetch('memos', 'GET', null, `?memo_no=eq.${encoded}&select=id,memo_no&limit=1`);
+      if (memos?.length) return { source: 'memos', record: memos[0] };
+      const historical = await supaFetch('historical_memos', 'GET', null, `?memo_no=eq.${encoded}&deleted=eq.false&select=id,memo_no&limit=1`);
+      const conflict = (historical || []).find(row => String(row.id || '') !== String(currentId || ''));
+      if (conflict) return { source: 'historical_memos', record: conflict };
+    } catch(e) { console.warn('Historical memo number check failed; using local cache', e.message); }
+  }
+  return null;
+}
+
+async function saveHistoricalMemoAsync(data) {
+  const now = new Date().toISOString();
+  const current = (_histMemoCache !== null ? _histMemoCache : loadHistoricalMemos());
+  const existing = current.find(m => String(m.id || '') === String(data.id || '') || String(m.memoNo || '') === String(data.memoNo || ''));
+  const saved = normalizeHistoricalMemo({
+    ...existing,
+    ...data,
+    id: data.id || existing?.id || data.memoNo,
+    createdAt: existing?.createdAt || data.createdAt || now,
+    updatedAt: now,
+    createdBy: existing?.createdBy || data.createdBy || currentUser(),
+    updatedBy: currentUser(),
+    deleted: false,
+    deletedAt: null,
+    deletedBy: '',
+  });
+  if (!HISTORICAL_MEMO_TYPES.includes(saved.type)) throw new Error('Unsupported Historical Spend Type');
+  if (!saved.memoNo || !saved.project || !saved.subject) throw new Error('Reference No, Project, and Description are required');
+  if (!(saved.total > 0)) throw new Error('Amount must be greater than zero');
+  const conflict = await checkHistoricalMemoNoConflict(saved.memoNo, saved.id);
+  if (conflict) throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  const rows = [...current.filter(m => String(m.id || '') !== String(saved.id || ''))];
+  rows.unshift(saved);
+  storeHistoricalMemos(rows);
+  if (await checkSupa()) {
+    try {
+      await supaFetch('historical_memos', 'POST', historicalMemoToDb(saved), '?on_conflict=id');
+    } catch(e) { throw normalizeMemoPersistenceError(e); }
+  }
+  if (typeof reconcileActualSpendSources === 'function') reconcileActualSpendSources();
+  return saved;
+}
+
+function saveHistoricalMemo(data) {
+  const current = (_histMemoCache !== null ? _histMemoCache : loadHistoricalMemos());
+  const existing = current.find(m => String(m.id || '') === String(data.id || '') || String(m.memoNo || '') === String(data.memoNo || ''));
+  if (historicalMemoNoConflict(data.memoNo, data.id || existing?.id || '')) throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  const now = new Date().toISOString();
+  const saved = normalizeHistoricalMemo({
+    ...existing,
+    ...data,
+    id: data.id || existing?.id || data.memoNo,
+    createdAt: existing?.createdAt || data.createdAt || now,
+    updatedAt: now,
+    createdBy: existing?.createdBy || data.createdBy || currentUser(),
+    updatedBy: currentUser(),
+    deleted: false,
+    deletedAt: null,
+    deletedBy: '',
+  });
+  const rows = current.filter(m => String(m.id || '') !== String(saved.id || ''));
+  rows.unshift(saved);
+  storeHistoricalMemos(rows);
+  saveHistoricalMemoAsync(saved).catch(e => console.warn('Background Manual Spending save failed', e));
+  return saved;
+}
+
+async function deleteHistoricalMemoAsync(id, reason = 'Deleted from Add Spending') {
+  const current = (_histMemoCache !== null ? _histMemoCache : loadHistoricalMemos());
+  const index = current.findIndex(m => String(m.id || '') === String(id || '') || String(m.memoNo || '') === String(id || ''));
+  if (index < 0) throw new Error('ไม่พบรายการ');
+  const now = new Date().toISOString();
+  const updated = normalizeHistoricalMemo({
+    ...current[index],
+    deleted: true,
+    deletedAt: now,
+    deletedBy: currentUser(),
+    updatedAt: now,
+    updatedBy: currentUser(),
+    auditLog: [...(current[index].auditLog || []), { action: 'Deleted', actor: currentUser(), comment: reason, timestamp: now }],
+  });
+  current[index] = updated;
+  storeHistoricalMemos(current);
+  if (await checkSupa()) {
+    await supaFetch('historical_memos', 'PATCH', {
+      deleted: true,
+      deleted_at: now,
+      deleted_by: updated.deletedBy,
+      updated_at: now,
+      updated_by: updated.updatedBy,
+      audit_log: updated.auditLog,
+    }, '?id=eq.' + encodeURIComponent(updated.id));
+  }
+  storeActualSpendRecords(loadActualSpendRecords().filter(record => record.memoId !== `historical:${updated.id}`));
+  if (typeof reconcileActualSpendSources === 'function') reconcileActualSpendSources();
+  return updated;
+}
+
+// ── Hardware Spending <-> Device Registry links (Batch 2B) ──
+// Optional linking between a historical (Manual Spending) hardware line and
+// existing Device Registry records. No Purchase Orders, no device creation —
+// this only records a relationship in its own join table. See
+// docs/specs/Batch_2B_Hardware_Device_Linking.md.
+const SPENDING_DEVICE_LINK_KEY = 'orbit-pmo-historical-spending-device-links-v1';
+let _spendDeviceLinkCache = null;
+
+// A hardware line inside historical_memos.hw_items has no id of its own until
+// the first time it's linked (see linkDevicesToHardwareLineAsync, which
+// persists item.id at that point). Until then, this positional fallback
+// stands in — safe because no link can exist yet for a line that has never
+// been linked, so there is nothing for the fallback to misattribute.
+function historicalHwLineId(memo, index) {
+  return memo?.hwItems?.[index]?.id || `${memo?.id}:hw:${index}`;
+}
+
+function nextHardwareLineId() {
+  return `hwl_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function spendingDeviceLinkToDb(link) {
+  return {
+    historical_memo_id: link.historicalMemoId,
+    hardware_line_id: link.hardwareLineId,
+    device_id: link.deviceId,
+    created_at: link.createdAt || new Date().toISOString(),
+    created_by: link.createdBy || null,
+  };
+}
+
+function dbToSpendingDeviceLink(r) {
+  return {
+    id: r.id,
+    historicalMemoId: r.historical_memo_id,
+    hardwareLineId: r.hardware_line_id,
+    deviceId: r.device_id,
+    createdAt: r.created_at,
+    createdBy: r.created_by || '',
+  };
+}
+
+function loadSpendingDeviceLinks() {
+  if (_spendDeviceLinkCache !== null) return _spendDeviceLinkCache;
+  try {
+    const rows = JSON.parse(localStorage.getItem(SPENDING_DEVICE_LINK_KEY) || '[]');
+    _spendDeviceLinkCache = Array.isArray(rows) ? rows : [];
+  } catch(e) { _spendDeviceLinkCache = []; }
+  return _spendDeviceLinkCache;
+}
+
+function storeSpendingDeviceLinks(links) {
+  _spendDeviceLinkCache = Array.isArray(links) ? links : [];
+  try { localStorage.setItem(SPENDING_DEVICE_LINK_KEY, JSON.stringify(_spendDeviceLinkCache)); } catch(e) {}
+}
+
+async function loadSpendingDeviceLinksAsync() {
+  if (await checkSupa()) {
+    try {
+      const rows = await supaFetch('historical_spending_device_links', 'GET', null, '?order=created_at.desc&limit=5000');
+      storeSpendingDeviceLinks((rows || []).map(dbToSpendingDeviceLink));
+      return loadSpendingDeviceLinks();
+    } catch(e) { console.warn('Spending/device links load failed, using local backup', e.message); }
+  }
+  return loadSpendingDeviceLinks();
+}
+
+function deviceLinksForLine(historicalMemoId, hardwareLineId) {
+  if (!hardwareLineId) return [];
+  return loadSpendingDeviceLinks().filter(l => l.historicalMemoId === historicalMemoId && l.hardwareLineId === hardwareLineId);
+}
+
+function deviceLinksForMemo(historicalMemoId) {
+  return loadSpendingDeviceLinks().filter(l => l.historicalMemoId === historicalMemoId);
+}
+
+function deviceLinkForDevice(deviceId) {
+  return loadSpendingDeviceLinks().find(l => String(l.deviceId) === String(deviceId)) || null;
+}
+
+function allLinkedDeviceIds() {
+  return new Set(loadSpendingDeviceLinks().map(l => String(l.deviceId)));
+}
+
+// Batch 2B.1 — single source of truth for "can this Device be linked to a
+// Manual Spending hardware line right now". A Device already linked to an
+// approved Memo/PO (device.memoNo) is a completely separate relationship
+// (see views/device.js's legacy sourceMemoCell) and must never be treated as
+// available here — that link can only ever be viewed, never unlinked, from
+// this flow. Used both to filter the device picker (views/device.js) and to
+// re-validate every selection before save (defense in depth against a stale
+// picker render).
+function deviceEligibleForSpendingLink(device, linkedElsewhere = allLinkedDeviceIds()) {
+  if (!device || device.deleted) return false;
+  if (device.status === 'retired') return false;
+  if (device.memoNo) return false;
+  if (linkedElsewhere.has(String(device.id))) return false;
+  return true;
+}
+
+// Editing a historical hw memo (see saveHistoricalSpendingFromModal in
+// views/budget.js) must not silently orphan a linked device — a line that
+// still has linked devices can't be removed, and its Quantity can't drop
+// below its current linked count (spec: "Require unlink first"). Returns a
+// user-facing Thai message for the first violation found, or null if the
+// edit is safe to save as-is. Pure/DOM-free so it's directly unit-testable.
+function hardwareLineEditBlockMessage(existingMemo, newHwItems) {
+  if (!existingMemo?.id) return null;
+  const originalItems = existingMemo.hwItems || [];
+  const nextItems = newHwItems || [];
+  for (let i = 0; i < originalItems.length; i++) {
+    const origItem = originalItems[i];
+    const lineId = origItem.id || historicalHwLineId(existingMemo, i);
+    const links = deviceLinksForLine(existingMemo.id, lineId);
+    if (!links.length) continue;
+    const match = nextItems.find(item => item.id && item.id === origItem.id);
+    if (!match) return `ไม่สามารถลบ "${origItem.name}" ได้ เนื่องจากมี Device เชื่อมโยงอยู่ ${links.length} เครื่อง กรุณายกเลิกการเชื่อมโยงก่อน`;
+    const newQty = Math.max(1, Number(match.qty) || 1);
+    if (newQty < links.length) return `จำนวนของ "${origItem.name}" ต้องไม่น้อยกว่าจำนวน Device ที่เชื่อมโยงอยู่ (${links.length}) กรุณายกเลิกการเชื่อมโยงบางส่วนก่อน`;
+  }
+  return null;
+}
+
+// Links a set of existing Device Registry records to one hardware line of one
+// historical Manual Spending memo. Never creates devices — only rejects when
+// a device doesn't exist, is deleted/retired, is already linked elsewhere, or
+// when linking would push the line's linked count past its Quantity.
+async function linkDevicesToHardwareLineAsync(historicalMemoId, lineIndex, deviceIds) {
+  const memos = (_histMemoCache !== null ? _histMemoCache : loadHistoricalMemos());
+  let memo = memos.find(m => String(m.id) === String(historicalMemoId));
+  if (!memo) throw new Error('ไม่พบรายการ Spending');
+  const line = memo.hwItems?.[lineIndex];
+  if (!line) throw new Error('ไม่พบรายการ Hardware line');
+  const qty = Math.max(1, Number(line.qty) || 1);
+
+  let lineId = line.id;
+  if (!lineId) {
+    // First time this line is linked — mint and persist its id so future
+    // edits/reorders of hwItems can never shift which line these links point at.
+    lineId = historicalHwLineId(memo, lineIndex);
+    const hwItems = memo.hwItems.map((item, i) => (i === lineIndex ? { ...item, id: lineId } : item));
+    memo = await saveHistoricalMemoAsync({ ...memo, hwItems });
+  }
+
+  const uniqueDeviceIds = [...new Set((deviceIds || []).map(String))];
+  if (!uniqueDeviceIds.length) return { memo, links: [] };
+  const existingLinks = deviceLinksForLine(historicalMemoId, lineId);
+  if (existingLinks.length + uniqueDeviceIds.length > qty) {
+    throw new Error(`เชื่อมโยง Device ได้ไม่เกินจำนวนที่ระบุ (${qty}) ต่อรายการ — ปัจจุบันเชื่อมโยงแล้ว ${existingLinks.length} เครื่อง`);
+  }
+  const devices = typeof loadDevices === 'function' ? loadDevices() : [];
+  const globallyLinked = allLinkedDeviceIds();
+  const now = new Date().toISOString();
+  const newLinks = [];
+  for (const deviceId of uniqueDeviceIds) {
+    const device = devices.find(d => String(d.id) === deviceId);
+    const label = device ? (device.brand || device.name || 'Device') : 'Device';
+    if (!device) throw new Error('ไม่พบ Device ที่เลือก');
+    if (device.deleted) throw new Error(`${label} ถูกลบแล้ว ไม่สามารถเชื่อมโยงได้`);
+    if (device.status === 'retired') throw new Error(`${label} ถูก Retire แล้ว ไม่สามารถเชื่อมโยงได้`);
+    if (device.memoNo) throw new Error(`${label} เชื่อมโยงกับ Memo/PO ที่อนุมัติแล้วอยู่ ไม่สามารถเชื่อมโยงกับ Manual Spending ได้`);
+    if (globallyLinked.has(deviceId)) throw new Error(`${label} ถูกเชื่อมโยงกับรายการอื่นอยู่แล้ว`);
+    newLinks.push({ historicalMemoId, hardwareLineId: lineId, deviceId: device.id, createdAt: now, createdBy: currentUser() });
+  }
+  const current = loadSpendingDeviceLinks();
+  storeSpendingDeviceLinks([...current, ...newLinks]);
+  if (await checkSupa()) {
+    try {
+      await supaFetch('historical_spending_device_links', 'POST', newLinks.map(spendingDeviceLinkToDb));
+    } catch(e) {
+      storeSpendingDeviceLinks(current); // roll back local cache — the link never made it to the server
+      throw e;
+    }
+  }
+  return { memo, links: newLinks };
+}
+
+async function unlinkDeviceFromSpendingAsync(deviceId) {
+  const current = loadSpendingDeviceLinks();
+  const link = current.find(l => String(l.deviceId) === String(deviceId));
+  if (!link) return null;
+  const remaining = current.filter(l => l !== link);
+  storeSpendingDeviceLinks(remaining);
+  if (await checkSupa()) {
+    try {
+      await supaFetch('historical_spending_device_links', 'DELETE', null, `?device_id=eq.${encodeURIComponent(String(deviceId))}`);
+    } catch(e) {
+      storeSpendingDeviceLinks(current); // roll back — deletion didn't reach the server
+      throw e;
+    }
+  }
+  return link;
 }
 
 // ── Memo storage (async, with localStorage fallback) ──
@@ -1423,21 +2550,34 @@ async function loadMemosAsync() {
 
 async function saveMemoAsync(data) {
   const now = new Date().toISOString();
-  const existing = (await loadMemosAsync()).find(m => m.memoNo === data.memoNo);
-  const saved = { ...data, id:data.memoNo, status:data.status||'pending',
+  const loadedMemos = await loadMemosAsync();
+  const existing = findMemoByRecordIdentity(loadedMemos, data);
+  if (findMemoNumberCollision(loadedMemos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const saved = { ...data, id:data.id || data.memoNo, status:data.status||'pending',
     createdAt: existing ? existing.createdAt : now, updatedAt: now };
 
   if(await checkSupa()) {
     try {
       const db = memoToDb(saved);
-      await supaFetch('memos', 'POST', db, '?on_conflict=memo_no');
+      if (existing) {
+        await supaFetch('memos', 'PATCH', db, '?id=eq.' + encodeURIComponent(existing.id || saved.id));
+      } else {
+        await supaFetch('memos', 'POST', db);
+      }
       _memCache = null; // invalidate cache
       return saved;
-    } catch(e) { console.warn('Supabase save failed', e.message); }
+    } catch(e) { throw normalizeMemoPersistenceError(e); }
   }
   // localStorage fallback
   const memos = loadMemos();
-  const idx = memos.findIndex(m => m.memoNo === data.memoNo);
+  if(findMemoNumberCollision(memos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const idx = existing
+    ? memos.findIndex(m => isSameMemoRecord(m, saved))
+    : memos.findIndex(m => m.memoNo === data.memoNo);
   if(idx>=0) memos[idx]=saved; else memos.push(saved);
   storeMemos(memos);
   return saved;
@@ -1481,7 +2621,7 @@ async function syncLocalToSupabase() {
   let pushed = 0;
   for(const m of local) {
     try {
-      await supaFetch('memos', 'POST', memoToDb(m), '?on_conflict=memo_no');
+      await saveMemoAsync(m);
       pushed++;
     } catch(e) { console.warn('Sync failed for', m.memoNo, e.message); }
   }
@@ -1628,6 +2768,14 @@ function canUseLocalStorage() {
   catch(e) { return false; }
 }
 const HAS_LS = canUseLocalStorage();
+const _localStorageWriteWarnings = new Set();
+function warnLocalStorageWriteFailed(context, error) {
+  const message = error && error.message ? error.message : String(error || 'unknown error');
+  const key = `${context || 'unknown'}:${message}`;
+  if (_localStorageWriteWarnings.has(key)) return;
+  _localStorageWriteWarnings.add(key);
+  console.warn('localStorage write failed', { context, message });
+}
 function loadMemos() {
   if(!HAS_LS) return _memMemos;
   try { const p = JSON.parse(localStorage.getItem(MEMO_KEY)||'[]'); return Array.isArray(p)?p:[]; }
@@ -1637,7 +2785,7 @@ function storeMemos(memos) {
   _memMemos = Array.isArray(memos) ? memos : [];
   if(!HAS_LS) return;
   try { localStorage.setItem(MEMO_KEY, JSON.stringify(_memMemos)); }
-  catch(e) { console.warn('localStorage write failed'); }
+  catch(e) { warnLocalStorageWriteFailed('storeMemos', e); }
 }
 function currentMemoPrefix() {
   const d = new Date();
@@ -1659,8 +2807,14 @@ function saveMemo(data) {
   // Sync version for backward compat — also triggers async save to Supabase
   const now = new Date().toISOString();
   const memos = loadMemos();
-  const idx = memos.findIndex(m => m.memoNo === data.memoNo);
-  const saved = { ...data, id:data.memoNo, status:data.status||'pending',
+  if (findMemoNumberCollision(memos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const existing = findMemoByRecordIdentity(memos, data);
+  const idx = existing
+    ? memos.findIndex(m => isSameMemoRecord(m, { id: existing.id || existing.memoNo }))
+    : memos.findIndex(m => m.memoNo === data.memoNo);
+  const saved = { ...data, id:data.id || data.memoNo, status:data.status||'pending',
     createdAt: idx>=0 ? memos[idx].createdAt : now, updatedAt: now };
   if(idx>=0) memos[idx]=saved; else memos.push(saved);
   storeMemos(memos);
@@ -1760,7 +2914,7 @@ function memoToDb(m) {
 }
 function dbToMemo(r) {
   return {
-    id: r.memo_no, memoNo: r.memo_no,
+    id: r.id || r.memo_no, memoNo: r.memo_no,
     type: r.type, typeLabel: r.type_label,
     status: r.status, project: r.project, subject: r.subject, reason: r.reason,
     to: r.to, date: r.date, total: Number(r.total)||0, amountWords: r.amount_words,
@@ -1840,7 +2994,7 @@ async function loadMemosAsync() {
       _memCache = (rows||[]).map(dbToMemo);
       return _excludeDeletedMemos(_memCache);
     } catch(e) {
-      console.warn('Supabase read failed, using cache');
+      console.warn('Supabase read failed, using cache', e?.message || e);
       if (_memCache) return _excludeDeletedMemos(_memCache);
     }
   }
@@ -1851,8 +3005,12 @@ async function loadMemosAsync() {
 
 async function saveMemoAsync(data) {
   const now = new Date().toISOString();
-  const existing = loadMemos().find(m => m.memoNo === data.memoNo);
-  const saved = { ...data, id:data.memoNo, status:data.status||'pending',
+  const currentMemos = loadMemos();
+  const existing = findMemoByRecordIdentity(currentMemos, data);
+  if (findMemoNumberCollision(currentMemos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const saved = { ...data, id:data.id || data.memoNo, status:data.status||'pending',
     createdAt: existing ? existing.createdAt : now, updatedAt: now,
     // Milestone 2 Task 2.3 — Created By / Updated By metadata.
     createdBy: existing ? existing.createdBy : (data.createdBy || currentUser()),
@@ -1861,7 +3019,11 @@ async function saveMemoAsync(data) {
   if(await checkSupa()) {
     try {
       const db = memoToDb(saved);
-      await supaFetch('memos', 'POST', db, '?on_conflict=memo_no');
+      if (existing) {
+        await supaFetch('memos', 'PATCH', db, '?id=eq.' + encodeURIComponent(existing.id || saved.id));
+      } else {
+        await supaFetch('memos', 'POST', db);
+      }
       // update cache directly — no need to re-fetch
       if (_memCache) {
         const ci = _memCache.findIndex(m => m.memoNo === saved.memoNo);
@@ -1879,11 +3041,16 @@ async function saveMemoAsync(data) {
         });
       }
       return saved;
-    } catch(e) { console.warn('Supabase save failed', e.message); }
+    } catch(e) { throw normalizeMemoPersistenceError(e); }
   }
   // Offline fallback: localStorage
   const memos = loadMemos();
-  const idx = memos.findIndex(m => m.memoNo === data.memoNo);
+  if(findMemoNumberCollision(memos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const idx = existing
+    ? memos.findIndex(m => isSameMemoRecord(m, saved))
+    : memos.findIndex(m => m.memoNo === data.memoNo);
   if(idx>=0) memos[idx]=saved; else memos.push(saved);
   storeMemos(memos);
   if (saved.status === 'completed') {
@@ -1939,7 +3106,7 @@ async function updateMemoStatusAsync(memoNo, status, extra={}) {
     const approvingIdx = status === 'approved_a1' ? 0 : status === 'approved_a2' ? 1 : 2;
     const nextIdx = approvingIdx + 1;
 
-    updated.approvers = approvers.map((a, i) =>
+    const nextApprovers = approvers.map((a, i) =>
       i === approvingIdx
         ? {
             ...a,
@@ -1950,6 +3117,10 @@ async function updateMemoStatusAsync(memoNo, status, extra={}) {
           }
         : a
     );
+    updated.approvers = applyAuthoritySnapshotsOnApproval(updated, approvers, nextApprovers, {
+      memoType: updated.type,
+      resolvedAt: now,
+    });
 
     if (nextIdx < approvers.length && approvers[nextIdx]) {
       // Still more approvers
@@ -2145,7 +3316,7 @@ async function syncLocalToSupabase() {
   let pushed = 0;
   for(const m of local) {
     try {
-      await supaFetch('memos', 'POST', memoToDb(m), '?on_conflict=memo_no');
+      await saveMemoAsync(m);
       pushed++;
     } catch(e) { console.warn('Sync failed for', m.memoNo, e.message); }
   }
@@ -2187,6 +3358,15 @@ function msValues(id) {
 function initMultiSelect(id, placeholder, fieldLabel) {
   const select = document.getElementById(id);
   if (!select) return;
+  const singleSelectWrap = select.closest?.('.pmo-select');
+  if (singleSelectWrap) {
+    singleSelectWrap.parentNode.insertBefore(select, singleSelectWrap);
+    singleSelectWrap.remove();
+    select.classList.remove('pmo-select-native');
+    delete select.dataset.pmoEnhanced;
+    select.removeAttribute('aria-hidden');
+    select.removeAttribute('tabindex');
+  }
   const alreadyMultiple = select.multiple;
   select.multiple = true;
   select.style.display = 'none';
@@ -2204,9 +3384,20 @@ function initMultiSelect(id, placeholder, fieldLabel) {
     wrap.classList.add('filter-control', 'ms-wrap');
     wrap.dataset.msFor = id;
     if (!existingControl) select.insertAdjacentElement('afterend', wrap);
-    if (fieldLabel && !wrap.querySelector('.filter-label')) {
-      wrap.insertAdjacentHTML('afterbegin', `<label class="filter-label" for="${esc(id)}">${esc(fieldLabel)}</label>`);
+    if (fieldLabel) {
+      wrap.querySelectorAll('.filter-label').forEach((label, index) => {
+        if (index === 0) {
+          label.textContent = fieldLabel;
+          label.setAttribute('for', id);
+        } else {
+          label.remove();
+        }
+      });
+      if (!wrap.querySelector('.filter-label')) {
+        wrap.insertAdjacentHTML('afterbegin', `<label class="filter-label" for="${esc(id)}">${esc(fieldLabel)}</label>`);
+      }
     }
+    Array.from(wrap.querySelectorAll('.ms-trigger, .ms-panel')).forEach(node => node.remove());
     wrap.insertAdjacentHTML('beforeend', `
       <button type="button" class="ms-trigger" aria-haspopup="listbox" aria-expanded="false"></button>
       <div class="ms-panel" role="listbox" aria-multiselectable="true" style="display:none">
@@ -2327,7 +3518,7 @@ function storeMemos(memos) {
   // localStorage as offline backup only
   if (!HAS_LS) return;
   try { localStorage.setItem(MEMO_KEY, JSON.stringify(_memMemos)); }
-  catch(e) { console.warn('localStorage write failed'); }
+  catch(e) { warnLocalStorageWriteFailed('storeMemos', e); }
 }
 function currentMemoPrefix() {
   const d = new Date();
@@ -2349,11 +3540,17 @@ function saveMemo(data) {
   // Sync version for backward compat — pushes to Supabase async in background
   const now = new Date().toISOString();
   const memos = loadMemos();
-  const idx = memos.findIndex(m => m.memoNo === data.memoNo);
+  if (findMemoNumberCollision(memos, data)) {
+    throw new Error(DUPLICATE_MEMO_NO_MESSAGE);
+  }
+  const existingByIdentity = findMemoByRecordIdentity(memos, data);
+  const idx = existingByIdentity
+    ? memos.findIndex(m => isSameMemoRecord(m, { id: existingByIdentity.id || existingByIdentity.memoNo }))
+    : memos.findIndex(m => m.memoNo === data.memoNo);
   const existing = idx >= 0 ? memos[idx] : null;
   const saved = {
     ...data,
-    id:          data.memoNo,
+    id:          data.id || data.memoNo,
     status:      data.status || 'pending',
     createdAt:   existing?.createdAt || data.createdAt || now,
     updatedAt:   now,
@@ -2397,29 +3594,6 @@ function updateMemoStatus(memoNo, status, extra={}) {
     .then(() => { renderPendingMemos(); renderHistoryMemos(); })
     .catch(e => console.warn('Supabase status update failed', e));
   return memos[idx];
-}
-
-// ── Navigation ──
-function swView(id, el, title) {
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.querySelectorAll('.sb-sub-item').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.sb-item').forEach(s => s.classList.remove('active'));
-  document.getElementById('view-'+id).classList.add('active');
-  document.getElementById('page-title').textContent = title;
-  if(el) el.classList.add('active');
-  if(['create','pending','history'].includes(id)) document.getElementById('nav-memo').classList.add('active');
-  if(id === 'budget')  renderBudget();
-  if(id === 'license') renderLicense();
-  if(id === 'device')  renderDevice();
-  if(id === 'history') { renderHistoryMemos(); if(typeof populateHistTabCounts==='function') populateHistTabCounts(); }
-  if(id === 'pending') renderPendingMemos();
-
-  if(id === 'resource') { if(typeof renderResource==='function') renderResource(); }
-  if(id === 'settings') { if(typeof renderSettings==='function') renderSettings(); }
-}
-function toggleMemoSub(el) {
-  el.classList.add('active');
-  swView('create', document.querySelector('#memo-sub .sb-sub-item'), 'Create Memo');
 }
 
 // ── PDF ──
@@ -2621,7 +3795,11 @@ const ACCESS_PAGE_TITLES = {
 };
 
 function canOpenPage(id) {
-  return typeof pmoCanViewPage !== 'function' || pmoCanViewPage(id);
+  if(typeof pmoCanViewPage !== 'function') return true;
+  if(pmoCanViewPage(id)) return true;
+  // Cost/OPEX is now presented inside Budget on main. Preserve legacy role
+  // matrices by treating Cost visibility as access to the consolidated page.
+  return id === 'budget' && pmoCanViewPage('cost');
 }
 
 function applyAccessVisibility() {
@@ -2667,6 +3845,11 @@ function swView(id, el, title) {
     console.warn(`Access denied for page: ${id}`);
     return false;
   }
+  if(id === 'cost') {
+    id = 'budget';
+    el = document.querySelector('.sb-item[data-page-access="budget"]');
+    title = 'Budget & Spend';
+  }
   const targetView = document.getElementById('view-'+id);
   if(!targetView) return false;
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -2684,7 +3867,6 @@ function swView(id, el, title) {
   if(id === 'log') { if(typeof renderTransactionLog==='function') renderTransactionLog(); }
   if(id === 'settings') { if(typeof renderSettings==='function') renderSettings(); }
   if(id === 'resource') { if(typeof renderResource==='function') renderResource(); }
-  if(id === 'cost') { if(typeof renderCost==='function') renderCost(); }
   applyAccessVisibility();
   return true;
 }
@@ -2696,6 +3878,131 @@ function toggleMemoSub(el) {
 }
 
 // ── PDF ──
+const _sigCache = {};
+
+function _signaturePdfKey(name) {
+  return 'sig-' + String(name || (typeof currentUser === 'function' ? currentUser() : '') || '').trim();
+}
+
+function _signatureProfilePdfKey(profileId) {
+  const id = Number(profileId);
+  return Number.isFinite(id) && id > 0 ? `sig-profile-${id}` : '';
+}
+
+function _signatureCacheKey(approver={}) {
+  const id = Number(approver.profileId ?? approver.profile_id);
+  return Number.isFinite(id) && id > 0 ? `profile:${id}` : `name:${String(approver.name || '').trim()}`;
+}
+
+function _signatureProfileAliases(profile={}) {
+  const aliases = profile.name_aliases ?? profile.aliases ?? [];
+  if(Array.isArray(aliases)) return aliases.map(String).map(item => item.trim()).filter(Boolean);
+  return String(aliases || '').split(/[,\n]/).map(item => item.trim()).filter(Boolean);
+}
+
+function _signatureProfileForApprover(approver={}) {
+  if(typeof _userProfilesCache === 'undefined' || !_userProfilesCache) return null;
+  const profileId = Number(approver.profileId ?? approver.profile_id);
+  if(Number.isFinite(profileId) && profileId > 0) {
+    const byId = _userProfilesCache.find(u => Number(u.id) === profileId);
+    if(byId) return byId;
+  }
+  return typeof findUserByName === 'function' ? findUserByName(approver.name) : null;
+}
+
+async function _readLegacySignatureDataUrl(name) {
+  const key = _signaturePdfKey(name);
+  if(!key || key === 'sig-') return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if(raw) {
+      const parsed = JSON.parse(raw);
+      if(parsed?.signatureDataUrl) return parsed.signatureDataUrl;
+    }
+  } catch(e) {}
+  if(typeof checkSupa === 'function' && await checkSupa()) {
+    try {
+      const rows = await supaFetch('settings', 'GET', null, `?id=eq.${encodeURIComponent(key)}`);
+      const dataUrl = rows?.[0]?.data?.signatureDataUrl || null;
+      if(dataUrl) {
+        try { localStorage.setItem(key, JSON.stringify({ signatureDataUrl: dataUrl })); } catch(e) {}
+      }
+      return dataUrl;
+    } catch(e) {}
+  }
+  return null;
+}
+
+async function loadUserSignatureForPdfAsync(approverOrName) {
+  const approver = typeof approverOrName === 'object' && approverOrName
+    ? approverOrName
+    : { name: approverOrName };
+  const profileId = approver.profileId ?? approver.profile_id;
+  const profileKey = _signatureProfilePdfKey(profileId);
+  if(profileKey) {
+    try {
+      const raw = localStorage.getItem(profileKey);
+      if(raw) {
+        const parsed = JSON.parse(raw);
+        if(parsed?.signatureDataUrl) return parsed.signatureDataUrl;
+      }
+    } catch(e) {}
+  }
+  const profile = _signatureProfileForApprover(approver);
+  if(profile?.signature_data_url) {
+    if(profileKey) {
+      try { localStorage.setItem(profileKey, JSON.stringify({ signatureDataUrl: profile.signature_data_url })); } catch(e) {}
+    }
+    return profile.signature_data_url;
+  }
+  if(profileKey && typeof checkSupa === 'function' && await checkSupa()) {
+    try {
+      const rows = await supaFetch('user_profiles', 'GET', null, `?id=eq.${encodeURIComponent(profileId)}`);
+      const dataUrl = rows?.[0]?.signature_data_url || null;
+      if(dataUrl) {
+        try { localStorage.setItem(profileKey, JSON.stringify({ signatureDataUrl: dataUrl })); } catch(e) {}
+        return dataUrl;
+      }
+    } catch(e) {}
+  }
+  const names = [
+    approver.name,
+    profile?.full_name,
+    ..._signatureProfileAliases(profile || {}),
+  ].filter(Boolean);
+  for(const name of [...new Set(names)]) {
+    const dataUrl = await _readLegacySignatureDataUrl(name);
+    if(dataUrl) return dataUrl;
+  }
+  return null;
+}
+
+async function _preloadSignatures(approvers) {
+  if(typeof loadUserProfilesAsync === 'function') {
+    try { await loadUserProfilesAsync(); } catch(e) {}
+  }
+  const byKey = new Map();
+  (approvers || []).forEach(a => {
+    if(!a?.name && a?.profileId == null && a?.profile_id == null) return;
+    const key = _signatureCacheKey(a);
+    if(!byKey.has(key)) byKey.set(key, a);
+  });
+
+  await Promise.all([...byKey.entries()].map(async ([key, approver]) => {
+    if(_sigCache[key] !== undefined) return;
+    const sig = await loadUserSignatureForPdfAsync(approver);
+    _sigCache[key] = sig || null;
+    if(approver.name && _sigCache[approver.name] === undefined) _sigCache[approver.name] = sig || null;
+  }));
+}
+
+function getSignatureFromCache(approverOrName) {
+  const approver = typeof approverOrName === 'object' && approverOrName
+    ? approverOrName
+    : { name: approverOrName };
+  return _sigCache[_signatureCacheKey(approver)] || _sigCache[approver.name] || null;
+}
+
 function renderMemoPdf(data) {
   // Use server CSS classes (.mp-*) — injected by PDF server with THSarabun font
   function fmtDate(v) {
@@ -2876,7 +4183,6 @@ function renderMemoPdf(data) {
 const LOGO_B64 = 'data:image/png;base64,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';
 async function downloadMemoPdf(data) {
   const stage = document.getElementById('pdf-stage');
-  stage.innerHTML = renderMemoPdf(data);
   // File naming: [TYPE]_[MemoNo]_[Project]_[Extra]_[Date].Ver1.0.0
   const typeTag = ({ sl:'SL', hw:'HW', int:'INT', ent:'EXT', dep:'DEP' }[data.type] || data.type?.toUpperCase() || 'MEMO');
   const proj    = (data.project || '').replace(/\s+/g,'');
@@ -2902,6 +4208,8 @@ async function downloadMemoPdf(data) {
     }
   }
   try {
+    if(!stage) throw new Error('PDF staging container missing');
+    stage.innerHTML = renderMemoPdf(data);
     const html = stage.firstElementChild?.outerHTML || stage.innerHTML;
     const resp = await fetchWithRetry('https://memo-pdf-server.onrender.com/generate-pdf', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -2916,6 +4224,8 @@ async function downloadMemoPdf(data) {
     console.warn('PDF server failed, fallback to print', err);
     document.body.classList.add('printing-pdf');
     try { window.print(); } finally { document.body.classList.remove('printing-pdf'); }
+  } finally {
+    cleanupMemoPdfStaging();
   }
 }
 function openMemoPdf(memoNo) {
@@ -2953,11 +4263,10 @@ function renderMemoPdf(data) {
 
   // ── Authority — dynamic from Supabase (_authorityCache) with fallback ──
   function getAuthority(memoType) {
-    const approvers = data.approvers || [];
-    const finalApprover = approvers.length > 0 ? approvers[approvers.length-1] : null;
-    const title = finalApprover?.title || data.approverTitle || 'ประธานเจ้าหน้าที่บริหาร';
-    const limit = getAuthorityLimit(title, memoType);
-    return { title, limit };
+    const snapshot = resolveMemoAuthorityForPdf(data, { memoType });
+    const title = snapshot.titleTh || data.approverTitle || 'ประธานเจ้าหน้าที่บริหาร';
+    const limit = snapshot.isUnlimited ? Infinity : Number(snapshot.limitThb) || 0;
+    return { title, limit, snapshot };
   }
   function fmtLimit(n) { return (Number(n)||0).toLocaleString('th-TH',{maximumFractionDigits:0}); }
 
@@ -3021,7 +4330,8 @@ function renderMemoPdf(data) {
       return `จึงขอความอนุเคราะห์อนุมัติการจัดซื้อสำหรับรายการจัดซื้อข้างต้น ในวงเงิน ${amtStr} อ้างอิงอำนาจอนุมัติจากคู่มืออำนาจอนุมัติ พ.ศ. 2566 ข้อ 3.2 การชำระเงินที่มี (การตั้งงบประมาณไว้) หมวดการชำระเงินค่าสวัสดิการพนักงาน ${limitStr}`;
     })() : '',
   };
-  const closingText = closingMap[data.type] || (data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณรวมเป็นจำนวนเงินไม่เกิน ${amtStr}` : '');
+  const configuredClosingText = renderConfiguredClosingParagraph(data);
+  const closingText = configuredClosingText || closingMap[data.type] || (data.total ? `ในการนี้จึงขอให้ท่านโปรดพิจารณาอนุมัติงบประมาณรวมเป็นจำนวนเงินไม่เกิน ${amtStr}` : '');
 
   // sectionsHtml rendered inline below with fxNote injection
 
@@ -3231,7 +4541,7 @@ function renderMemoPdf(data) {
           // 'overridden' step never had its own in-system signature captured either
           // before or after this change, so it's intentionally excluded here.
           const isApproved = a.status === 'approved' || a.status === 'bypassed';
-          const sigImgUrl  = isApproved ? getSignatureFromCache(a.name) : null;
+          const sigImgUrl  = isApproved ? getSignatureFromCache(a) : null;
           const sigHtml    = sigImgUrl
             ? `<div style="text-align:center;height:54px;display:flex;align-items:center;justify-content:center">` +
               `<img src="${sigImgUrl}" style="max-width:170px;max-height:52px;object-fit:contain"></div>`
@@ -3330,7 +4640,19 @@ function _normalisePdfData(data) {
   return d;
 }
 
+function cleanupMemoPdfStaging() {
+  const stage = document.getElementById('pdf-stage');
+  if(stage) stage.innerHTML = '';
+  document.getElementById('pdf-loading-overlay')?.remove();
+  document.querySelectorAll('[data-pdf-temp], iframe[data-pdf-temp]').forEach(node => node.remove());
+  document.body?.classList?.remove('printing-pdf');
+}
+
 async function downloadMemoPdf(data) {
+  if (typeof canCurrentUserViewMemo === 'function' && !canCurrentUserViewMemo(data)) {
+    alert('คุณไม่มีสิทธิ์ดาวน์โหลด Memo นี้');
+    return;
+  }
   // ── Ensure sections are populated before PDF render ──────────────
   data = _normalisePdfData(data);
 
@@ -3389,18 +4711,20 @@ async function downloadMemoPdf(data) {
       } catch(e) { clearTimeout(t); if(i===retries) throw e; await new Promise(r=>setTimeout(r,2000)); }
     }
   }
-  // ── Show loading indicator ────────────────────────────────────────
-  const loadingEl = document.createElement('div');
-  loadingEl.id = 'pdf-loading-overlay';
-  loadingEl.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center';
-  loadingEl.innerHTML = '<div style="background:#fff;border-radius:12px;padding:28px 36px;text-align:center;font-family:\'IBM Plex Sans Thai\',sans-serif">'
-    + '<div style="font-size:15px;font-weight:600;color:#185FA5;margin-bottom:8px">⏳ กำลังสร้าง PDF...</div>'
-    + '<div id="pdf-loading-msg" style="font-size:12px;color:#666">กรุณารอสักครู่</div>'
-    + '</div>';
-  document.body.appendChild(loadingEl);
   const setMsg = msg => { const el = document.getElementById('pdf-loading-msg'); if(el) el.textContent = msg; };
 
   try {
+    if(!stage) throw new Error('PDF staging container missing');
+    stage.innerHTML = renderMemoPdf(data);
+    // ── Show loading indicator ────────────────────────────────────────
+    const loadingEl = document.createElement('div');
+    loadingEl.id = 'pdf-loading-overlay';
+    loadingEl.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center';
+    loadingEl.innerHTML = '<div style="background:#fff;border-radius:12px;padding:28px 36px;text-align:center;font-family:\'IBM Plex Sans Thai\',sans-serif">'
+      + '<div style="font-size:15px;font-weight:600;color:#185FA5;margin-bottom:8px">⏳ กำลังสร้าง PDF...</div>'
+      + '<div id="pdf-loading-msg" style="font-size:12px;color:#666">กรุณารอสักครู่</div>'
+      + '</div>';
+    document.body.appendChild(loadingEl);
     setMsg('กำลังติดต่อ PDF server...');
     const html = stage.firstElementChild?.outerHTML || stage.innerHTML;
     console.log('[PDF] Sending to server, html length:', html.length, 'filename:', filename);
@@ -3423,7 +4747,7 @@ async function downloadMemoPdf(data) {
     document.body.classList.add('printing-pdf');
     try { window.print(); } finally { document.body.classList.remove('printing-pdf'); }
   } finally {
-    loadingEl.remove();
+    cleanupMemoPdfStaging();
   }
 }
 function openMemoPdf(memoNo) {
@@ -4064,7 +5388,9 @@ function initApp() {
     loadMemosAsync(),
     typeof loadOrganizationProjectsAsync === 'function' ? loadOrganizationProjectsAsync() : Promise.resolve(),
     loadUserProfilesAsync(),
+    typeof loadAuthorityTitlesAsync === 'function' ? loadAuthorityTitlesAsync() : Promise.resolve(),
     loadAuthorityAsync(),
+    typeof loadMemoClosingTemplatesAsync === 'function' ? loadMemoClosingTemplatesAsync() : Promise.resolve(),
     typeof loadDevicesAsync === 'function' ? loadDevicesAsync() : Promise.resolve(),
     typeof loadPurchaseOrdersAsync === 'function' ? loadPurchaseOrdersAsync() : Promise.resolve(),
     typeof initSettings === 'function' ? initSettings() : Promise.resolve(),
@@ -4082,18 +5408,4 @@ function initApp() {
     if(event.target.closest('#notification-panel, #notification-btn')) return;
     closeNotifications();
   });
-}
-
-// Expose focused master-data behavior to the Node.js test runner.
-if(typeof module === 'object' && module.exports) {
-  module.exports = {
-    findUserByName,
-    getApprovers,
-    getCanonicalProjectList,
-    getAuthorityLimit,
-    loadOrganizationProjectsAsync,
-    loadUserProfilesAsync,
-    normalizeOrganizationProject,
-    projectOptionsHtml,
-  };
 }

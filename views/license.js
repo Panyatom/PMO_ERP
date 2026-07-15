@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
-// views/license.js  —  License Management  (4-tab redesign)
-// Tabs: Memo Index | By Project | Users | Other
+// views/license.js  —  License Management
+// Tabs: Memo Index | License Summary | Users
 // Data sources:
 //   1. SL memos (completed) → slItems JSON → memo-derived licenses
 //   2. SL memos sections['ตาราง Account'] → user × license matrix
@@ -49,6 +49,13 @@ function dbToLicense(r) {
 }
 function isDeletedLicense(lic) {
   return lic?.statusOverride === 'deleted';
+}
+function isLicenseDateRangeInvalid(purchaseDate, expiry) {
+  if (!purchaseDate || !expiry) return false;
+  const purchase = new Date(String(purchaseDate).slice(0,10) + 'T00:00:00');
+  const expiryDate = new Date(String(expiry).slice(0,10) + 'T00:00:00');
+  if (Number.isNaN(purchase.getTime()) || Number.isNaN(expiryDate.getTime())) return false;
+  return expiryDate < purchase;
 }
 
 // ── localStorage / Supabase CRUD ───────────────────────────
@@ -146,7 +153,8 @@ function parseLicenseFromMemo(memo) {
       // idx (line position within this memo) keeps the id unique even when two lines share the
       // same name/plan/coverage — matching on those fields alone would collide, making
       // Edit/Delete silently act on the wrong line item.
-      const identity = [memo.memoNo, idx, it.name, it.plan || '', it.startMonth || '', it.endMonth || '']
+      const sourcePrefix = memo.sourceKind === 'historical' || memo.isHistoricalMemo ? `historical-${memo.id || memo.memoNo}` : memo.memoNo;
+      const identity = [sourcePrefix, idx, it.name, it.plan || '', it.startMonth || '', it.endMonth || '']
         .map(value => String(value).trim().replace(/\s+/g, '_'))
         .join('-');
       return {
@@ -213,13 +221,28 @@ function parseAccountTableFromMemo(memo) {
 
 // ── getAllLicenses: memo-derived + manual merged ─────────
 function getAllLicenses() {
-  const memoLicenses = loadMemos()
+  const historicalSoftwareMemos = typeof loadHistoricalMemos === 'function' ? loadHistoricalMemos() : [];
+  const memoLicenses = [...loadMemos(), ...historicalSoftwareMemos]
     .filter(m => m.type === 'sl' && m.status === 'completed')
     .flatMap(parseLicenseFromMemo);
   const manualAll = loadManualLicenses();
-  const manual = (_licCache !== null ? _licCache : manualAll).filter(l => !isDeletedLicense(l));
-  const manualIds = new Set(manualAll.map(l => l.id));
-  return [...memoLicenses.filter(l => !manualIds.has(l.id)), ...manual];
+  const memoById = new Map(memoLicenses.map(l => [String(l.id), l]));
+  const manual = (_licCache !== null ? _licCache : manualAll).filter(l => !isDeletedLicense(l)).map(l => {
+    const memo = memoById.get(String(l.id));
+    if (!memo) return l;
+    return {
+      ...memo,
+      owner: l.owner || memo.owner || '',
+      department: l.department || memo.department || '',
+      statusOverride: l.statusOverride || memo.statusOverride || null,
+      note: l.note || memo.note || '',
+      createdAt: l.createdAt || memo.createdAt,
+      updatedAt: l.updatedAt || memo.updatedAt,
+      source: 'memo',
+    };
+  });
+  const manualIds = new Set(manual.map(l => String(l.id)));
+  return [...memoLicenses.filter(l => !manualIds.has(String(l.id))), ...manual];
 }
 
 // ── Status logic ─────────────────────────────────────────
@@ -362,6 +385,7 @@ function renderLicense() {
 }
 
 function switchLicTab(tab) {
+  if (tab === 'other') tab = 'memo-index';
   _licCurrentTab = tab;
   document.querySelectorAll('.lic-tab-btn, #view-license .tab-btn').forEach(b => {
     const on = b.dataset.tab === tab;
@@ -375,7 +399,7 @@ function _renderLicTab(tab) {
   if (tab === 'memo-index')  _renderLicMemoIndex();
   if (tab === 'by-project')  _renderLicByProject();
   if (tab === 'users')       _renderLicUsers();
-  if (tab === 'other')       _renderLicOther();
+  if (!['memo-index', 'by-project', 'users'].includes(tab)) switchLicTab('memo-index');
 }
 
 // ── TAB 1: MEMO INDEX ─────────────────────────────────────
@@ -417,9 +441,10 @@ function _renderLicMemoIndex() {
       <div class="metric-card"><div class="metric-label">ค่าใช้จ่าย/ปี</div><div class="metric-val" id="lic-annual" style="font-size:18px;margin-top:4px">฿0</div><div class="metric-sub" id="lic-renewal-3m"></div></div>
     </div>
 
-    <div class="filter-toolbar">
-      <input type="text" id="lic-search" class="filter-search" placeholder="Search..."
-        oninput="_renderLicMemoIndexRows()">
+    <div class="filter-toolbar filter-toolbar--single-line filter-toolbar--license">
+      <span class="filter-control filter-control--search"><label class="filter-label" for="lic-search">Search</label>
+        <input type="text" id="lic-search" class="filter-search" placeholder="Search by software, plan, project, owner, or vendor"
+          oninput="_renderLicMemoIndexRows()"></span>
       <select id="lic-filter-status" onchange="_renderLicMemoIndexRows()">
         <option value="active">Active</option>
         <option value="expiring">Expiring (≤30d)</option>
@@ -556,7 +581,7 @@ function _renderLicMemoIndexRows() {
       <td style="padding-left:16px;font-weight:600">
         ${esc(lic.name)}
         ${lic.vendor ? `<div style="font-size:10px;color:var(--text-3);font-weight:400">${esc(lic.vendor)}</div>` : ''}
-        ${lic.memoNo ? `<div style="font-size:10px;color:var(--blue);font-weight:400;cursor:pointer" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${esc(lic.memoNo)}')">${esc(lic.memoNo)}</div>` : ''}
+        ${lic.memoNo ? `<div style="font-size:10px;color:var(--blue);font-weight:400;cursor:pointer" onclick="typeof openCanonicalTransactionDetailForMemo==='function'&&openCanonicalTransactionDetailForMemo('${esc(lic.memoNo)}')">${esc(lic.memoNo)}</div>` : ''}
       </td>
       <td style="font-size:12px">${esc(lic.plan || '—')}</td>
       <td style="text-align:right">${esc(lic.seats || 1)}</td>
@@ -608,34 +633,35 @@ function _worstLicenseStatus(lics) {
 
 // ── TAB 2: LICENSE SUMMARY ───────────────────────────────
 let _bpYear = 'all';
-// Part 3 (Phase 2A) — Summary and Reconciliation are separate sub-tabs (only
-// one panel in the DOM at a time) so viewing either never requires scrolling
-// past the other's table.
-let _bpSubTab = 'summary';
 
-// Phase 2D — reporting filters shared by both sub-tabs. Plain module
+// Phase 2D — reporting filters for License Summary. Plain module
 // variables (same pattern as _bpYear) so selections survive the full
-// lic-content rebuild that happens on every sub-tab switch; setter functions
+// lic-content rebuild that happens on every render; setter functions
 // below are what onchange handlers (and tests) call, since a `let` at module
 // scope isn't reachable as a property from outside the running script.
 let _bpFilterProjects = [];   // [] = all projects
 let _bpFilterSoftware = [];   // Phase 2D-1 — exact-match multi-select, OR across selections; [] = all
 let _bpFilterPlan = 'all';
-let _bpFilterStatus = [];     // Summary only — [] = all statuses
+let _bpFilterStatus = [];     // [] = all statuses
 let _bpReconOverOnly = false;
 let _bpReconRemainingOnly = false;
 
-function _bpApplyFilters() { _bpRenderMatrix(); _renderLicReconciliation(); }
+function _bpApplyFilters() { _renderLicReconciliation(); }
 function _bpSetFilterProjects(vals) { _bpFilterProjects = vals || []; _bpApplyFilters(); }
 function _bpSetFilterSoftware(vals) { _bpFilterSoftware = vals || []; _bpApplyFilters(); }
 function _bpSetFilterPlan(v) { _bpFilterPlan = v || 'all'; _bpApplyFilters(); }
-function _bpSetFilterStatus(vals) { _bpFilterStatus = vals || []; _bpRenderMatrix(); }
+function _bpSetFilterStatus(vals) { _bpFilterStatus = vals || []; _bpApplyFilters(); }
 function _bpSetReconOverOnly(v) { _bpReconOverOnly = !!v; _renderLicReconciliation(); }
 function _bpSetReconRemainingOnly(v) { _bpReconRemainingOnly = !!v; _renderLicReconciliation(); }
-
-function _switchLicSummarySubTab(tab) {
-  _bpSubTab = tab;
-  _renderLicByProject();
+function _bpSetYear(v) { _bpYear = v || 'all'; _bpApplyFilters(); }
+function _bpResetSummaryFilters() {
+  _bpYear = 'all';
+  _bpFilterProjects = [];
+  _bpFilterSoftware = [];
+  _bpFilterPlan = 'all';
+  _bpFilterStatus = [];
+  _bpReconOverOnly = false;
+  _bpReconRemainingOnly = false;
 }
 
 function _renderLicByProject() {
@@ -654,11 +680,6 @@ function _renderLicByProject() {
   ];
 
   el.innerHTML = `
-    <div style="display:flex;gap:8px;margin-bottom:14px">
-      <button class="btn-sm${_bpSubTab === 'summary' ? ' active' : ''}" data-subtab="summary" onclick="_switchLicSummarySubTab('summary')">Summary</button>
-      <button class="btn-sm${_bpSubTab === 'reconciliation' ? ' active' : ''}" data-subtab="reconciliation" onclick="_switchLicSummarySubTab('reconciliation')">Reconciliation</button>
-    </div>
-
     <div class="filter-toolbar">
       <select id="lic-bp-filter-project" multiple onchange="_bpSetFilterProjects(msValues('lic-bp-filter-project'))">
         ${projects.map(p=>`<option value="${esc(p)}" ${_bpFilterProjects.includes(p)?'selected':''}>${esc(p)}</option>`).join('')}
@@ -670,7 +691,7 @@ function _renderLicByProject() {
         <option value="all">All plans</option>
         ${plans.map(p=>`<option value="${esc(p)}" ${_bpFilterPlan===p?'selected':''}>${esc(p)}</option>`).join('')}
       </select></span>
-      <span class="filter-control"><span class="filter-label">Year</span><select class="filter-input" onchange="_bpYear=this.value;_bpRenderMatrix()">
+      <span class="filter-control"><span class="filter-label">Year</span><select class="filter-input" onchange="_bpYear=this.value;_bpApplyFilters()">
         <option value="all">All years</option>
         ${years.map(y=>`<option value="${y}" ${String(y)===_bpYear?'selected':''}>${y}</option>`).join('')}
       </select></span>
@@ -678,16 +699,13 @@ function _renderLicByProject() {
         ${statusOptions.map(([v,l])=>`<option value="${v}" ${_bpFilterStatus.includes(v)?'selected':''}>${esc(l)}</option>`).join('')}
       </select>
       <div class="filter-actions">
-        <button class="btn-sm" onclick="exportLicSummaryCSV()">⬇ Export Summary</button>
+        <button class="btn-sm" onclick="exportLicSummaryCSV()">⬇ Export License Summary</button>
       </div>
     </div>
 
-    <div id="lic-summary-panel" style="${_bpSubTab === 'summary' ? '' : 'display:none'}">
-      <div id="bp-table-wrap"></div>
-    </div>
-    <div id="lic-reconciliation-panel" style="${_bpSubTab === 'reconciliation' ? '' : 'display:none'}">
+    <div id="lic-summary-panel">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-        <div style="font-size:13px;font-weight:700">License Reconciliation</div>
+        <div></div>
         <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
           <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer">
             <input type="checkbox" id="lic-recon-filter-over" ${_bpReconOverOnly?'checked':''} onchange="_bpSetReconOverOnly(this.checked)"> Over Assigned only
@@ -695,7 +713,6 @@ function _renderLicByProject() {
           <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer">
             <input type="checkbox" id="lic-recon-filter-remaining" ${_bpReconRemainingOnly?'checked':''} onchange="_bpSetReconRemainingOnly(this.checked)"> Has Remaining only
           </label>
-          <button class="btn-sm" style="font-size:12px;padding:6px 12px" onclick="exportLicReconciliationCSV()">⬇ Export Reconciliation</button>
         </div>
       </div>
       <div id="lic-recon-wrap"></div>
@@ -705,7 +722,6 @@ function _renderLicByProject() {
   initMultiSelect('lic-bp-filter-software', 'All software', 'Software');
   initMultiSelect('lic-bp-filter-status', 'ทุกสถานะ', 'Status');
 
-  _bpRenderMatrix();
   _renderLicReconciliation();
 }
 
@@ -743,86 +759,10 @@ function _licSeatsByProjectSoftwarePlan(allLicenses) {
   return map;
 }
 
-// Pure aggregation, shared by the on-screen matrix render and its CSV export
-// (Phase 2D) — extracted from the pre-existing calculation as-is, no math
-// changed, so both consumers always agree on the same numbers.
-function _bpComputeMatrix() {
-  const filtered = _bpGetFiltered();
-  const seatMap = _licSeatsByProjectSoftwarePlan(filtered);
-  const projects = [...new Set([...seatMap.values()].map(r => r.project))].sort();
-
-  const rowMap = {};
-  seatMap.forEach(r => {
-    const k = `${r.name}||${r.plan}`;
-    if (!rowMap[k]) rowMap[k] = { name: r.name, plan: r.plan, byProj: {}, total: 0 };
-    rowMap[k].byProj[r.project] = (rowMap[k].byProj[r.project]||0) + r.seats;
-    rowMap[k].total += r.seats;
-  });
-
-  const matrixRows = Object.values(rowMap).sort((a,b) => a.name.localeCompare(b.name) || a.plan.localeCompare(b.plan));
-  const grandTotal = matrixRows.reduce((s,r) => s+r.total, 0);
-  return { projects, matrixRows, grandTotal };
-}
-
-// Fixed pixel widths for the frozen Software/Plan columns so their `left`
-// sticky offsets can be computed without measuring the DOM (Phase 2D).
-const _BP_NAME_COL_W = 150;
-const _BP_PLAN_COL_W = 100;
-
-function _bpRenderMatrix() {
-  const wrap = document.getElementById('bp-table-wrap');
-  if (!wrap) return;
-  const { projects, matrixRows, grandTotal } = _bpComputeMatrix();
-
-  if (!matrixRows.length) {
-    wrap.innerHTML = `<div class="card hist-empty">No records found. Try changing filters.</div>`;
-    return;
-  }
-
-  const head = `<thead><tr>
-    <th class="lic-bp-freeze-name" style="left:0;width:${_BP_NAME_COL_W}px;min-width:${_BP_NAME_COL_W}px;padding-left:14px">License</th>
-    <th class="lic-bp-freeze-plan" style="left:${_BP_NAME_COL_W}px;width:${_BP_PLAN_COL_W}px;min-width:${_BP_PLAN_COL_W}px">Plan</th>
-    ${projects.map(p=>`<th style="text-align:right;white-space:nowrap;min-width:90px">${esc(p)}</th>`).join('')}
-    <th class="lic-bp-freeze-total" style="text-align:right;min-width:90px">Total</th>
-  </tr></thead>`;
-
-  const bodyRows = matrixRows.map(r => `<tr onmouseover="this.style.background='var(--bg-2)'" onmouseout="this.style.background=''">
-    <td class="lic-bp-freeze-name" style="left:0;width:${_BP_NAME_COL_W}px;min-width:${_BP_NAME_COL_W}px;padding-left:14px;font-weight:500">${esc(r.name)}</td>
-    <td class="lic-bp-freeze-plan" style="left:${_BP_NAME_COL_W}px;width:${_BP_PLAN_COL_W}px;min-width:${_BP_PLAN_COL_W}px;font-size:12px;color:var(--text-2)">${esc(r.plan)||'<span style="color:var(--text-3)">—</span>'}</td>
-    ${projects.map(p => r.byProj[p]
-      ? `<td style="text-align:right">${r.byProj[p]}</td>`
-      : `<td style="text-align:right;color:var(--text-3)">—</td>`
-    ).join('')}
-    <td class="lic-bp-freeze-total" style="text-align:right;font-weight:500">${r.total}</td>
-  </tr>`).join('');
-
-  const totalRow = `<tr style="font-weight:600;background:var(--bg-2,#F8F8F6);border-top:0.5px solid var(--border-md)">
-    <td class="lic-bp-freeze-name" style="left:0;width:${_BP_NAME_COL_W}px;min-width:${_BP_NAME_COL_W}px;padding-left:14px;background:var(--bg-2,#F8F8F6)">Total</td>
-    <td class="lic-bp-freeze-plan" style="left:${_BP_NAME_COL_W}px;width:${_BP_PLAN_COL_W}px;min-width:${_BP_PLAN_COL_W}px;background:var(--bg-2,#F8F8F6)"></td>
-    ${projects.map(p => {
-      const t = matrixRows.reduce((s,r) => s+(r.byProj[p]||0), 0);
-      return `<td style="text-align:right">${t||'—'}</td>`;
-    }).join('')}
-    <td class="lic-bp-freeze-total" style="text-align:right;background:var(--bg-2,#F8F8F6)">${grandTotal}</td>
-  </tr>`;
-
-  wrap.innerHTML = `<div class="card lic-bp-table-wrap" style="padding:0">
-    <table class="hist-table lic-bp-table" style="min-width:500px">
-      ${head}<tbody>${bodyRows}${totalRow}</tbody>
-    </table>
-  </div>`;
-}
-
-// Phase 2D — Summary export mirrors the exact filtered matrix (same
-// _bpComputeMatrix() the on-screen table renders), so it can never drift
-// from what filters currently show.
+// Summary export mirrors the consolidated table's filtered reconciliation
+// rows, so it can never drift from what the UI shows.
 function exportLicSummaryCSV() {
-  const { projects, matrixRows, grandTotal } = _bpComputeMatrix();
-  if (!matrixRows.length) { alert('ไม่มีข้อมูล License Summary'); return; }
-  const headers = ['Software', 'Plan', ...projects, 'Total'];
-  const rows = matrixRows.map(r => [r.name, r.plan, ...projects.map(p => r.byProj[p] || 0), r.total]);
-  rows.push(['Total', '', ...projects.map(p => matrixRows.reduce((s,r) => s+(r.byProj[p]||0), 0)), grandTotal]);
-  _downloadCSV('License_Summary', headers, rows);
+  exportLicReconciliationCSV();
 }
 
 // ── Phase 1 Part 3 — License Reconciliation ───────────────────────────────
@@ -832,9 +772,11 @@ function exportLicSummaryCSV() {
 // computeLicUserMappingData()/_buildLicUserGroups()/_licActiveForGroup()
 // pipeline the Users tab uses) — pure, no DOM, so the on-screen table, its
 // export, and the Assigned Users drill-down all read one canonical result.
-function computeLicReconciliation(memos, reviewState, overrides, manualRows) {
+function computeLicReconciliation(memos, reviewState, overrides, manualRows, licenseRows) {
   const allLicenses = getAllLicenses();
-  const seatMap = _licSeatsByProjectSoftwarePlan(allLicenses);
+  const seatLicenses = licenseRows || allLicenses;
+  const allowedLicenseIds = licenseRows ? new Set(seatLicenses.map(l => String(l.id))) : null;
+  const seatMap = _licSeatsByProjectSoftwarePlan(seatLicenses);
 
   const { allUserRows, allLicCols } = computeLicUserMappingData(memos, reviewState, undefined, manualRows || _getLicUserManualRows());
   const assignableCols = _licAssignableIdentities(allLicenses, allLicCols);
@@ -853,6 +795,8 @@ function computeLicReconciliation(memos, reviewState, overrides, manualRows) {
     _licActiveForGroup(group, assignableCols, overrides).forEach(lic => {
       const ovKey = `${group.email}|${group.project}|${lic}`;
       const detail = _licUserAssignmentDetail(group, lic, allLicenses, overrides[ovKey]);
+      if (allowedLicenseIds && detail.match && !allowedLicenseIds.has(String(detail.match.id))) return;
+      if (allowedLicenseIds && !detail.match) return;
       const parsed = _parseLicIdentity(lic);
       const plan = detail.plan || parsed.plan;
       // Bucket under the matched license record's own project (so Assigned
@@ -901,7 +845,7 @@ function _bpReconApplyFilters(rows) {
 function _renderLicReconciliation() {
   const wrap = document.getElementById('lic-recon-wrap');
   if (!wrap) return;
-  const allRows = computeLicReconciliation(loadMemos(), _getLicReviewState(), _getLicUserOverrides());
+  const allRows = computeLicReconciliation(loadMemos(), _getLicReviewState(), _getLicUserOverrides(), undefined, _bpGetFiltered());
   const rows = _bpReconApplyFilters(allRows);
   window._licReconRows = rows;
 
@@ -1027,7 +971,6 @@ function _clearLicUsrDeepLinkFilter() {
 // Remaining) are untouched module state, so that context comes back as-is.
 function _backToReconciliationFromUsers() {
   _licUsrDeepLinkFilter = null;
-  _bpSubTab = 'reconciliation';
   switchLicTab('by-project');
 }
 
@@ -1035,12 +978,12 @@ function _backToReconciliationFromUsers() {
 // (exportUserLicensesCSV), reads the exact same canonical reconciliation
 // rows the on-screen table renders.
 function exportLicReconciliationCSV() {
-  const allRows = computeLicReconciliation(loadMemos(), _getLicReviewState(), _getLicUserOverrides());
+  const allRows = computeLicReconciliation(loadMemos(), _getLicReviewState(), _getLicUserOverrides(), undefined, _bpGetFiltered());
   const rows = _bpReconApplyFilters(allRows);
-  if (!rows.length) { alert('ไม่มีข้อมูล Reconciliation'); return; }
+  if (!rows.length) { alert('ไม่มีข้อมูล License Summary'); return; }
   const headers = ['Project', 'Software', 'Plan', 'Purchased Seats', 'Assigned Users', 'Remaining Seats'];
   const csvRows = rows.map(r => [r.project, r.name, r.plan, r.purchased, r.assignedCount, r.remaining]);
-  _downloadCSV('License_Reconciliation', headers, csvRows);
+  _downloadCSV('License_Summary', headers, csvRows);
 }
 
 // ── TAB 3: USERS — PMO Review Queue (Milestone 3A) ────────
@@ -1144,14 +1087,17 @@ function computeLicUserMappingData(memos, reviewState, parseAcctFn, manualRows) 
 }
 
 function _renderLicReviewQueueHtml(queueItems) {
-  if (!queueItems || !queueItems.length) return '';
-  const rows = queueItems.map(({ memo, acct }) => `<tr>
-      <td style="padding-left:14px;font-weight:600;color:var(--blue);cursor:pointer" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${esc(memo.memoNo)}')">${esc(memo.memoNo)}</td>
+  const visibleQueueItems = (queueItems || []).filter(({ memo }) =>
+    typeof canCurrentUserViewMemo === 'function' ? canCurrentUserViewMemo(memo) : true
+  );
+  if (!visibleQueueItems.length) return '';
+  const rows = visibleQueueItems.map(({ memo, acct }) => `<tr>
+      <td style="padding-left:14px;font-weight:600;color:var(--blue);cursor:pointer" onclick="typeof openCanonicalTransactionDetailForMemo==='function'&&openCanonicalTransactionDetailForMemo('${esc(memo.memoNo)}')">${esc(memo.memoNo)}</td>
       <td style="font-size:12px">${esc(memo.project || '—')}</td>
       <td style="text-align:center">${acct.rows.length}</td>
       <td style="text-align:center">${acct.cols.length}</td>
       <td style="text-align:center;white-space:nowrap">
-        <button class="btn-sm" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly('${esc(memo.memoNo)}')">View Memo</button>
+        <button class="btn-sm" onclick="typeof openCanonicalTransactionDetailForMemo==='function'&&openCanonicalTransactionDetailForMemo('${esc(memo.memoNo)}')">View Memo</button>
         <button class="btn-sm" style="color:var(--green,#27500A)" onclick="_approveLicReview('${esc(memo.memoNo)}')">✓ Approve</button>
         <button class="btn-sm" style="color:var(--red)" onclick="_rejectLicReview('${esc(memo.memoNo)}')">✕ Reject</button>
       </td>
@@ -1556,8 +1502,9 @@ function _renderLicUsers() {
     ${_renderLicReviewQueueHtml(queueItems)}
     <div id="lic-usr-context-banner" style="margin-bottom:12px;display:none"></div>
     <div class="filter-toolbar">
-      <input id="lic-usr-search" type="text" class="filter-search" placeholder="Search..."
-        oninput="_renderLicUsersRows()">
+      <span class="filter-control filter-control--search"><label class="filter-label" for="lic-usr-search">Search</label>
+        <input id="lic-usr-search" type="text" class="filter-search" placeholder="Search by email"
+          oninput="_renderLicUsersRows()"></span>
       <select id="lic-usr-proj" onchange="_renderLicUsersRows()">
         ${projects.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('')}
       </select>
@@ -2332,6 +2279,8 @@ function _kpi(label, val, color, sub) {
 function openLicenseModal(id) {
   const modal = document.getElementById('license-modal');
   modal.style.display = 'flex';
+  const dateError = document.getElementById('lic-date-error');
+  if (dateError) { dateError.style.display = 'none'; dateError.textContent = ''; }
   _populateLicenseFilters(getAllLicenses());
   if (id) {
     const lic = getAllLicenses().find(l => String(l.id) === String(id));
@@ -2407,11 +2356,34 @@ function saveLicenseManual() {
     note: document.getElementById('lic-note').value.trim(),
     source: 'manual', updatedAt: now,
   };
+  const dateError = document.getElementById('lic-date-error');
+  if (isLicenseDateRangeInvalid(data.purchaseDate, data.expiry)) {
+    if (dateError) {
+      dateError.textContent = 'Expiry Date must not be earlier than Purchase Date.';
+      dateError.style.display = '';
+    } else {
+      alert('Expiry Date must not be earlier than Purchase Date.');
+    }
+    return;
+  }
+  if (dateError) { dateError.style.display = 'none'; dateError.textContent = ''; }
   const allLics = getAllLicenses();
   let finalData;
   if (editId) {
     const orig = allLics.find(l => String(l.id) === String(editId));
-    finalData = { ...(orig||{}), ...data, id: editId, createdAt: orig?.createdAt || now };
+    finalData = orig?.source === 'memo'
+      ? {
+          ...orig,
+          owner: data.owner,
+          department: data.department,
+          statusOverride: data.statusOverride,
+          note: data.note,
+          id: editId,
+          source: 'manual',
+          createdAt: orig?.createdAt || now,
+          updatedAt: now,
+        }
+      : { ...(orig||{}), ...data, id: editId, createdAt: orig?.createdAt || now };
   } else {
     finalData = { id: nextLicenseId(), ...data, createdAt: now };
   }
@@ -2450,4 +2422,32 @@ function loadMoreLicense() {
 }
 function resetLicensePagination() {
   window._licVisible = 20;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    parseLicenseFromMemo,
+    getAllLicenses,
+    loadManualLicenses,
+    storeManualLicenses,
+    computeLicReconciliation,
+    _bpGetFiltered,
+    _bpReconApplyFilters,
+    _bpSetFilterProjects,
+    _bpSetFilterSoftware,
+    _bpSetFilterPlan,
+    _bpSetFilterStatus,
+    _bpSetReconOverOnly,
+    _bpSetReconRemainingOnly,
+    _bpSetYear,
+    _bpResetSummaryFilters,
+    _renderLicByProject,
+    _renderLicReconciliation,
+    _openLicReconDetail,
+    _viewReconRowInUsers,
+    exportLicSummaryCSV,
+    exportLicReconciliationCSV,
+    _saveLicUserOverrides,
+    _saveLicUserManualRows,
+  };
 }

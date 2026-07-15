@@ -399,6 +399,120 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 }
 .card-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .card-subtitle { font-size: 11px; color: var(--text-3); margin-left: 4px; }
+.txn-modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  z-index: 310; display: flex; align-items: center; justify-content: center;
+}
+.txn-modal-card {
+  width: 720px; max-width: 95vw; max-height: 86vh;
+  overflow: auto; padding: 0;
+}
+.txn-modal-card--form { width: 680px; max-height: 92vh; padding: 22px; }
+.txn-modal-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.txn-modal-body { padding: 16px; }
+.pmo-modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  z-index: 310; display: flex; align-items: center; justify-content: center;
+}
+.pmo-modal-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r); box-shadow: 0 20px 60px rgba(0,0,0,.2);
+  width: 560px; max-width: 95vw; max-height: 90vh;
+  overflow-y: auto; padding: 24px;
+}
+.pmo-modal-card--wide { width: 680px; }
+.pmo-modal-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; margin-bottom: 18px;
+}
+.pmo-modal-title {
+  font-size: 15px; font-weight: 700; color: var(--text);
+}
+.pmo-modal-close {
+  background: none; border: none; cursor: pointer; color: var(--text-3);
+  font-size: 20px; line-height: 1; padding: 2px 4px;
+}
+.pmo-modal-footer {
+  display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
+}
+.pmo-month-control { display: inline-flex; width: 160px; min-width: 160px; }
+.pmo-month-trigger {
+  width: 100%; height: 32px; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
+  font-size: 12px; padding: 6px 10px;
+  border: 1px solid var(--border-md); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+.pmo-month-trigger:hover { border-color: var(--blue-100); }
+.pmo-month-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmo-month-trigger b { color: var(--text-3); font-size: 10px; }
+.pmo-month-picker {
+  position: fixed; z-index: 950; width: 286px;
+  background: var(--surface); border: 1px solid var(--border-md); border-radius: var(--r);
+  box-shadow: 0 20px 60px rgba(0,0,0,.22); padding: 12px; display: none;
+}
+.pmo-month-picker.is-open { display: block; }
+.pmo-month-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px;
+}
+.pmo-month-year { font-size: 14px; font-weight: 700; color: var(--text); }
+.pmo-month-nav {
+  width: 30px; height: 30px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text-2); cursor: pointer; font-size: 18px; line-height: 1;
+}
+.pmo-month-nav:hover { background: var(--bg); color: var(--text); }
+.pmo-month-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.pmo-month-option {
+  height: 34px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: 12px;
+}
+.pmo-month-option:hover { background: var(--blue-50); border-color: var(--blue-100); }
+.pmo-month-option.is-selected { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 700; }
+.pmo-month-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+.pmo-month-cancel {
+  border: 0; background: transparent; color: var(--text-2); cursor: pointer;
+  font: inherit; font-size: 12px; padding: 4px 6px;
+}
+.pmo-month-cancel:hover { color: var(--text); }
+.txn-title {
+  font-size: 14px; font-weight: 500; color: var(--text-1,var(--color-text-primary));
+  margin-bottom: 4px;
+}
+.txn-description {
+  font-size: 11px; color: var(--text-2,var(--color-text-secondary));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 520px;
+}
+.txn-badge-row { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-top: 5px; }
+.txn-muted { font-size: 11px; color: var(--text-2,var(--color-text-secondary)); }
+.txn-field-grid {
+  display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 8px;
+  background: var(--bg-2,var(--color-background-secondary));
+  border-radius: var(--r-sm,var(--border-radius-md)); padding: 10px 12px;
+}
+.txn-field-label {
+  display: block; font-size: 9px; font-weight: 500; color: var(--text-3,var(--color-text-tertiary));
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 2px;
+}
+.txn-field-value {
+  font-size: 12px; font-weight: 500; color: var(--text-1,var(--color-text-primary));
+  overflow-wrap: anywhere;
+}
+.txn-section { margin-top: 14px; }
+.txn-section-title {
+  font-size: 9px; font-weight: 500; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 7px;
+}
+.txn-table-wrap { border: .5px solid var(--border); border-radius: var(--r-sm); overflow: auto; }
+.txn-helper {
+  margin: 12px 16px 0; padding: 9px 11px;
+  background: var(--blue-50); color: var(--blue);
+  border-radius: var(--r-sm); font-size: 11px;
+}
+.txn-form-subtitle { font-size: 11px; color: var(--text-3); }
 
 /* ── TYPE SELECTOR ── */
 .type-grid {
@@ -469,6 +583,30 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 .fg input[readonly]:focus { box-shadow: none; border-color: var(--border); }
 .fg textarea { resize: vertical; min-height: 64px; }
 .form-note { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+.device-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px 12px;
+  margin-bottom: 16px;
+}
+.device-form-grid .fg { min-width: 0; }
+.device-form-wide { grid-column: 1 / -1; }
+.device-memo-link-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+.device-memo-link-control .btn-sm {
+  height: 33px;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .device-form-grid { grid-template-columns: 1fr; }
+  .device-form-wide { grid-column: auto; }
+  .device-memo-link-control { grid-template-columns: 1fr; }
+  .device-memo-link-control .btn-sm { width: 100%; }
+}
 
 /* ── ITEMS TABLE ── */
 .items-hdr {
@@ -727,44 +865,219 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 .lic-tab-btn.lic-tab-active { background:var(--surface)!important; color:var(--blue-800)!important; font-weight:600; box-shadow:0 1px 4px rgba(0,0,0,.10); border-bottom-color:transparent!important; }
 .lic-expand{display:inline-block;transition:transform .15s;margin-right:4px;font-size:10px;color:var(--text-3)}
 
-.filter-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 14px; }
+.filter-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 14px;
+}
+.filter-control--search { flex: 1 1 263px; min-width: 180px; max-width: 460px; }
 .filter-search,
 .filter-toolbar input[type="search"],
 .filter-toolbar input[type="text"].filter-search {
-  flex: 1 1 280px; width: 320px; min-width: 280px; max-width: 340px;
-  height: 32px; box-sizing: border-box;
+  width: 100%; min-width: 0;
+  height: 38px; min-height: 38px; box-sizing: border-box;
   font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
-  font-size: 12px; padding: 6px 10px;
+  font-size: 12px; padding: 7px 10px;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
   background: var(--surface); color: var(--text); outline: none;
 }
 .filter-toolbar select,
+.actual-spend-toolbar select,
 .filter-input,
 .filter-select {
   font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
-  font-size: 12px; padding: 6px 10px; width: 160px; min-width: 160px; max-width: 160px;
-  height: 32px; box-sizing: border-box;
+  font-size: 12px; padding: 7px 10px; width: 100%; min-width: 0;
+  height: 38px; min-height: 38px; box-sizing: border-box;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
   background: var(--surface); color: var(--text); cursor: pointer;
 }
 .filter-toolbar input[type="month"],
 .filter-toolbar input[type="date"],
+.actual-spend-toolbar input[type="month"],
+.actual-spend-toolbar input[type="date"],
 .filter-control input[type="month"],
 .filter-control input[type="date"],
 .filter-date,
 .filter-month {
   font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
-  font-size: 12px; padding: 6px 10px; width: 160px; min-width: 160px;
-  height: 32px; box-sizing: border-box;
+  font-size: 12px; padding: 7px 10px; width: 100%; min-width: 0;
+  height: 38px; min-height: 38px; box-sizing: border-box;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
   background: var(--surface); color: var(--text);
 }
-.filter-control { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.filter-toolbar .ms-wrap { width: 160px; min-width: 160px; }
-.filter-toolbar .ms-trigger { width: 160px; min-width: 160px; max-width: 160px; height: 32px; box-sizing: border-box; }
-.filter-range { display: inline-flex; gap: 8px; align-items: flex-end; flex-wrap: nowrap; }
-.filter-actions { display: flex; gap: 8px; align-items: center; align-self: flex-end; flex-wrap: nowrap; margin-left: auto; }
-.filter-actions button { height: 32px; box-sizing: border-box; white-space: nowrap; }
+.filter-control { display: flex; flex: 0 0 169px; flex-direction: column; align-items: stretch; gap: 0; min-width: 0; }
+.filter-control:has(input[type="month"]),
+.filter-control:has(input[type="date"]) { flex-basis: 130px; }
+.filter-control--compact,
+.filter-control--date,
+.filter-control:has(#as-year),
+.filter-control:has(#as-from),
+.filter-control:has(#as-to),
+.filter-control:has(#as-manual-from),
+.filter-control:has(#as-manual-to),
+.filter-control:has(#bva-year),
+.filter-control:has(#bset-year),
+.filter-control:has(#sl-forecast-period) { flex-basis: 130px; }
+.filter-toolbar--dense .filter-control { flex-basis: 160px; }
+.filter-toolbar--dense .filter-control--compact,
+.filter-toolbar--dense .filter-control--date,
+.filter-toolbar--dense .filter-control:has(#as-year),
+.filter-toolbar--dense .filter-control:has(#as-from),
+.filter-toolbar--dense .filter-control:has(#as-to),
+.filter-toolbar--dense .filter-control:has(#as-manual-from),
+.filter-toolbar--dense .filter-control:has(#as-manual-to) { flex-basis: 130px; }
+.filter-toolbar--single-line {
+  display: grid;
+  grid-template-columns: var(--filter-toolbar-columns, minmax(180px,1.4fr) minmax(120px,.9fr) minmax(130px,.9fr) 130px 130px auto);
+  gap: 8px;
+  align-items: end;
+}
+.filter-toolbar--single-line .filter-control,
+.filter-toolbar--single-line .filter-control--search,
+.filter-toolbar--single-line .ms-wrap {
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  flex: initial;
+}
+.filter-toolbar--single-line .filter-actions {
+  min-width: max-content;
+  margin-left: 0;
+  justify-content: flex-end;
+}
+.filter-toolbar--actual-report {
+  --filter-toolbar-columns: 130px 130px 130px minmax(120px,.9fr) minmax(120px,.9fr) minmax(120px,.9fr) minmax(145px,.95fr) auto;
+}
+.filter-toolbar--actual-manual {
+  --filter-toolbar-columns: minmax(130px,1.35fr) minmax(90px,.85fr) minmax(90px,.85fr) minmax(110px,.9fr) 100px 100px minmax(110px,.9fr) auto;
+}
+.filter-toolbar--device {
+  --filter-toolbar-columns: minmax(180px,1.35fr) minmax(90px,.85fr) minmax(90px,.85fr) minmax(90px,.85fr) minmax(90px,.85fr) minmax(90px,.85fr) auto;
+}
+.filter-toolbar--license {
+  --filter-toolbar-columns: minmax(220px,1.35fr) minmax(120px,.85fr) minmax(140px,.9fr) minmax(150px,.95fr) auto;
+}
+.filter-toolbar--resource-style {
+  margin-bottom: 12px;
+}
+.filter-toolbar--resource-style .filter-control,
+.filter-toolbar--resource-style .filter-control--search,
+.filter-toolbar--resource-style .ms-wrap {
+  flex: 1 1 150px;
+  max-width: none;
+}
+.filter-toolbar--resource-style .filter-control--compact,
+.filter-toolbar--resource-style .filter-control--date {
+  flex: 0 1 150px;
+}
+.filter-action-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: nowrap;
+  margin: 0 0 14px;
+}
+.filter-action-row .filter-control--search {
+  flex: 1 1 360px;
+  max-width: none;
+}
+.filter-action-row .filter-actions {
+  margin-left: auto;
+}
+.filter-action-row .filter-meta {
+  align-self: center;
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.actual-spend-toolbar {
+  display: grid;
+  gap: 8px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+.actual-spend-toolbar--report {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+.actual-spend-toolbar--manual {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+.actual-spend-toolbar .filter-control,
+.actual-spend-toolbar .filter-control--compact,
+.actual-spend-toolbar .filter-control--date,
+.actual-spend-toolbar .ms-wrap {
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  flex: initial;
+}
+.actual-spend-actions {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  align-items: flex-end;
+}
+.actual-spend-actions .filter-control--search {
+  max-width: none;
+}
+@media (max-width:1100px){
+  .actual-spend-toolbar--report,
+  .actual-spend-toolbar--manual { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width:960px){
+  .actual-spend-actions { flex-wrap: wrap; }
+  .actual-spend-actions .filter-control--search { flex: 1 1 100%; }
+  .actual-spend-actions .filter-actions { margin-left: auto; }
+}
+@media (max-width:760px){
+  .actual-spend-toolbar--report,
+  .actual-spend-toolbar--manual { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.filter-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+.filter-toolbar .ms-wrap,
+.actual-spend-toolbar .ms-wrap { width: auto; min-width: 0; }
+.filter-toolbar .ms-trigger,
+.actual-spend-toolbar .ms-trigger { width: 100%; min-width: 0; max-width: none; height: 38px; min-height: 38px; box-sizing: border-box; padding: 7px 10px; }
+.filter-toolbar .pmo-select-trigger { height: 38px; min-height: 38px; padding: 7px 10px; font-weight: 500; }
+.ov-filter-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.ov-filter-menu{position:relative}
+.ov-filter-trigger{display:inline-flex;align-items:center;justify-content:space-between;gap:10px;min-width:150px;height:38px;padding:0 12px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface);color:var(--text);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.ov-filter-trigger span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-filter-trigger b{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--text-3);font-size:13px;line-height:1}
+.ov-filter-menu.open .ov-filter-trigger{border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 14%,transparent)}
+.ov-filter-popover{display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:45;width:260px;max-width:78vw;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);box-shadow:0 14px 34px rgba(15,23,42,.18);overflow:hidden}
+.ov-filter-menu.open .ov-filter-popover{display:block}
+.ov-filter-actions{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid var(--border);background:var(--bg)}
+.ov-filter-actions button{border:0;background:transparent;color:var(--blue);font-family:inherit;font-size:11px;font-weight:800;cursor:pointer}
+.ov-filter-options{max-height:246px;overflow:auto;padding:5px}
+.ov-filter-option{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:7px;padding:7px;border-radius:6px;font-size:12px;cursor:pointer;transition:background .16s ease,transform .16s ease,color .16s ease}
+.ov-filter-option:hover{background:var(--bg);transform:translateY(-1px)}
+.ov-filter-option input{width:14px;height:14px;accent-color:var(--blue);transition:transform .16s ease,box-shadow .18s ease}
+.ov-filter-option input:checked{transform:scale(1.08);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 16%,transparent)}
+.ov-filter-option span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-filter-option em{font-style:normal;color:var(--text-3);font-size:11px}
+.ov-filter-empty{padding:12px;color:var(--text-3);font-size:12px;text-align:center}
+.filter-range { display: contents; }
+.filter-checkbox {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 38px; box-sizing: border-box;
+  font-size: 12px; color: var(--text-2); white-space: nowrap;
+}
+.filter-checkbox input { width: 14px; height: 14px; accent-color: var(--blue); }
+.filter-actions { display: flex; gap: 8px; align-items: center; align-self: flex-end; flex: 0 0 auto; flex-wrap: nowrap; margin-left: auto; }
+.filter-actions .btn-export { margin-left: 0; }
+.filter-actions button { height: 38px; box-sizing: border-box; white-space: nowrap; }
+@media (max-width:1100px){.filter-control,.filter-control--search,.filter-toolbar--dense .filter-control{flex:1 1 calc(50% - 4px);max-width:none}.filter-actions{margin-left:0}}
+@media (min-width:761px) and (max-width:1399px){.filter-toolbar--single-line{display:flex;flex-wrap:wrap}.filter-toolbar--single-line .filter-control,.filter-toolbar--single-line .filter-control--search,.filter-toolbar--single-line .ms-wrap{flex:1 1 calc(25% - 6px);max-width:none}.filter-toolbar--single-line .filter-actions{margin-left:auto}}
+@media (max-width:760px){.filter-toolbar--single-line{display:flex;flex-wrap:wrap}.filter-toolbar--single-line .filter-control,.filter-toolbar--single-line .filter-control--search,.filter-toolbar--single-line .ms-wrap{flex:1 1 calc(50% - 4px);max-width:none}.filter-toolbar--single-line .filter-actions{margin-left:0}.filter-action-row{flex-wrap:wrap}.filter-action-row .filter-control--search{flex-basis:100%}}
 
 #view-history > .filter-toolbar,
 #view-pending > .filter-toolbar { margin-bottom: 14px; }
@@ -1000,10 +1313,6 @@ svg.icon { display: inline-block; vertical-align: middle; }
       <div class="sb-item" data-page-access="budget" onclick="swView('budget',this,'Budget & Spend')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         Budget & Spend
-      </div>
-      <div class="sb-item" data-page-access="cost" onclick="swView('cost',this,'OPEX & Forecast')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-        OPEX & Forecast
       </div>
       <div class="sb-item" data-page-access="license" onclick="swView('license',this,'License Management')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
@@ -1264,7 +1573,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <div class="fs" id="fs-ent">
               <div class="form-grid">
                 <div class="fg" style="grid-column:1/-1"><label>ชื่อลูกค้า / บริษัทที่เลี้ยง *</label><input type="text" placeholder="เช่น บริษัท ปตท. น้ำมันและการค้าปลีก จำกัด (มหาชน)"></div>
-                <div class="fg"><label>วันที่จัดงาน *</label><input type="date"></div>
+                <div class="fg"><label>วันที่จัดงาน *</label><input type="date" id="ent-date"></div>
                 <div class="fg"><label>สถานที่ *</label><input type="text" placeholder="เช่น ร้านอาหาร The River Café"></div>
                 <div class="fg"><label>จำนวนผู้เข้าร่วม (คน) *</label><input type="number" placeholder="10"></div>
                 <div class="fg"><label>วงเงินรวม (บาท) *</label><input type="number" placeholder="50000"></div>
@@ -1390,8 +1699,9 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
         <!-- Filters -->
         <div class="filter-toolbar">
-          <input type="text" id="pend-search" class="filter-search" placeholder="Search..."
-            oninput="_pendingSearch=this.value;renderPendingContent()">
+          <span class="filter-control filter-control--search"><label class="filter-label" for="pend-search">Search</label>
+            <input type="text" id="pend-search" class="filter-search" placeholder="Search by memo no., subject, project, or approver"
+              oninput="_pendingSearch=this.value;renderPendingContent()"></span>
           <select id="pend-filter-type" onchange="renderPendingContent()">
             <option value="sl">SL</option><option value="hw">HW</option>
             <option value="int">INT</option><option value="ent">ENT</option><option value="dep">DEP</option>
@@ -1445,7 +1755,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
           </div>
         </div>
         <div class="filter-toolbar">
-          <input type="search" id="hist-search" class="filter-search" placeholder="Search..." oninput="renderHistoryMemos()">
+          <span class="filter-control filter-control--search"><label class="filter-label" for="hist-search">Search</label>
+            <input type="search" id="hist-search" class="filter-search" placeholder="Search by memo no., subject, project, or requester" oninput="renderHistoryMemos()"></span>
           <select id="hist-status" onchange="renderHistoryMemos()" style="display:none">
             <option value="all">ทุกสถานะ</option>
             <option value="completed">Completed</option>
@@ -1537,9 +1848,9 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <div id="ov-custom-range" style="display:none;align-items:center;gap:6px">
               <!-- Validation (12-month limit) and the resulting graph/KPI update must only happen
                    on Apply, not while the user is still freely picking start/end months. -->
-              <select id="ov-from-sel" class="ri" style="font-size:11px;padding:3px 6px;width:auto"></select>
+              <input id="ov-from-sel" class="ri" type="month" style="font-size:11px;padding:3px 6px;width:auto">
               <span style="font-size:11px;color:var(--text-3)">→</span>
-              <select id="ov-to-sel" class="ri" style="font-size:11px;padding:3px 6px;width:auto"></select>
+              <input id="ov-to-sel" class="ri" type="month" style="font-size:11px;padding:3px 6px;width:auto">
               <button class="btn-sm" onclick="ovApplyCustomRange()" style="font-size:11px">Apply</button>
             </div>
             <span style="font-size:11px;color:var(--text-3)" id="ov-period-label"></span>
@@ -1576,12 +1887,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
                 </div>
               </div>
             </div>
-            <div style="font-size:10px;font-weight:500;color:var(--text-3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em">Filter by project</div>
-            <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px" id="ov-proj-chips"></div>
-            <div id="ov-type-col" style="margin-bottom:12px">
-              <div style="font-size:10px;font-weight:500;color:var(--text-3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em">Filter by type <span id="ov-type-count" style="font-weight:400"></span></div>
-              <div style="display:flex;gap:5px;flex-wrap:wrap" id="ov-type-chips"></div>
-            </div>
+            <div class="ov-filter-row" id="ov-breakdown-filters"></div>
             <div class="ov-breakdown-grid">
               <div style="min-width:0">
                 <div style="font-size:11px;color:var(--text-3);margin-bottom:6px">Monthly spend (฿)</div>
@@ -1602,19 +1908,19 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
           <div style="display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--border)">
             <button id="as-tab-report" class="btn-sm active" onclick="switchActualSpendTab('report',this)" style="border-radius:6px 6px 0 0">Report</button>
-            <button id="as-tab-manual" class="btn-sm" onclick="switchActualSpendTab('manual',this)" style="border-radius:6px 6px 0 0">Manual Entries</button>
+            <button id="as-tab-manual" class="btn-sm" onclick="switchActualSpendTab('manual',this)" style="border-radius:6px 6px 0 0">Transactions</button>
           </div>
 
           <div id="as-panel-report">
 
-            <div class="filter-toolbar">
-              <span class="filter-control"><span class="filter-label">Year</span><select id="as-year" onchange="renderActualSpend()" aria-label="ปีข้อมูล Actual Spend">
-                <option value="2026">ปี 2026</option>
+            <div class="actual-spend-toolbar actual-spend-toolbar--report">
+              <span class="filter-control filter-control--compact"><span class="filter-label">Year</span><select id="as-year" onchange="renderActualSpend()" aria-label="ปีข้อมูล Actual Spend">
+                <option value="2026">2026</option>
               </select></span>
               <span class="filter-range">
-                <span class="filter-control"><span class="filter-label">Month From</span>
+                <span class="filter-control filter-control--date"><span class="filter-label">Month From</span>
                   <input type="month" id="as-from" class="filter-month" onchange="renderActualSpend()"></span>
-                <span class="filter-control"><span class="filter-label">Month To</span>
+                <span class="filter-control filter-control--date"><span class="filter-label">Month To</span>
                   <input type="month" id="as-to" class="filter-month" onchange="renderActualSpend()"></span>
               </span>
               <select id="as-project" onchange="renderActualSpend()">
@@ -1631,8 +1937,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
               <span class="filter-control"><span class="filter-label">Source</span><select id="as-source" onchange="renderActualSpend()">
                 <option value="all">ทุกแหล่งข้อมูล</option>
                 <option value="memo">จาก Memo</option>
-                <option value="manual">Historical / Manual</option>
-                <option value="infra">Infra Cost</option>
+                <option value="manual_spending">Manual Spending</option>
               </select></span>
               <select id="as-budget-status" onchange="renderActualSpend()">
                 <option value="Mapped">Mapped</option>
@@ -1640,8 +1945,11 @@ svg.icon { display: inline-block; vertical-align: middle; }
                 <option value="Needs PMO Review">Needs PMO Review</option>
                 <option value="Unbudgeted">Unbudgeted</option>
               </select>
+            </div>
+            <div class="filter-action-row actual-spend-actions">
+              <span style="flex:1 1 auto"></span>
               <div class="filter-actions">
-                <span id="as-period-label" style="font-size:11px;color:var(--text-3);white-space:nowrap">ทั้งหมด</span>
+                <span id="as-period-label" class="filter-meta">ทั้งหมด</span>
                 <button class="btn-export" onclick="exportActualSpendCSV()">⬇ Export CSV</button>
               </div>
             </div>
@@ -1650,8 +1958,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
           </div>
 
           <div id="as-panel-manual" style="display:none">
-            <div class="filter-toolbar">
-              <input id="as-manual-search" type="search" class="filter-search" placeholder="Search..." oninput="renderManualEntries()">
+            <div class="actual-spend-toolbar actual-spend-toolbar--manual">
               <select id="as-manual-project" onchange="renderManualEntries()"></select>
               <select id="as-manual-type" onchange="renderManualEntries()"></select>
               <span class="filter-control"><span class="filter-label">Frequency</span><select id="as-manual-frequency" onchange="renderManualEntries()"><option value="all">All frequencies</option><option value="one_time">One-time</option><option value="monthly">Monthly</option></select></span>
@@ -1660,11 +1967,17 @@ svg.icon { display: inline-block; vertical-align: middle; }
                 <span class="filter-control"><span class="filter-label">Coverage To</span><input id="as-manual-to" type="month" onchange="renderManualEntries()" aria-label="Coverage to"></span>
               </span>
               <select id="as-manual-budget-status" onchange="renderManualEntries()"><option value="Mapped">Mapped</option><option value="Manual Override">Manual Override</option><option value="Needs PMO Review">Needs PMO Review</option><option value="Unbudgeted">Unbudgeted</option></select>
+              <span class="filter-control"><span class="filter-label">Source</span><select id="as-manual-source" onchange="renderManualEntries()"><option value="all">All sources</option><option value="memo">Memo</option><option value="manual_spending">Manual Spending</option></select></span>
+            </div>
+            <div class="filter-action-row actual-spend-actions">
+              <span class="filter-control--search">
+                <input id="as-manual-search" type="search" class="filter-search" placeholder="Search by reference no., description, program, or memo no." oninput="renderManualEntries()"></span>
               <div class="filter-actions">
+                <button class="btn-export" onclick="exportActualSpendTransactionsCSV()">⬇ Export CSV</button>
                 <button class="btn-export" onclick="downloadActualSpendTemplate()">⬇ Download Template</button>
                 <button class="btn-export" id="as-import-button" onclick="document.getElementById('as-import-file').click()">⬆ Import Excel</button>
                 <input id="as-import-file" type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleActualSpendImport(event)">
-                <button class="btn-primary" id="as-add-manual" onclick="openManualExpenseModal()">+ Add Actual Spend</button>
+                <button class="btn-primary" id="as-add-manual" onclick="openAddSpendingTypeSelector()">+ Add Spending</button>
               </div>
             </div>
             <div id="as-manual-content"></div>
@@ -1675,10 +1988,18 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <!-- ── TAB: FORECAST ── -->
         <div id="bgt-tab-forecast" class="cost-tab-panel" style="display:none">
           <div style="padding:10px 0 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <span style="font-size:11px;color:var(--text-3)">Rolling 6 months Actual + 6 months Forecast · Software และ Infra</span>
+            <span style="font-size:11px;color:var(--text-3)">Previous 6 months Actual + current/next 5 months Forecast</span>
             <div class="filter-toolbar" style="margin-bottom:0">
+              <span class="filter-control"><span class="filter-label">Period</span>
+                <input id="sl-forecast-period" type="month" class="filter-month" onchange="renderBudgetSLInfra()"></span>
               <select id="sl-forecast-proj" onchange="renderBudgetSLInfra()">
                 <option value="all">ทุกโปรเจค</option>
+              </select>
+              <select id="sl-forecast-program" onchange="renderBudgetSLInfra()">
+                <option value="all">ทุกโปรแกรม</option>
+              </select>
+              <select id="sl-forecast-plan" onchange="renderBudgetSLInfra()">
+                <option value="all">ทุกแผน</option>
               </select>
               <div class="filter-actions">
                 <button class="btn-export" onclick="exportForecastCSV()">⬇ Export CSV</button>
@@ -1713,9 +2034,9 @@ svg.icon { display: inline-block; vertical-align: middle; }
         <div id="bgt-tab-bva" class="cost-tab-panel" style="display:none">
 
           <div class="filter-toolbar">
-            <input id="bva-search" type="search" class="filter-search" placeholder="Search records..." oninput="bvaSearchDebounced()">
-            <!-- Options populated dynamically by populateBudgetYearSelect('bva-year') (views/budget.js)
-                 from getCurrentBuddhistYear() — never hardcode a BE year list here (Phase 7A-9A). -->
+            <span class="filter-control filter-control--search"><label class="filter-label" for="bva-search">Search</label>
+              <input id="bva-search" type="search" class="filter-search" placeholder="Search by reference no., description, project, or spend type" oninput="bvaSearchDebounced()"></span>
+            <!-- Options populated dynamically by populateBudgetYearSelect('bva-year') (views/budget.js). -->
             <span class="filter-control"><span class="filter-label">Year</span><select id="bva-year" class="filter-select" onchange="renderBudgetVsActual()"></select></span>
             <span class="filter-control"><span class="filter-label">Project</span><select id="bva-project" onchange="renderBudgetVsActual()">
               <option value="all">ทุกโปรเจค</option>
@@ -1755,11 +2076,11 @@ svg.icon { display: inline-block; vertical-align: middle; }
                     <span style="font-size:12px;font-weight:600">Budget Pools</span>
                     <span style="font-size:11px;color:var(--text-3);margin-left:8px">ตั้งงบประมาณต่อโปรเจค แยกตาม pool และช่วงเวลา</span>
                   </div>
-                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                    <input id="bset-search" type="search" class="filter-search" placeholder="Search..." oninput="renderBudgetSettings()">
-                    <!-- Options populated dynamically by populateBudgetYearSelect('bset-year')
-                         (views/budget.js) from getCurrentBuddhistYear() (Phase 7A-9A). -->
-                    <select id="bset-year" class="filter-input" aria-label="Year" onchange="renderBudgetSettings()"></select>
+                  <div class="filter-toolbar" style="margin-bottom:0">
+                    <span class="filter-control filter-control--search"><label class="filter-label" for="bset-search">Search</label>
+                      <input id="bset-search" type="search" class="filter-search" placeholder="Search by project or pool name" oninput="renderBudgetSettings()"></span>
+                    <!-- Options populated dynamically by populateBudgetYearSelect('bset-year') (views/budget.js). -->
+                    <span class="filter-control"><span class="filter-label">Year</span><select id="bset-year" class="filter-input" aria-label="Year" onchange="renderBudgetSettings()"></select></span>
                     <div class="filter-actions">
                       <button class="btn-sm" onclick="downloadBudgetPoolTemplate()">⬇ Template</button>
                       <label class="btn-sm" style="cursor:pointer">
@@ -1785,7 +2106,6 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <button class="tab-btn active" data-tab="memo-index" onclick="switchLicTab('memo-index')">Memo Index</button>
           <button class="tab-btn" data-tab="by-project" onclick="switchLicTab('by-project')">License Summary</button>
           <button class="tab-btn" data-tab="users" onclick="switchLicTab('users')">Users</button>
-          <button class="tab-btn" data-tab="other" onclick="switchLicTab('other')">Other</button>
         </div>
 
         <!-- Tab content (rendered by JS) -->
@@ -1793,11 +2113,11 @@ svg.icon { display: inline-block; vertical-align: middle; }
       </div>
 
       <!-- License Add/Edit Modal -->
-      <div id="license-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:300;align-items:center;justify-content:center">
-        <div style="background:var(--surface);border-radius:var(--r);padding:24px;width:540px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
-            <div style="font-size:15px;font-weight:700" id="lic-modal-title">Add License</div>
-            <button onclick="closeLicenseModal()" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:20px">&#x2715;</button>
+      <div id="license-modal" class="pmo-modal-backdrop" style="display:none;z-index:300">
+        <div class="pmo-modal-card">
+          <div class="pmo-modal-header">
+            <div class="pmo-modal-title" id="lic-modal-title">Add License</div>
+            <button class="pmo-modal-close" onclick="closeLicenseModal()">&#x2715;</button>
           </div>
           <input type="hidden" id="lic-edit-id">
           <div id="lic-memo-hint" style="display:none;background:#FEF9E7;border:0.5px solid #F0C27F;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#854F0B">
@@ -1834,7 +2154,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <div class="fg"><label>Link Memo No.</label><input type="text" id="lic-memo-ref" placeholder="เช่น ORB-2605-001"></div>
             <div class="fg"><label>หมายเหตุ</label><input type="text" id="lic-note" placeholder="รายละเอียดเพิ่มเติม"></div>
           </div>
-          <div style="display:flex;gap:8px;justify-content:flex-end">
+          <div id="lic-date-error" style="display:none;margin:-4px 0 14px;color:var(--red);font-size:12px"></div>
+          <div class="pmo-modal-footer">
             <button class="btn-ghost" onclick="closeLicenseModal()">ยกเลิก</button>
             <button class="btn-primary" onclick="saveLicenseManual()">บันทึก</button>
           </div>
@@ -1860,7 +2181,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <div class="metric-card"><div class="metric-label">Fulfilled</div><div class="metric-val" id="po-kpi-fulfilled" style="color:#3B6D11">0</div></div>
           </div>
           <div class="filter-toolbar">
-            <input type="text" id="po-search" class="filter-search" placeholder="Search..." oninput="renderPurchaseOrders()">
+            <span class="filter-control filter-control--search"><label class="filter-label" for="po-search">Search</label>
+              <input type="text" id="po-search" class="filter-search" placeholder="Search by memo no. or item name" oninput="renderPurchaseOrders()"></span>
             <span class="filter-control"><span class="filter-label">Status</span><select id="po-filter-status" onchange="renderPurchaseOrders()">
               <option value="pending_order">Pending Order</option>
               <option value="ordered">Ordered</option>
@@ -1871,9 +2193,10 @@ svg.icon { display: inline-block; vertical-align: middle; }
             </select></span>
             <span class="filter-control"><span class="filter-label">Project</span><select id="po-filter-project" onchange="renderPurchaseOrders()">
             </select></span>
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);white-space:nowrap">
-              <input type="checkbox" id="po-filter-remaining" onchange="renderPurchaseOrders()"> Remaining &gt; 0
-            </label>
+            <span class="filter-control"><span class="filter-label">Remaining</span>
+              <label class="filter-checkbox">
+                <input type="checkbox" id="po-filter-remaining" onchange="renderPurchaseOrders()"> &gt; 0
+              </label></span>
             <div id="po-visible-count" style="font-size:11px;color:var(--text-3)"></div>
             <div class="filter-actions">
               <button class="btn-export" data-permission="device.export" onclick="exportPurchaseOrdersCSV()">⬇ Export PO</button>
@@ -1904,10 +2227,45 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <div class="metric-card"><div class="metric-label">Available</div><div class="metric-val" id="dev-available" style="color:var(--gray)">0</div><div class="metric-sub">ยังไม่มีผู้ถือ</div></div>
         </div>
 
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+          <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
+            <div style="padding:12px 16px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600">Summary by Platform × Type</div>
+            <table class="hist-table" id="dev-summary-platform">
+              <thead><tr>
+                <th style="padding-left:16px">Platform</th>
+                <th>Mobile</th>
+                <th>Tablet</th>
+                <th>Other</th>
+                <th style="text-align:right;padding-right:16px">Total</th>
+              </tr></thead>
+              <tbody id="dev-summary-platform-body"></tbody>
+            </table>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600">
+              <span>Summary by Project</span>
+              <button type="button" id="dev-summary-project-toggle" class="btn-sm" style="display:none;font-size:11px;padding:3px 9px" onclick="toggleDeviceProjectSummary()">View All</button>
+            </div>
+            <div id="dev-summary-project-scroll" style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+              <table class="hist-table" id="dev-summary-project">
+                <thead><tr>
+                  <th style="padding-left:16px">โครงการ</th>
+                  <th>In Use</th>
+                  <th>Available</th>
+                  <th>Other</th>
+                  <th style="text-align:right;padding-right:16px">Total</th>
+                </tr></thead>
+                <tbody id="dev-summary-project-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- Filter row -->
         <div id="dev-registry-context-banner" style="display:none;margin-bottom:10px"></div>
-        <div class="filter-toolbar">
-          <input type="text" id="dev-search" class="filter-search" placeholder="Search..." oninput="renderDevice()">
+        <div class="filter-toolbar filter-toolbar--single-line filter-toolbar--device">
+          <span class="filter-control filter-control--search"><label class="filter-label" for="dev-search">Search</label>
+            <input type="text" id="dev-search" class="filter-search" placeholder="Search by device name, brand, serial no., asset tag, or assignee" oninput="renderDevice()"></span>
           <span class="filter-control"><span class="filter-label">Platform</span><select id="dev-filter-platform" onchange="renderDevice()">
             <option value="ios">iOS</option>
             <option value="android">Android</option>
@@ -1922,9 +2280,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <option value="other">Other</option>
           </select></span>
           <span class="filter-control"><span class="filter-label">Status</span><select id="dev-filter-status" onchange="renderDevice()">
-            <option value="not_identified">Not Identified</option>
-            <option value="in-use">In Use</option>
             <option value="available">Available</option>
+            <option value="in-use">In Use</option>
             <option value="maintenance">Maintenance</option>
             <option value="retired">Retired</option>
           </select></span>
@@ -1958,9 +2315,10 @@ svg.icon { display: inline-block; vertical-align: middle; }
               <th style="width:16%;padding-left:16px">Brand / Model</th>
               <th style="width:8%">OS</th>
               <th style="width:7%">Type</th>
-              <th style="width:10%">Asset ACC</th>
+              <th style="width:9%">Asset IT</th>
+              <th style="width:9%">Asset ACC</th>
               <th style="width:11%">Serial No.</th>
-              <th style="width:11%">Assignee</th>
+              <th style="width:11%">QA Owner</th>
               <th style="width:9%">Project</th>
               <th style="width:9%;text-align:center">Status</th>
               <th style="width:9%">Updated</th>
@@ -1971,35 +2329,6 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <div id="dev-load-more-footer" style="display:none"></div>
         </div> <!-- end registry table card -->
 
-        <!-- Secondary summaries follow the primary operational table. -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
-          <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
-            <div style="padding:12px 16px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600">Summary by Platform × Type</div>
-            <table class="hist-table" id="dev-summary-platform">
-              <thead><tr>
-                <th style="padding-left:16px">Platform</th>
-                <th>Mobile</th>
-                <th>Tablet</th>
-                <th>Other</th>
-                <th style="text-align:right;padding-right:16px">Total</th>
-              </tr></thead>
-              <tbody id="dev-summary-platform-body"></tbody>
-            </table>
-          </div>
-          <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
-            <div style="padding:12px 16px 10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600">Summary by Project</div>
-            <table class="hist-table" id="dev-summary-project">
-              <thead><tr>
-                <th style="padding-left:16px">โครงการ</th>
-                <th>In Use</th>
-                <th>Available</th>
-                <th>Other</th>
-                <th style="text-align:right;padding-right:16px">Total</th>
-              </tr></thead>
-              <tbody id="dev-summary-project-body"></tbody>
-            </table>
-          </div>
-        </div>
         </div> <!-- end dev-panel-registry -->
       </div> <!-- end view-device -->
 
@@ -2264,25 +2593,25 @@ svg.icon { display: inline-block; vertical-align: middle; }
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <!-- Runtime environment config; generated locally/CI and intentionally not committed. -->
-<script src="config.js"></script>
+<script src="config.js?v=20260710-integrated-db"></script>
 <!-- Auth/session facade: mock session now, OAuth-ready later. -->
 <script src="auth.js?v=0.2.0"></script>
 <script src="access_control.js?v=0.1.1"></script>
 <!-- Core: shared utils, storage, navigation, PDF -->
-<script src="app.js?v=0.1.16"></script>
+<script src="app.js?v=0.1.17"></script>
+<script src="views/month_year_controls.js"></script>
 <!-- Views -->
 <script src="views/create.js"></script>
 <script src="views/history.js"></script>
 <script src="views/pending.js"></script>
-<script src="views/budget.js?v=0.1.1"></script>
-<script src="views/license.js"></script>
-<script src="views/device.js?v=0.1.1"></script>
-<script src="views/bulk_import.js?v=0.1.1"></script>
-<script src="views/settings.js?v=0.2.8"></script>
+<script src="views/budget.js?v=0.1.2"></script>
+<script src="views/license.js?v=0.1.1"></script>
+<script src="views/device.js?v=0.1.2"></script>
+<script src="views/bulk_import.js?v=0.1.2"></script>
+<script src="views/settings.js?v=0.2.9"></script>
 <script src="views/resource_flow.js"></script>
 <script src="views/resource_module.js?v=0.5.33"></script>
 <script src="views/log.js"></script>
-<script src="views/cost.js?v=0.1.1"></script>
 <style>
   #resource-detail-drawer { transform:translateX(100%);visibility:hidden;z-index:1100; }
   #resource-detail-drawer.open { transform:translateX(0);visibility:visible; }
@@ -2414,15 +2743,15 @@ svg.icon { display: inline-block; vertical-align: middle; }
 </div>
 
 <!-- Device Modal -->
-<div id="device-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;align-items:center;justify-content:center">
-  <div style="background:var(--surface);border-radius:var(--r);padding:24px;width:560px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
-      <div style="font-size:15px;font-weight:700;color:var(--text)" id="dev-modal-title">Add Device</div>
-      <button onclick="closeDeviceModal()" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:20px">&#x2715;</button>
+<div id="device-modal" class="pmo-modal-backdrop" style="display:none;z-index:200">
+  <div class="pmo-modal-card">
+    <div class="pmo-modal-header">
+      <div class="pmo-modal-title" id="dev-modal-title">Add Device</div>
+      <button class="pmo-modal-close" onclick="closeDeviceModal()">&#x2715;</button>
     </div>
     <input type="hidden" id="dev-edit-id">
-    <div class="form-grid" style="margin-bottom:10px">
-      <div class="fg"><label>Device Name *</label><input type="text" id="dev-name" placeholder="เช่น iPhone 15 Pro"></div>
+    <input type="hidden" id="dev-name">
+    <div class="device-form-grid">
       <div class="fg"><label>Brand / Model</label><input type="text" id="dev-brand" placeholder="เช่น Apple iPhone 15 Pro"></div>
       <div class="fg"><label>Platform *</label>
         <select id="dev-platform">
@@ -2441,8 +2770,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <option value="other">Other</option>
         </select>
       </div>
-    </div>
-    <div class="form-grid" style="margin-bottom:10px">
+      <div class="fg"><label>Asset IT</label><input type="text" id="dev-asset-it" placeholder="เช่น IT-001"></div>
       <div class="fg"><label>Asset ACC</label><input type="text" id="dev-asset" placeholder="เช่น ACC-001"></div>
       <div class="fg"><label>Serial Number</label><input type="text" id="dev-serial" placeholder="S/N หรือ IMEI"></div>
       <div class="fg"><label>PBX Number</label><input type="text" id="dev-pbx-number" placeholder="เช่น PBX-001"></div>
@@ -2459,29 +2787,25 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <option value="">— ไม่ระบุ —</option>
         </select>
       </div>
-    </div>
-    <div class="form-grid" style="margin-bottom:10px">
       <div class="fg"><label>Assignee</label><input type="text" id="dev-owner" placeholder="ชื่อ-นามสกุล"></div>
       <div class="fg"><label>Position</label><input type="text" id="dev-position" placeholder="เช่น PMO, Developer"></div>
       <div class="fg"><label>QA Owner</label><input type="text" id="dev-qa-owner" placeholder="เช่น Best IT"></div>
       <div class="fg"><label>วันที่รับอุปกรณ์</label><input type="date" id="dev-assigned-date"></div>
       <div class="fg"><label>Return Date</label><input type="date" id="dev-return-date"></div>
       <div class="fg"><label>Link HW Memo</label>
-        <div style="display:flex;gap:6px;align-items:center">
-          <input type="text" id="dev-memo-ref" placeholder="เช่น ORB-2605-004" style="flex:1">
-          <button type="button" id="dev-view-source-memo-btn" class="btn-sm" style="display:none;white-space:nowrap" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly(this.dataset.memoNo)">View Source Memo</button>
+        <div class="device-memo-link-control">
+          <input type="text" id="dev-memo-ref" placeholder="เช่น ORB-2605-004">
+          <button type="button" id="dev-view-source-memo-btn" class="btn-sm" style="display:none" onclick="typeof openMemoReadOnly==='function'&&openMemoReadOnly(this.dataset.memoNo)">View Source Memo</button>
         </div>
       </div>
-    </div>
-    <div class="form-grid" style="margin-bottom:10px">
       <div class="fg"><label>Warranty Expiry</label><input type="date" id="dev-warranty"></div>
-      <div class="fg"><label>สถานะ</label><select id="dev-status"><option value="not_identified">Not Identified</option><option value="in-use">In Use</option><option value="available">Available</option><option value="maintenance">Maintenance</option><option value="retired">Retired</option></select></div>
-    </div>
-    <div class="fg" style="margin-bottom:16px">
+      <div class="fg"><label>สถานะ</label><select id="dev-status"><option value="available">Available</option><option value="in-use">In Use</option><option value="maintenance">Maintenance</option><option value="retired">Retired</option></select></div>
+      <div class="fg device-form-wide" style="margin-bottom:16px">
       <label>หมายเหตุ</label>
       <textarea id="dev-note" placeholder="รายละเอียดเพิ่มเติม..." style="min-height:52px"></textarea>
+      </div>
     </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">
+    <div class="pmo-modal-footer">
       <button class="btn-ghost" onclick="closeDeviceModal()">ยกเลิก</button>
       <button class="btn-primary" onclick="saveDevice()">บันทึก</button>
     </div>

@@ -1,0 +1,50 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const root = path.resolve(__dirname, '..');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+
+test('shared PMO modal classes are defined in the app and style reference', () => {
+  const index = read('index.html');
+  const style = read('style.css');
+
+  for (const css of [index, style]) {
+    assert.match(css, /\.pmo-modal-backdrop\s*\{/);
+    assert.match(css, /\.pmo-modal-card\s*\{/);
+    assert.match(css, /\.pmo-modal-header\s*\{/);
+    assert.match(css, /\.pmo-modal-title\s*\{/);
+    assert.match(css, /\.pmo-modal-close\s*\{/);
+    assert.match(css, /\.pmo-modal-footer\s*\{/);
+  }
+});
+
+test('owned add/edit modals use the shared modal shell classes', () => {
+  const index = read('index.html');
+  const budget = read('views/budget.js');
+
+  assert.match(index, /id="license-modal" class="pmo-modal-backdrop"/);
+  assert.match(index, /id="lic-modal-title">Add License/);
+  assert.match(index, /class="pmo-modal-card"[\s\S]*id="lic-modal-title"/);
+  assert.match(index, /class="pmo-modal-close" onclick="closeLicenseModal\(\)"/);
+
+  assert.match(index, /id="device-modal" class="pmo-modal-backdrop"/);
+  assert.match(index, /id="dev-modal-title">Add Device/);
+  assert.match(index, /class="pmo-modal-card"[\s\S]*id="dev-modal-title"/);
+  assert.match(index, /class="pmo-modal-close" onclick="closeDeviceModal\(\)"/);
+
+  assert.match(budget, /modal\.id = 'bpool-modal';[\s\S]*modal\.className = 'pmo-modal-backdrop';/);
+  assert.match(budget, /<div class="pmo-modal-card">[\s\S]*New'} Budget Pool/);
+  assert.match(budget, /<div class="pmo-modal-footer">[\s\S]*saveBudgetPool\(\)/);
+});
+
+test('Infrastructure / Other Add Spending modal keeps transaction shell and shared controls', () => {
+  const budget = read('views/budget.js');
+
+  assert.match(budget, /modal\.id = 'manual-expense-modal';[\s\S]*modal\.className = 'txn-modal-backdrop';/);
+  assert.match(budget, /<div class="card txn-modal-card txn-modal-card--form">/);
+  assert.match(budget, /<div class="pmo-modal-header">[\s\S]*Add'} Spending/);
+  assert.match(budget, /<button class="pmo-modal-close" onclick="document\.getElementById\('manual-expense-modal'\)\.remove\(\)">/);
+  assert.match(budget, /<div class="pmo-modal-footer">[\s\S]*saveManualExpenseFromModal\(\)/);
+});
