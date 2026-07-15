@@ -10,7 +10,7 @@ test('shared Resource-inspired UI layer is loaded and defines responsive contrac
   const index = read('index.html');
   const components = read('styles/components.css');
 
-  assert.match(index, /styles\/components\.css\?v=0\.2\.0/);
+  assert.match(index, /styles\/components\.css\?v=0\.3\.0/);
   assert.match(components, /--ui-control-h:\s*34px/);
   assert.match(components, /\.metric-row\s*\{[\s\S]*auto-fit/);
   assert.match(components, /@media \(max-width:\s*760px\)/);

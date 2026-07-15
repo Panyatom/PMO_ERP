@@ -3789,12 +3789,14 @@ function closeNotifications() {
 }
 
 const ACCESS_PAGE_TITLES = {
+  home:'Action Center',
   create:'Create Memo', pending:'Pending Approval', history:'Memo History', budget:'Budget & Spend',
   cost:'OPEX & Forecast', license:'License Management', device:'Device Management',
   resource:'Resource Management', log:'Transaction Log', settings:'Settings',
 };
 
 function canOpenPage(id) {
+  if(id === 'home') return true;
   if(typeof pmoCanViewPage !== 'function') return true;
   if(pmoCanViewPage(id)) return true;
   // Cost/OPEX is now presented inside Budget on main. Preserve legacy role
@@ -3867,7 +3869,9 @@ function swView(id, el, title) {
   if(id === 'log') { if(typeof renderTransactionLog==='function') renderTransactionLog(); }
   if(id === 'settings') { if(typeof renderSettings==='function') renderSettings(); }
   if(id === 'resource') { if(typeof renderResource==='function') renderResource(); }
+  if(id === 'home') { if(typeof renderActionCenter==='function') renderActionCenter(); }
   applyAccessVisibility();
+  if(typeof workspaceAfterViewChange === 'function') workspaceAfterViewChange(id, title);
   return true;
 }
 function toggleMemoSub(el) {

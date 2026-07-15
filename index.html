@@ -1259,7 +1259,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 .cost-tab-panel { border:1px solid rgba(0,0,0,0.12); border-top:none; border-radius:0 var(--chrome-control-r) var(--chrome-control-r) var(--chrome-control-r); padding:14px; background:#FFFFFF; margin-bottom:14px; }
 </style>
 <link rel="stylesheet" href="theme.css?v=0.1.15">
-<link rel="stylesheet" href="styles/components.css?v=0.2.0">
+<link rel="stylesheet" href="styles/components.css?v=0.3.0">
 <script>
   (function () {
     try {
@@ -1288,6 +1288,10 @@ svg.icon { display: inline-block; vertical-align: middle; }
     </div>
 
     <div class="sb-nav">
+      <div class="sb-item workspace-home-nav" onclick="swView('home',this,'Action Center')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><path d="M14 17.5h7M17.5 14v7"/></svg>
+        Action Center
+      </div>
       <div class="sb-section">Memo</div>
       <div class="sb-item active" id="nav-memo" onclick="toggleMemoSub(this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
@@ -1386,6 +1390,11 @@ svg.icon { display: inline-block; vertical-align: middle; }
     </div>
 
     <div class="content">
+
+      <!-- Action Center is role-aware and rendered by workspace_experience.js. -->
+      <div id="view-home" class="view">
+        <div id="action-center-root" aria-live="polite"></div>
+      </div>
 
       <!-- ════ CREATE ════ -->
       <div id="view-create" class="view active">
@@ -2612,6 +2621,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 <script src="views/resource_flow.js"></script>
 <script src="views/resource_module.js?v=0.5.33"></script>
 <script src="views/log.js"></script>
+<script src="views/workspace_experience.js?v=0.1.0"></script>
 <style>
   #resource-detail-drawer { transform:translateX(100%);visibility:hidden;z-index:1100; }
   #resource-detail-drawer.open { transform:translateX(0);visibility:visible; }
@@ -2619,7 +2629,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
   .badge-teal   { background:#CCFBF1; color:#115E59; }
   .badge-yellow { background:#FEF9C3; color:#854D0E; }
 </style>
-<script>initApp();</script>
+<script>initApp(); if(typeof initWorkspaceExperience==='function') initWorkspaceExperience();</script>
 
 <!-- Approve Modal -->
 <div id="approve-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:300;align-items:center;justify-content:center">
@@ -2690,7 +2700,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
 </div>
 
 <!-- Detail Modal -->
-<div id="detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:300;align-items:center;justify-content:center">
+<div id="detail-modal" class="pmo-detail-drawer-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:300;align-items:center;justify-content:center">
   <div style="background:var(--surface);border-radius:var(--r);padding:24px;width:640px;max-width:95vw;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div style="font-size:15px;font-weight:700">Memo Detail</div>
