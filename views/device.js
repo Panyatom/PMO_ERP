@@ -618,7 +618,18 @@ function renderDeviceSummaries(devices) {
 
 // ── Main render ──
 // ── Device Bulk Import / Template ──────────────────────────────
+function deviceHasPermission(permission) {
+  return typeof pmoCan !== 'function' || pmoCan(permission);
+}
+
+function requireDevicePermission(permission) {
+  if(deviceHasPermission(permission)) return true;
+  alert('บัญชีนี้ไม่มีสิทธิ์ดำเนินการกับข้อมูลอุปกรณ์');
+  return false;
+}
+
 function downloadDeviceTemplate() {
+  if(!requireDevicePermission('device.export')) return;
   const headers = ['name','brand','type','platform','serial','asset_tag',
     'owner','project','warranty','note'];
   const example = ['MacBook Pro 14"','Apple','laptop','mac',
@@ -628,6 +639,7 @@ function downloadDeviceTemplate() {
 }
 
 async function importDeviceBulk(file) {
+  if(!requireDevicePermission('device.manage')) return;
   if (!file) {
     const input = document.createElement('input');
     input.type = 'file';
@@ -863,6 +875,7 @@ function _renderDeviceTable() {
 
   const visibleDevices = devices.slice(0, _devVisibleCount);
   const remaining = devices.length - _devVisibleCount;
+  const canManageDevices = deviceHasPermission('device.manage');
 
   tbody.innerHTML = visibleDevices.map(d => {
     const statusB = deviceStatusBadge(d.status);
@@ -892,8 +905,8 @@ function _renderDeviceTable() {
       <td style="text-align:center"><span class="badge ${statusB.cls}">${esc(statusB.label)}</span></td>
       <td style="font-size:11px;color:var(--text-3)">${updDate}</td>
       <td style="text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
-        <button class="btn-sm" onclick="event.stopPropagation();openDeviceModal('${esc(String(d.id))}')" style="padding:3px 7px;font-size:11px" title="แก้ไข">✎</button>
-        <button class="btn-sm" onclick="event.stopPropagation();deleteDevice('${esc(String(d.id))}')" style="padding:3px 7px;font-size:11px;color:var(--red)" title="ลบ">✕</button>
+        ${canManageDevices ? `<button class="btn-sm" onclick="event.stopPropagation();openDeviceModal('${esc(String(d.id))}')" style="padding:3px 7px;font-size:11px" title="แก้ไข">✎</button>
+        <button class="btn-sm" onclick="event.stopPropagation();deleteDevice('${esc(String(d.id))}')" style="padding:3px 7px;font-size:11px;color:var(--red)" title="ลบ">✕</button>` : '<span style="font-size:10px;color:var(--text-3)">View</span>'}
       </td>
     </tr>`;
   }).join('');
@@ -934,6 +947,7 @@ function devLoadMore() {
 
 // ── Modal ──
 function openDeviceModal(id) {
+  if(!requireDevicePermission('device.manage')) return;
   document.getElementById('device-modal').style.display = 'flex';
   const setVal = (elId, v) => { const el=document.getElementById(elId); if(el) el.value=v||''; };
 
@@ -1021,6 +1035,7 @@ function findExistingDevice(devices, data) {
 }
 
 function saveDevice() {
+  if(!requireDevicePermission('device.manage')) return;
   const name = document.getElementById('dev-name').value.trim();
   if(!name) { alert('กรุณากรอก Device Name'); return; }
   const editId = document.getElementById('dev-edit-id').value;
@@ -1103,6 +1118,7 @@ function saveDevice() {
 }
 
 function deleteDevice(id) {
+  if(!requireDevicePermission('device.manage')) return;
   const d = loadDevices().find(dev => String(dev.id) === String(id));
   if(!d) return;
   if(!confirm(`ลบ "${d.name}" ออกจากระบบ?`)) return;
@@ -1122,6 +1138,7 @@ function deleteDevice(id) {
 
 // ── Export CSV ──
 function exportDeviceCsv() {
+  if(!requireDevicePermission('device.export')) return;
   // Functional audit fix: export the same filtered set _renderDeviceTable()
   // currently shows (search + platform/type/status/project/company), not the
   // full unfiltered registry — see MASTER_SPEC.md "Export Rules".
@@ -1142,6 +1159,7 @@ function exportDeviceCsv() {
 }
 
 function exportPurchaseOrdersCSV() {
+  if(!requireDevicePermission('device.export')) return;
   // Device Management D2 (Part 2) — export exactly the filtered/visible rows,
   // not the full unfiltered list (MASTER_SPEC.md "Export Rules").
   const pos = _filteredPOs(loadPurchaseOrders());
@@ -1170,6 +1188,8 @@ function openDeviceDetail(id) {
   const typeLbl = TYPE_LABEL[d.type||'other'] || d.type || '—';
   const statusB = deviceStatusBadge(d.status);
   const typeIcon = { mobile:'📱', tablet:'📟', laptop:'💻', other:'🖥' }[d.type||'other'] || '🖥';
+  const canManageDevices = deviceHasPermission('device.manage');
+  const canInspectDevices = deviceHasPermission('device.inspect');
 
   let panel = document.getElementById('dev-detail-modal');
   if(!panel) {
@@ -1192,7 +1212,7 @@ function openDeviceDetail(id) {
       </div>
       <div style="display:flex;gap:6px;align-items:center">
         <span class="badge ${statusB.cls}">${esc(statusB.label)}</span>
-        <button class="btn-sm" onclick="document.getElementById('dev-detail-modal').style.display='none';openDeviceModal('${idStr}')" style="font-size:11px;padding:3px 8px">✎ Edit</button>
+        ${canManageDevices ? `<button class="btn-sm" onclick="document.getElementById('dev-detail-modal').style.display='none';openDeviceModal('${idStr}')" style="font-size:11px;padding:3px 8px">✎ Edit</button>` : ''}
         <button class="btn-sm" onclick="document.getElementById('dev-detail-modal').style.display='none'" style="font-size:11px;padding:3px 8px">✕</button>
       </div>
     </div>
@@ -1235,14 +1255,14 @@ function openDeviceDetail(id) {
           ${d.photoUrl
             ? `<a href="${esc(d.photoUrl)}" target="_blank" rel="noopener"><img src="${esc(d.photoUrl)}" style="width:80px;height:80px;border-radius:var(--r-sm);object-fit:cover;border:1px solid var(--border)" title="คลิกเพื่อดูขนาดเต็ม"></a>`
             : `<div style="width:80px;height:80px;border-radius:var(--r-sm);border:1px dashed var(--border-md);background:var(--bg);display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:11px">No photo</div>`}
-          <div>
+          ${canInspectDevices ? `<div>
             <label style="cursor:pointer">
               <input type="file" accept="image/*" style="display:none" onchange="uploadDevicePhoto('${idStr}', this)">
               <span class="btn-sm" style="font-size:11px;padding:4px 10px;display:inline-block">📷 Upload photo</span>
             </label>
             ${d.photoUrl ? `<button class="btn-sm" style="font-size:11px;padding:4px 10px;color:var(--red);margin-left:4px" onclick="removeDevicePhoto('${idStr}')">✕ Remove</button>` : ''}
             <div style="font-size:10px;color:var(--text-3);margin-top:4px">JPG, PNG · max 5MB<br>Photo replaces previous</div>
-          </div>
+          </div>` : '<div style="font-size:11px;color:var(--text-3)">Photo is read only.</div>'}
         </div>
       </div>
 
@@ -1259,6 +1279,7 @@ function infoCell(label, value) {
 }
 
 async function uploadDevicePhoto(id, input) {
+  if(!requireDevicePermission('device.inspect')) return;
   if(!input.files?.length) return;
   const file = input.files[0];
   if(file.size > 5 * 1024 * 1024) { alert('ไฟล์ใหญ่เกิน 5MB'); return; }
@@ -1299,6 +1320,7 @@ async function uploadDevicePhoto(id, input) {
 }
 
 async function removeDevicePhoto(id) {
+  if(!requireDevicePermission('device.inspect')) return;
   const device = loadDevices().find(d => String(d.id) === String(id));
   if(!device?.photoUrl || !confirm('ลบรูปอุปกรณ์นี้หรือไม่?')) return;
   const marker = '/storage/v1/object/public/device-photos/';
@@ -1552,6 +1574,11 @@ function cancelPurchaseOrdersForVoidedMemo(memoNo, reason) {
 
 function poActionBtn(po) {
   const s = poEffectiveStatus(po);
+  if(!deviceHasPermission('device.manage')) {
+    return s === 'fulfilled'
+      ? `<button class="btn-sm" style="font-size:11px;color:var(--text-3)" onclick="viewDevicesForPO('${esc(po.id)}')">View devices</button>`
+      : '<span style="font-size:10px;color:var(--text-3)">View only</span>';
+  }
   if (s === 'pending_order')
     return `<button class="btn-sm" style="font-size:11px;background:#185FA5;color:#fff;border-color:transparent" onclick="advancePOStatus('${esc(po.id)}','ordered')">Mark ordered</button>`;
   if (s === 'ordered')
@@ -1567,6 +1594,7 @@ function poActionBtn(po) {
 }
 
 function advancePOStatus(poId, newStatus) {
+  if(!requireDevicePermission('device.manage')) return;
   const pos = loadPurchaseOrders();
   const po = pos.find(p => p.id === poId);
   if (!po) return;
@@ -1654,6 +1682,7 @@ function _renderPOTable() {
 
 // ── Mark Arrived Modal ──
 function openMarkArrivedModal(poId) {
+  if(!requireDevicePermission('device.manage')) return;
   const po = loadPurchaseOrders().find(p => p.id === poId);
   if (!po) return;
   if (!['awaiting', 'partial_arrived'].includes(po.status)) {
@@ -1671,6 +1700,7 @@ function openMarkArrivedModal(poId) {
 function closeMarkArrivedModal() { document.getElementById('mark-arrived-modal').style.display = 'none'; }
 
 function submitMarkArrived() {
+  if(!requireDevicePermission('device.manage')) return;
   const poId    = document.getElementById('mark-arrived-po-id').value;
   const qty     = parseInt(document.getElementById('mark-arrived-qty').value) || 0;
   const serialsRaw = document.getElementById('mark-arrived-serials').value;

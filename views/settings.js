@@ -4,14 +4,63 @@ const SETTINGS_KEY = 'orbit-pmo-settings-v1';
 let SETTINGS_ACTIVE_TAB = 'general';
 let SETTINGS_DIRTY_BASELINE = '';
 
-const DEFAULT_PROJECTS = ['AOA-MP', 'TTB', 'Geo9', 'Release 2.1', 'Release 3'];
+const SETTINGS_ACCESS_API = (() => {
+  if(typeof globalThis !== 'undefined' && globalThis.PMO_ACCESS) return globalThis.PMO_ACCESS;
+  if(typeof module === 'object' && module.exports && typeof require === 'function') return require('../access_control.js');
+  return null;
+})();
+const SETTINGS_FUNCTIONAL_ROLES = SETTINGS_ACCESS_API?.ROLE_TEMPLATES || {};
+const SETTINGS_PAGE_DEFINITIONS = SETTINGS_ACCESS_API?.PAGE_DEFINITIONS || [];
+
+const SETTINGS_PROJECT_COLORS = ['#8dd7cf', '#f7c6d9', '#ffd166', '#a7c7e7', '#cdb4db', '#b7e4c7', '#f4a261', '#90dbf4'];
+const DEFAULT_PROJECTS = [
+  'ACC',
+  'AI',
+  'AOA',
+  'AOA-MP',
+  'App Support-AOA',
+  'App Support-DSC',
+  'App Support-EV',
+  'App Support-MP',
+  'App Support-SS',
+  'App Support-VBI',
+  'BD',
+  'BD COE',
+  'Data COE',
+  'Data VB',
+  'Estimation Committee',
+  'EV',
+  'Geo9',
+  'Internal Project',
+  'LineOA',
+  'MA-AOA',
+  'MA-AOA AMZ',
+  'MA-AOA VB',
+  'MA-DSC',
+  'MA-EV',
+  'MA-MP',
+  'MA-NLMS',
+  'MA-NLMS&Blueplus',
+  'MA-SS',
+  'MA-VBI',
+  'Merchant',
+  'NLMS',
+  'OR',
+  'PMO Office',
+  'Release 2.1',
+  'Release 3',
+  'Solution Committee',
+  'SS',
+  'TTB',
+  'VB',
+];
 const DEFAULT_PROJECT_MASTER = DEFAULT_PROJECTS.map((name, index) => ({
   id: `project-${index + 1}`,
   code: name,
   name,
   status: 'active',
   owner: '',
-  color: ['#8dd7cf', '#f7c6d9', '#ffd166', '#a7c7e7', '#cdb4db'][index % 5],
+  color: SETTINGS_PROJECT_COLORS[index % SETTINGS_PROJECT_COLORS.length],
   note: '',
 }));
 const DEFAULT_RESOURCE_LEVELS = ['Junior','Mid','Senior','Lead','Manager'];
@@ -160,6 +209,7 @@ const DEFAULT_MEMBERS = [
     name: 'Chuen K.',
     email: 'chuen.k@orbitdigital.co.th',
     role: 'pmo',
+    roles: ['pmo_admin'],
     projectScope: ['all'],
     active: true,
   },
@@ -168,6 +218,7 @@ const DEFAULT_MEMBERS = [
     name: 'AOA Requester',
     email: 'requester.aoa@orbitdigital.co.th',
     role: 'user',
+    roles: ['employee'],
     projectScope: ['AOA-MP'],
     active: true,
   },
@@ -176,6 +227,7 @@ const DEFAULT_MEMBERS = [
     name: 'BBIK Recruiter',
     email: 'bbik.recruiter@bbik.com',
     role: 'bbik',
+    roles: ['recruiter'],
     projectScope: ['all'],
     active: true,
   },
@@ -187,6 +239,9 @@ const DEFAULT_SETTINGS = {
   people: DEFAULT_PEOPLE,
   titles: DEFAULT_TITLES,
   members: DEFAULT_MEMBERS,
+  access: {
+    rolePages: SETTINGS_ACCESS_API?.defaultRolePages ? SETTINGS_ACCESS_API.defaultRolePages() : {},
+  },
   defaultReviewer: { name: 'Chuen K.', title: 'PMO' },
   defaultApprover: { name: '', title: '' },
   resource: {
@@ -226,6 +281,14 @@ function cleanProjectId(value, fallback='') {
   return raw.replace(/[^A-Za-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || `project-${Date.now().toString(36)}`;
 }
 
+function settingsProjectFallbackColor(projectName) {
+  const text = String(projectName || '').trim();
+  if(!text) return SETTINGS_PROJECT_COLORS[0];
+  let hash = 0;
+  for(let i = 0; i < text.length; i++) hash = ((hash * 31) + text.charCodeAt(i)) >>> 0;
+  return SETTINGS_PROJECT_COLORS[hash % SETTINGS_PROJECT_COLORS.length];
+}
+
 function normalizeProjectMasterItem(project, index=0) {
   if(typeof project === 'string') {
     const name = project.trim();
@@ -235,7 +298,7 @@ function normalizeProjectMasterItem(project, index=0) {
       name,
       status: 'active',
       owner: '',
-      color: ['#8dd7cf', '#f7c6d9', '#ffd166', '#a7c7e7', '#cdb4db'][index % 5],
+      color: settingsProjectFallbackColor(name) || SETTINGS_PROJECT_COLORS[index % SETTINGS_PROJECT_COLORS.length],
       note: '',
     };
   }
@@ -246,7 +309,7 @@ function normalizeProjectMasterItem(project, index=0) {
     name,
     status: ['active','inactive','archived'].includes(String(project?.status || '').toLowerCase()) ? String(project.status).toLowerCase() : 'active',
     owner: String(project?.owner || project?.pmOwner || '').trim(),
-    color: normalizeProjectColor(project?.color, ['#8dd7cf', '#f7c6d9', '#ffd166', '#a7c7e7', '#cdb4db'][index % 5]),
+    color: normalizeProjectColor(project?.color, settingsProjectFallbackColor(name) || SETTINGS_PROJECT_COLORS[index % SETTINGS_PROJECT_COLORS.length]),
     note: String(project?.note || '').trim(),
   };
 }
@@ -264,6 +327,51 @@ function normalizeProjectMaster(list, fallbackProjects=DEFAULT_PROJECTS) {
     byKey.set(key, project);
   });
   return [...byKey.values()];
+}
+
+function projectCodeMasterRowsForSettings() {
+  try {
+    const rows = JSON.parse(localStorage.getItem('orbit-pmo-project-codes-v1') || '[]');
+    return Array.isArray(rows) ? rows : [];
+  } catch(e) {
+    return [];
+  }
+}
+
+function mergeProjectMasterWithProjectCodes(projectMaster) {
+  const list = normalizeProjectMaster(projectMaster);
+  const byName = new Map(list.map(project => [String(project.name || project.code || '').trim().toLowerCase(), project]));
+  const ensureProject = (name, patch={}) => {
+    const cleanName = String(name || '').trim();
+    if(!cleanName) return null;
+    const key = cleanName.toLowerCase();
+    const existing = byName.get(key);
+    if(existing) {
+      if(!existing.owner && patch.owner) existing.owner = patch.owner;
+      return existing;
+    }
+    const item = normalizeProjectMasterItem({
+      name: cleanName,
+      owner: patch.owner || '',
+      color: patch.color || settingsProjectFallbackColor(cleanName),
+      note: patch.note || '',
+      status: patch.status || 'active',
+    }, list.length);
+    list.push(item);
+    byName.set(key, item);
+    return item;
+  };
+  DEFAULT_PROJECTS.forEach(name => ensureProject(name));
+  projectCodeMasterRowsForSettings().forEach(row => {
+    const name = String(row?.project || row?.Project || '').trim();
+    ensureProject(name, {
+      owner: row.pmOwner || row.pm || row['PM Owner'] || '',
+      color: settingsProjectFallbackColor(name),
+      note: 'Synced from Project Code',
+      status: 'active',
+    });
+  });
+  return list;
 }
 
 function activeProjectNamesFromMaster(projectMaster) {
@@ -296,7 +404,10 @@ function mergeRoleConfig(rawRoles) {
 function normalizeMember(member, index=0) {
   const name = String(member?.name || '').trim();
   const email = String(member?.email || '').trim().toLowerCase();
-  const role = DEFAULT_RESOURCE_ROLE_CONFIG[member?.role] ? member.role : 'user';
+  const roles = SETTINGS_ACCESS_API?.normalizeRoleKeys
+    ? SETTINGS_ACCESS_API.normalizeRoleKeys(member?.roles?.length ? member.roles : member?.role, 'employee')
+    : [DEFAULT_RESOURCE_ROLE_CONFIG[member?.role] ? member.role : 'user'];
+  const role = SETTINGS_ACCESS_API?.legacyRoleFor ? SETTINGS_ACCESS_API.legacyRoleFor(roles[0]) : (DEFAULT_RESOURCE_ROLE_CONFIG[member?.role] ? member.role : 'user');
   const rawScope = Array.isArray(member?.projectScope) ? member.projectScope : String(member?.projectScope || '').split(',');
   const projectScope = rawScope.map(p => String(p).trim()).filter(Boolean);
   return {
@@ -304,6 +415,7 @@ function normalizeMember(member, index=0) {
     name,
     email,
     role,
+    roles,
     projectScope: projectScope.length ? [...new Set(projectScope)] : ['all'],
     active: member?.active !== false,
   };
@@ -329,6 +441,13 @@ function normalizeSettings(raw) {
       start: Math.max(1, Math.floor(Number(s.resource?.employeeCodeFormats?.secondment?.start || base.resource.employeeCodeFormats.secondment.start || 1))),
     },
   };
+  const defaultRolePages = SETTINGS_ACCESS_API?.defaultRolePages ? SETTINGS_ACCESS_API.defaultRolePages() : {};
+  const rolePages = Object.fromEntries(Object.keys(SETTINGS_FUNCTIONAL_ROLES).map(role => {
+    const configured = s.access?.rolePages?.[role];
+    const pages = Array.isArray(configured) ? configured : (defaultRolePages[role] || []);
+    const knownPages = new Set(SETTINGS_PAGE_DEFINITIONS.map(([id]) => id));
+    return [role, [...new Set(pages.filter(page => knownPages.has(page)))]];
+  }));
   return {
     ...base,
     ...s,
@@ -339,6 +458,11 @@ function normalizeSettings(raw) {
     members: members.map(normalizeMember).filter(m => m.name || m.email),
     defaultReviewer: { ...base.defaultReviewer, ...(s.defaultReviewer || {}) },
     defaultApprover: { ...base.defaultApprover, ...(s.defaultApprover || {}) },
+    access: {
+      ...base.access,
+      ...(s.access || {}),
+      rolePages,
+    },
     resource: {
       ...base.resource,
       ...(s.resource || {}),
@@ -382,9 +506,20 @@ function ensureProjectInSettingsMaster(projectName, patch={}) {
     owner: patch.owner || '',
     note: patch.note || '',
     status: patch.status || 'active',
+    color: patch.color || settingsProjectFallbackColor(name),
   }, list.length);
   storeSettings({ ...current, projectMaster: [...list, item] });
   return item;
+}
+
+function syncProjectMasterFromProjectCodes() {
+  const current = collectSettingsFromDom ? collectSettingsFromDom() : loadSettings();
+  const merged = mergeProjectMasterWithProjectCodes(current.projectMaster);
+  const next = storeSettings({ ...current, projectMaster: merged });
+  refreshSettingsConsumers();
+  renderSettings('general');
+  showSettingsToast(`Project Master synced: ${merged.length} projects.`, 'ok');
+  return next;
 }
 
 function settingsOptionList(items, selected, includeBlank=true) {
@@ -428,6 +563,7 @@ function refreshResourceProjectFilter(s=loadSettings()) {
 
 function refreshSettingsConsumers() {
   initSettings();
+  if(typeof applyAccessVisibility === 'function') applyAccessVisibility();
   if(typeof renderResource === 'function') renderResource();
   if(typeof renderCost === 'function') renderCost();
   if(typeof renderPendingMemos === 'function') renderPendingMemos();
@@ -450,6 +586,7 @@ function settingsEffectiveAccess(session) {
   if(!member) return null;
   return {
     role: member.role,
+    roles: member.roles,
     project: member.projectScope.includes('all') ? '' : member.projectScope[0] || '',
     projectScope: member.projectScope,
     member,
@@ -525,9 +662,9 @@ function animateSettingsControl(event) {
 }
 
 function settingsRoleOptions(selected) {
-  const roles = loadSettings().resource.roles;
-  return Object.entries(roles).map(([key, role]) =>
-    `<option value="${esc(key)}" ${key === selected ? 'selected' : ''}>${esc(role.label || key)}</option>`
+  const selectedRoles = SETTINGS_ACCESS_API?.normalizeRoleKeys ? SETTINGS_ACCESS_API.normalizeRoleKeys(selected, 'employee') : [selected || 'user'];
+  return Object.entries(SETTINGS_FUNCTIONAL_ROLES).map(([key, role]) =>
+    `<option value="${esc(key)}" ${selectedRoles.includes(key) ? 'selected' : ''}>${esc(role.label || key)}</option>`
   ).join('');
 }
 
@@ -565,6 +702,7 @@ function addSettingsMember() {
     name: '',
     email: '',
     role: 'user',
+    roles: ['employee'],
     projectScope: [loadSettings().projects[0] || 'all'],
     active: true,
   }, loadSettings().projects, list.children.length));
@@ -595,8 +733,47 @@ function addSettingsProjectRow(project={}) {
   markSettingsDirty();
 }
 
+function settingsProjectResourceUsage(projectName) {
+  const name = String(projectName || '').trim().toLowerCase();
+  if(!name) return { count: 0, names: [] };
+  const people = new Map();
+  const addPerson = label => {
+    const clean = String(label || '').trim();
+    if(clean) people.set(clean.toLowerCase(), clean);
+  };
+  const resourceLabel = record => (
+    typeof resourcePersonName === 'function'
+      ? resourcePersonName(record)
+      : (record?.resourceName || record?.resourceNameEn || record?.resourceNameTh || record?.requesterName || record?.position || record?.id)
+  );
+  const resources = typeof loadResources === 'function' ? loadResources() : [];
+  resources.forEach(record => {
+    const isCurrent = ['filled','document'].includes(String(record?.status || '').toLowerCase());
+    if(!isCurrent) return;
+    if(String(record?.project || '').trim().toLowerCase() === name) addPerson(resourceLabel(record));
+    (record?.projectCodes || []).forEach(code => {
+      if(String(code?.project || '').trim().toLowerCase() === name) addPerson(resourceLabel(record));
+    });
+  });
+  const masters = typeof loadResourceMaster === 'function' ? loadResourceMaster() : [];
+  masters.forEach(person => {
+    const status = String(person?.status || 'active').toLowerCase();
+    if(status === 'inactive' || status === 'offboarded') return;
+    if(String(person?.currentProject || '').trim().toLowerCase() === name) addPerson(person.resourceName || person.resourceNameEn || person.resourceNameTh || person.employeeCode);
+  });
+  const names = [...people.values()];
+  return { count: names.length, names };
+}
+
 function removeSettingsProjectRow(button) {
   const row = button?.closest?.('[data-project-row]');
+  const projectName = row?.querySelector?.('[data-project-field="name"]')?.value || '';
+  const usage = settingsProjectResourceUsage(projectName);
+  if(usage.count > 0) {
+    const sample = usage.names.slice(0, 3).join(', ');
+    showSettingsToast(`Cannot remove ${projectName}: ${usage.count} active employee${usage.count === 1 ? '' : 's'} still assigned${sample ? ` (${sample})` : ''}.`, 'error');
+    return;
+  }
   if(row) row.remove();
   markSettingsDirty();
 }
@@ -608,7 +785,7 @@ function renderMemberRow(member, projects, index) {
       <div class="settings-member-status ${member.active ? 'is-active' : ''}">${esc(activeLabel)}</div>
       <input class="ri" data-member-field="name" value="${esc(member.name)}" placeholder="Name">
       <input class="ri" data-member-field="email" value="${esc(member.email)}" placeholder="email@company.com">
-      <select class="ri" data-member-field="role">${settingsRoleOptions(member.role)}</select>
+      <select class="ri" data-member-field="roles" multiple size="3" aria-label="Functional roles">${settingsRoleOptions(member.roles || member.role)}</select>
       <select class="ri" data-member-field="projectScope" multiple size="2">${settingsProjectScopeOptions(projects, member.projectScope)}</select>
       <label class="settings-switch" title="Active member" data-settings-toggle>
         <input data-member-field="active" type="checkbox" ${member.active ? 'checked' : ''}>
@@ -629,11 +806,11 @@ function renderMembersPanel(s) {
     </div>
     <section class="settings-card">
       <div class="settings-panel-head">
-        <div><h3>Members & Access</h3><p>Members define the effective role and project scope for local Resource access.</p></div>
+        <div><h3>Members & Access</h3><p>Assign one or more functional roles. Combined roles receive the union of their visible pages.</p></div>
         <button class="btn-sm" type="button" onclick="addSettingsMember()">Add member</button>
       </div>
       <div class="settings-member-head">
-        <span>Status</span><span>Name</span><span>Email</span><span>Role</span><span>Project scope</span><span>Active</span><span></span>
+        <span>Status</span><span>Name</span><span>Email</span><span>Roles</span><span>Project scope</span><span>Active</span><span></span>
       </div>
       <div id="settings-members-list" class="settings-members-list">
         ${s.members.map((member, index) => renderMemberRow(member, s.projects, index)).join('')}
@@ -656,12 +833,48 @@ function readRolePermissions(roleKey) {
   return permissions;
 }
 
-function renderPermissionMatrix(s) {
-  const roles = s.resource.roles;
+function readRolePages(roleKey, fallback=[]) {
+  const toggles = [...document.querySelectorAll(`.settings-matrix-toggle[data-role-page="${roleKey}"]`)];
+  if(!toggles.length) return [...fallback];
+  return toggles
+    .filter(toggle => toggle.getAttribute('aria-pressed') === 'true')
+    .map(toggle => toggle.dataset.page)
+    .filter(Boolean);
+}
+
+function renderPageVisibilityMatrix(s) {
+  const roleEntries = Object.entries(SETTINGS_FUNCTIONAL_ROLES);
   return `
     <section class="settings-card settings-matrix-card">
       <div class="settings-panel-head">
-        <div><h3>Roles & Permissions</h3><p>Edit role scope, feature permissions, visible tabs, and status transitions from one matrix.</p></div>
+        <div><h3>Page Visibility by Functional Role</h3><p>Members can hold multiple roles. A page is visible when at least one assigned role allows it.</p></div>
+      </div>
+      <div class="settings-matrix-wrap">
+        <table class="settings-matrix settings-page-matrix">
+          <colgroup><col class="settings-matrix-feature-col">${roleEntries.map(() => '<col class="settings-matrix-role-col">').join('')}</colgroup>
+          <thead><tr><th>Page</th>${roleEntries.map(([key, role]) => `<th title="${esc(role.description || '')}">${esc(role.shortLabel || role.label || key)}</th>`).join('')}</tr></thead>
+          <tbody>
+            ${SETTINGS_PAGE_DEFINITIONS.map(([page, label]) => `
+              <tr>
+                <td><strong>${esc(label)}</strong><span>${esc(page)}</span></td>
+                ${roleEntries.map(([roleKey, role]) => {
+                  const enabled = (s.access?.rolePages?.[roleKey] || []).includes(page);
+                  return `<td><button class="settings-matrix-toggle" type="button" data-settings-toggle data-role-page="${esc(roleKey)}" data-page="${esc(page)}" aria-pressed="${enabled ? 'true' : 'false'}" aria-label="${esc((role.label || roleKey) + ' can view ' + label)}"><span class="settings-check-input" aria-hidden="true"></span><span data-settings-toggle-label>${enabled ? 'On' : 'Off'}</span></button></td>`;
+                }).join('')}
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+function renderPermissionMatrix(s) {
+  const roles = s.resource.roles;
+  return `
+    ${renderPageVisibilityMatrix(s)}
+    <section class="settings-card settings-matrix-card">
+      <div class="settings-panel-head">
+        <div><h3>Resource Workflow Permissions</h3><p>Legacy Resource workflow profiles remain configurable for requester, PMO, and recruiter transitions.</p></div>
       </div>
       <div class="settings-matrix-wrap">
         <table class="settings-matrix">
@@ -782,7 +995,10 @@ function renderGeneralPanel(s) {
     <section class="settings-card">
       <div class="settings-panel-head">
         <div><h3>Project Master</h3><p>Organization-level projects used for employee mapping. One project can own many Project Codes.</p></div>
-        <button class="btn-sm" type="button" onclick="addSettingsProjectRow()">+ Add Project</button>
+        <div class="settings-head-actions">
+          <button class="btn-sm" type="button" onclick="syncProjectMasterFromProjectCodes()">Sync from Project Code</button>
+          <button class="btn-sm" type="button" onclick="addSettingsProjectRow()">+ Add Project</button>
+        </div>
       </div>
       <div class="settings-project-head">
         <span>Project name</span><span>Status</span><span>Owner</span><span>Color</span><span>Note</span><span></span>
@@ -965,8 +1181,8 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
   const s = loadSettings();
   root.innerHTML = `
     <style>
-      .settings-shell{max-width:1220px;margin:0 auto;display:grid;grid-template-columns:220px minmax(0,1fr);gap:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);overflow:hidden;min-height:calc(100vh - 106px)}
-      .settings-rail{border-right:1px solid var(--border);background:color-mix(in srgb,var(--surface) 96%,var(--blue-50));padding:18px 10px;display:flex;flex-direction:column;gap:18px}
+      .settings-shell{width:100%;max-width:none;margin:0;display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px;background:transparent;border:0;border-radius:0;box-shadow:none;overflow:visible;min-height:calc(100vh - 92px)}
+      .settings-rail{position:sticky;top:0;align-self:start;min-height:calc(100vh - 92px);border:1px solid var(--border);border-radius:12px;background:color-mix(in srgb,var(--surface) 96%,var(--blue-50));box-shadow:0 10px 30px color-mix(in srgb,var(--text) 5%,transparent);padding:16px 10px;display:flex;flex-direction:column;gap:18px}
       .settings-profile{display:flex;align-items:center;gap:10px;padding:4px 8px 14px;border-bottom:1px solid var(--border)}
       .settings-avatar{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,var(--blue-50),var(--green-50));color:var(--blue-800);font-weight:800;font-size:12px;border:1px solid var(--blue-100)}
       .settings-profile strong{display:block;font-size:12px;color:var(--text);line-height:1.2}.settings-profile span{display:block;font-size:10px;color:var(--text-3);line-height:1.3;margin-top:2px}
@@ -974,13 +1190,13 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
       .settings-nav-item{display:flex;align-items:center;gap:8px;min-height:34px;border-radius:8px;padding:7px 9px;color:var(--text-2);text-decoration:none;font-size:12px;font-weight:600;border:1px solid transparent;background:transparent;text-align:left;font-family:inherit;cursor:pointer;width:100%;transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s cubic-bezier(.22,1,.36,1),box-shadow .16s ease}
       .settings-nav-item:hover{background:var(--surface-2);color:var(--text);transform:translateX(2px)}.settings-nav-item:active{transform:translateX(2px) scale(.985)}.settings-nav-item.active{background:var(--blue-50);color:var(--blue-800);border-color:var(--blue-100);box-shadow:0 8px 20px color-mix(in srgb,var(--blue) 10%,transparent)}
       .settings-nav-icon{width:16px;height:16px;display:inline-grid;place-items:center;color:currentColor;flex:0 0 auto}.settings-nav-icon svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-      .settings-main{min-width:0;padding:22px 22px 78px;background:color-mix(in srgb,var(--surface) 88%,var(--bg))}
-      .settings-top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:16px;border-bottom:1px solid var(--border);margin-bottom:18px}
+      .settings-main{min-width:0;padding:0 0 28px;background:transparent}
+      .settings-top{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 14px;margin-bottom:14px;background:color-mix(in srgb,var(--surface) 94%,transparent);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 24px color-mix(in srgb,var(--text) 5%,transparent);backdrop-filter:blur(16px)}
       .settings-crumb{font-size:12px;font-weight:700;color:var(--text)}.settings-crumb span{color:var(--text-3);font-weight:500;margin-left:5px}.settings-top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;align-items:center}
       .settings-dirty{font-size:11px;color:var(--amber);font-weight:700;display:none}.settings-dirty.is-visible{display:inline;animation:settings-dirty-in .2s cubic-bezier(.22,1,.36,1) both}
-      .settings-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;box-shadow:0 1px 0 rgba(255,255,255,.02) inset;margin-bottom:14px;animation:settings-card-in .22s cubic-bezier(.22,1,.36,1) both;transition:border-color .16s ease,box-shadow .18s ease,transform .18s cubic-bezier(.22,1,.36,1)}
+      .settings-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:0 1px 0 rgba(255,255,255,.02) inset;margin-bottom:14px;animation:settings-card-in .22s cubic-bezier(.22,1,.36,1) both;transition:border-color .16s ease,box-shadow .18s ease,transform .18s cubic-bezier(.22,1,.36,1)}
       .settings-card:hover{border-color:var(--border-md);box-shadow:0 1px 0 rgba(255,255,255,.025) inset,0 10px 28px color-mix(in srgb,var(--text) 5%,transparent)}
-      .settings-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:12px}.settings-panel h3,.settings-card h3{font-size:15px;font-weight:700;margin:0;color:var(--text);letter-spacing:0}.settings-panel p,.settings-card p{font-size:11px;margin:3px 0 0;color:var(--text-3);line-height:1.45}
+      .settings-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:12px}.settings-head-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}.settings-panel h3,.settings-card h3{font-size:15px;font-weight:700;margin:0;color:var(--text);letter-spacing:0}.settings-panel p,.settings-card p{font-size:11px;margin:3px 0 0;color:var(--text-3);line-height:1.45}
       .settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.settings-grid-tight{grid-template-columns:1fr 1.45fr}.settings-list{min-height:132px;resize:vertical;line-height:1.45}.settings-route-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
       .settings-summary-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px}.settings-summary-row-3{grid-template-columns:repeat(3,minmax(0,1fr))}.settings-summary{min-height:74px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:12px;display:flex;align-items:center;gap:10px;animation:settings-card-in .22s cubic-bezier(.22,1,.36,1) both}.settings-summary-mark{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;flex:0 0 auto;border:1px solid var(--blue-100);background:var(--blue-50);color:var(--blue-800);font-weight:800}.settings-summary strong{display:block;font-size:18px;line-height:1;color:var(--text)}.settings-summary span{display:block;font-size:10px;color:var(--text-3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .settings-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:16px;padding:11px 0;border-bottom:1px solid var(--border)}.settings-row:last-child{border-bottom:0;padding-bottom:0}.settings-row-title{font-size:13px;font-weight:700;color:var(--text)}.settings-row-note{font-size:11px;color:var(--text-3);line-height:1.45;margin-top:2px}
@@ -988,19 +1204,22 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
       .settings-code-format-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.settings-code-format-card{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}
       .settings-switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;border-radius:999px;transition:transform .16s cubic-bezier(.22,1,.36,1)}.settings-switch:active{transform:scale(.96)}.settings-switch input{position:absolute;opacity:0;pointer-events:none}.settings-switch span{position:relative;width:38px;height:22px;border-radius:999px;background:var(--gray-50);border:1px solid var(--border-md);transition:background .18s ease,border-color .18s ease,box-shadow .18s ease}.settings-switch span::after{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;border-radius:50%;background:var(--surface);box-shadow:0 1px 4px rgba(0,0,0,.22);transition:transform .2s cubic-bezier(.22,1,.36,1),background-color .18s ease}.settings-switch:hover span{box-shadow:0 0 0 4px var(--focus-ring)}.settings-switch input:checked + span{background:var(--blue);border-color:var(--blue)}.settings-switch input:checked + span::after{transform:translateX(16px)}
       .settings-member-head,.settings-member-row{display:grid;grid-template-columns:74px minmax(120px,1fr) minmax(170px,1.2fr) 130px minmax(160px,1.2fr) 58px 34px;gap:8px;align-items:center}.settings-member-head{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}.settings-members-list{display:grid;gap:8px}.settings-member-row{padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);transition:border-color .16s ease,background-color .16s ease,transform .16s cubic-bezier(.22,1,.36,1)}.settings-member-row:hover{border-color:var(--blue-100);background:color-mix(in srgb,var(--surface-2) 78%,var(--blue-50))}.settings-member-status{font-size:10px;font-weight:800;color:var(--text-3);transition:color .16s ease}.settings-member-status.is-active{color:var(--green)}
+      .settings-member-row .pmo-select{height:34px;min-height:34px;display:flex;align-items:center;justify-content:stretch;width:100%;min-width:0}.settings-member-row .pmo-select-trigger{width:100%;height:34px;min-height:34px;border-radius:8px;padding:0 10px;box-sizing:border-box}.settings-member-row .pmo-select-menu{top:calc(100% + 4px);min-width:100%;max-width:100%}
       .settings-project-head,.settings-project-row{display:grid;grid-template-columns:minmax(170px,1.35fr) 104px minmax(116px,1fr) 58px minmax(150px,1.2fr) 34px;gap:8px;align-items:center}.settings-project-head{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}.settings-project-list{display:grid;gap:8px}.settings-project-row{padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);transition:border-color .16s ease,background-color .16s ease,transform .16s cubic-bezier(.22,1,.36,1)}.settings-project-row:hover{border-color:var(--blue-100);background:color-mix(in srgb,var(--surface-2) 78%,var(--blue-50))}.settings-color-input{width:46px;height:34px;padding:3px;border:1px solid var(--border-md);border-radius:8px;background:var(--surface);cursor:pointer}
-      .settings-matrix-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.settings-matrix{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;min-width:760px;table-layout:fixed}.settings-matrix-feature-col{width:220px}.settings-matrix-role-col{width:160px}.settings-matrix th,.settings-matrix td{border-bottom:1px solid var(--border);padding:10px;text-align:center;transition:background-color .16s ease}.settings-matrix th:first-child,.settings-matrix td:first-child{text-align:left;background:var(--surface)}.settings-matrix td span{display:block;font-size:10px;color:var(--text-3);font-weight:400;margin-top:2px}.settings-matrix tbody tr:hover td{background:color-mix(in srgb,var(--surface-2) 78%,transparent)}.settings-matrix tbody tr:hover td:first-child{background:var(--surface)}
+      .settings-project-row .pmo-select{height:34px;min-height:34px;display:flex;align-items:center;justify-content:stretch;width:100%;min-width:0}.settings-project-row .pmo-select-trigger{width:100%;height:34px;min-height:34px;border-radius:8px;padding:0 10px;box-sizing:border-box}.settings-project-row .pmo-select-menu{top:calc(100% + 4px);min-width:100%;max-width:100%}
+      .settings-matrix-card{padding:0;border:0;background:transparent;box-shadow:none;overflow:hidden}.settings-matrix-card:hover{border-color:transparent;box-shadow:none}.settings-matrix-card>.settings-panel-head{margin:0;padding:16px;background:var(--surface);border:1px solid var(--border);border-bottom:0;border-radius:12px 12px 0 0}.settings-matrix-wrap{overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:0 0 12px 12px;scrollbar-gutter:stable}.settings-matrix{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;min-width:760px;table-layout:fixed}.settings-matrix-feature-col{width:210px}.settings-matrix-role-col{width:150px}.settings-matrix th,.settings-matrix td{border-bottom:1px solid var(--border);padding:8px;text-align:center;transition:background-color .16s ease}.settings-matrix thead th{height:42px;background:var(--surface-2);font-size:11px;white-space:nowrap}.settings-matrix th:first-child,.settings-matrix td:first-child{text-align:left;background:var(--surface)}.settings-matrix td span{display:block;font-size:10px;color:var(--text-3);font-weight:400;margin-top:2px}.settings-matrix tbody tr:hover td{background:color-mix(in srgb,var(--surface-2) 78%,transparent)}.settings-matrix tbody tr:hover td:first-child{background:var(--surface)}
+      .settings-page-matrix{min-width:1450px}.settings-page-matrix .settings-matrix-feature-col{width:190px}.settings-page-matrix .settings-matrix-role-col{width:105px}.settings-page-matrix th:first-child,.settings-page-matrix td:first-child{position:sticky;left:0;z-index:2;box-shadow:1px 0 0 var(--border)}.settings-page-matrix thead th:first-child{z-index:3;background:var(--surface-2)}
       .settings-matrix-toggle{min-height:34px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid transparent;border-radius:8px;padding:5px 8px;cursor:pointer;background:transparent;transition:background-color .16s ease,border-color .16s ease,transform .16s cubic-bezier(.22,1,.36,1),box-shadow .16s ease}.settings-matrix-toggle:hover{background:var(--surface);border-color:var(--blue-100);box-shadow:0 8px 18px color-mix(in srgb,var(--blue) 6%,transparent)}.settings-matrix-toggle:active{transform:scale(.965)}.settings-matrix-toggle span{min-width:20px;font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em}.settings-matrix-toggle[aria-pressed="true"]{background:color-mix(in srgb,var(--blue-50) 70%,transparent);border-color:var(--blue-100)}.settings-matrix-toggle[aria-pressed="true"] span{color:var(--blue-800)}
       .settings-check-input{appearance:none;-webkit-appearance:none;width:18px;height:18px;border:1.5px solid var(--border-md);border-radius:5px;background:var(--surface);display:inline-grid;place-items:center;cursor:pointer;vertical-align:middle;transition:background-color .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s cubic-bezier(.22,1,.36,1);position:relative;flex:0 0 auto}.settings-check-input::after{content:"";width:8px;height:8px;border-radius:3px;background:var(--blue);transform:scale(.35);opacity:0;transition:opacity .14s ease,transform .18s cubic-bezier(.22,1,.36,1)}.settings-check-input:hover{border-color:var(--blue);box-shadow:0 0 0 4px var(--focus-ring)}.settings-check-input:active{transform:scale(.88)}.settings-check-input:checked,.settings-matrix-toggle[aria-pressed="true"] .settings-check-input{background:color-mix(in srgb,var(--blue) 12%,var(--surface));border-color:var(--blue);animation:settings-check-pop .22s cubic-bezier(.22,1,.36,1)}.settings-check-input:checked::after,.settings-matrix-toggle[aria-pressed="true"] .settings-check-input::after{opacity:1;transform:scale(1)}
-      .settings-matrix-toggle .settings-check-input::after{content:"";width:8px;height:8px;border:0;border-radius:3px;background:var(--blue);transform:scale(.35);opacity:0}.settings-matrix-toggle[aria-pressed="true"] .settings-check-input::after{opacity:1;transform:scale(1)}
+      .settings-matrix-toggle .settings-check-input{width:30px;height:18px;border:1px solid var(--border-md);border-radius:999px;background:var(--surface-2);box-shadow:none;position:relative;display:inline-block}.settings-matrix-toggle .settings-check-input::after{content:"";position:absolute;width:12px;height:12px;left:2px;top:2px;border:0;border-radius:50%;background:var(--text-3);opacity:.55;transform:none;transition:transform .18s cubic-bezier(.22,1,.36,1),background-color .16s ease,opacity .16s ease}.settings-matrix-toggle[aria-pressed="true"] .settings-check-input{background:var(--blue);border-color:var(--blue)}.settings-matrix-toggle[aria-pressed="true"] .settings-check-input::after{opacity:1;transform:translateX(12px);background:#fff}
       .settings-role-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.settings-role-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;animation:settings-card-in .22s cubic-bezier(.22,1,.36,1) both}.settings-tabs-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.settings-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);min-height:34px;border:1px solid var(--border);background:var(--surface-2);border-radius:8px;padding:7px 10px;cursor:pointer;transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s cubic-bezier(.22,1,.36,1),box-shadow .16s ease}.settings-check:hover{border-color:var(--blue-100);color:var(--text);background:color-mix(in srgb,var(--surface-2) 76%,var(--blue-50));box-shadow:0 8px 18px color-mix(in srgb,var(--blue) 6%,transparent)}.settings-check:active{transform:scale(.975)}.settings-check:has(.settings-check-input:checked){border-color:var(--blue-100);background:var(--blue-50);color:var(--blue-800)}.settings-mini-label{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:.08em;margin:14px 0 0}.settings-scope{width:200px;min-width:200px}
       .settings-transition-grid{display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px;align-items:center;margin-top:8px}.settings-transition-grid label{font-size:11px;font-weight:700;color:var(--text-2)}
       .settings-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.settings-preview{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px}.settings-preview-title{font-size:13px;font-weight:800;color:var(--text);margin-bottom:8px}.settings-preview-line{display:grid;grid-template-columns:58px 1fr;gap:8px;font-size:11px;padding:5px 0;border-top:1px solid var(--border)}.settings-preview-line strong{color:var(--text-3)}.settings-preview-line span{color:var(--text-2);line-height:1.4}
       .settings-placeholder-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.settings-placeholder-grid div{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:14px}.settings-placeholder-grid strong{display:block;color:var(--text);font-size:13px}.settings-placeholder-grid span{display:block;color:var(--text-3);font-size:11px;margin-top:4px;line-height:1.45}
-      .settings-actions{display:flex;justify-content:flex-end;gap:8px;position:sticky;bottom:0;margin:18px -22px -78px;padding:12px 22px;background:color-mix(in srgb,var(--surface) 92%,transparent);border-top:1px solid var(--border);backdrop-filter:blur(18px)}.settings-icon-btn{width:30px;height:30px;justify-content:center;padding:0}.settings-toast{position:fixed;right:22px;bottom:22px;z-index:1500;background:var(--surface);color:var(--text);border:1px solid var(--border-md);box-shadow:var(--shadow);border-radius:8px;padding:10px 12px;font-size:12px;font-weight:700;opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;transition:opacity .18s,transform .18s cubic-bezier(.22,1,.36,1)}.settings-toast.is-open{opacity:1;transform:translateY(0) scale(1)}.settings-toast-error{border-color:var(--red-200);color:var(--red)}.settings-toast-ok{border-color:var(--green-200);color:var(--green)}
+      .settings-icon-btn{width:30px;height:30px;justify-content:center;padding:0}.settings-toast{position:fixed;right:22px;bottom:22px;z-index:1500;background:var(--surface);color:var(--text);border:1px solid var(--border-md);box-shadow:var(--shadow);border-radius:8px;padding:10px 12px;font-size:12px;font-weight:700;opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;transition:opacity .18s,transform .18s cubic-bezier(.22,1,.36,1)}.settings-toast.is-open{opacity:1;transform:translateY(0) scale(1)}.settings-toast-error{border-color:var(--red-200);color:var(--red)}.settings-toast-ok{border-color:var(--green-200);color:var(--green)}
       .settings-pop{animation:settings-control-pop .2s cubic-bezier(.22,1,.36,1)}@keyframes settings-card-in{from{opacity:0;transform:translateY(7px) scale(.995)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes settings-check-pop{0%{transform:scale(.82)}62%{transform:scale(1.13)}100%{transform:scale(1)}}@keyframes settings-control-pop{0%{transform:scale(.985)}65%{transform:scale(1.018)}100%{transform:scale(1)}}@keyframes settings-dirty-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.settings-card,.settings-summary,.settings-role-card,.settings-check-input:checked,.settings-pop,.settings-dirty.is-visible{animation:none!important}.settings-nav-item,.settings-check,.settings-member-row,.settings-card{transition-duration:.01ms!important}}
-      @media(max-width:1080px){.settings-shell{grid-template-columns:188px minmax(0,1fr)}.settings-summary-row,.settings-summary-row-3{grid-template-columns:repeat(2,minmax(0,1fr))}.settings-grid{grid-template-columns:1fr}.settings-grid-tight{grid-template-columns:1fr}.settings-member-head,.settings-project-head{display:none}.settings-member-row,.settings-project-row{grid-template-columns:1fr 1fr}.settings-member-status{grid-column:1/-1}}
-      @media(max-width:760px){.settings-shell{display:block;min-height:0}.settings-rail{border-right:0;border-bottom:1px solid var(--border)}.settings-main{padding:16px 14px 76px}.settings-top,.settings-panel-head{display:block}.settings-top-actions{justify-content:flex-start;margin-top:12px}.settings-summary-row,.settings-summary-row-3{grid-template-columns:1fr}.settings-route-grid,.settings-placeholder-grid,.settings-inline-fields,.settings-code-format-grid{grid-template-columns:1fr}.settings-member-row,.settings-project-row{grid-template-columns:1fr}.settings-scope{width:100%;min-width:0;margin-top:10px}.settings-actions{margin-left:-14px;margin-right:-14px;padding-left:14px;padding-right:14px}}
+      @media(max-width:1080px){.settings-shell{grid-template-columns:176px minmax(0,1fr);gap:12px}.settings-summary-row,.settings-summary-row-3{grid-template-columns:repeat(2,minmax(0,1fr))}.settings-grid{grid-template-columns:1fr}.settings-grid-tight{grid-template-columns:1fr}.settings-member-head,.settings-project-head{display:none}.settings-member-row,.settings-project-row{grid-template-columns:1fr 1fr}.settings-member-status{grid-column:1/-1}}
+      @media(max-width:760px){.settings-shell{display:block;min-height:0}.settings-rail{position:static;min-height:0;margin-bottom:12px}.settings-main{padding:0 0 20px}.settings-top{position:static;display:block}.settings-panel-head{display:block}.settings-top-actions{justify-content:flex-start;margin-top:12px}.settings-summary-row,.settings-summary-row-3{grid-template-columns:1fr}.settings-route-grid,.settings-placeholder-grid,.settings-inline-fields,.settings-code-format-grid{grid-template-columns:1fr}.settings-member-row,.settings-project-row{grid-template-columns:1fr}.settings-scope{width:100%;min-width:0;margin-top:10px}}
     </style>
     <div class="settings-shell">
       <aside class="settings-rail" aria-label="Settings navigation">
@@ -1036,10 +1255,6 @@ function renderSettings(tab=SETTINGS_ACTIVE_TAB) {
           </div>
         </div>
         ${renderSettingsPanel(SETTINGS_ACTIVE_TAB, s)}
-        <div class="settings-actions">
-          <button class="btn-ghost" type="button" onclick="initSettings();renderSettings(SETTINGS_ACTIVE_TAB)">Discard</button>
-          <button class="btn-primary" data-settings-save type="button" onclick="saveSettings()">Save Settings</button>
-        </div>
       </main>
     </div>`;
 
@@ -1065,12 +1280,14 @@ function readMembersFromDom() {
   return [...document.querySelectorAll('[data-member-row]')].map((row, index) => {
     const get = field => row.querySelector(`[data-member-field="${field}"]`);
     const scopeEl = get('projectScope');
+    const rolesEl = get('roles');
     const projectScope = scopeEl ? [...scopeEl.selectedOptions].map(o => o.value).filter(Boolean) : ['all'];
+    const roles = rolesEl ? [...rolesEl.selectedOptions].map(o => o.value).filter(Boolean) : ['employee'];
     return normalizeMember({
       id: row.dataset.memberRow || `member-${index + 1}`,
       name: get('name')?.value || '',
       email: get('email')?.value || '',
-      role: get('role')?.value || 'user',
+      roles,
       projectScope: projectScope.includes('all') ? ['all'] : projectScope,
       active: !!get('active')?.checked,
     }, index);
@@ -1118,6 +1335,10 @@ function collectSettingsFromDom() {
       tabs: tabInputs.length ? tabInputs.filter(cb => cb.checked).map(cb => cb.dataset.tab) : prev.tabs,
     };
   });
+  const rolePages = Object.fromEntries(Object.keys(SETTINGS_FUNCTIONAL_ROLES).map(roleKey => [
+    roleKey,
+    readRolePages(roleKey, current.access?.rolePages?.[roleKey] || []),
+  ]));
   return {
     ...current,
     projects: projectNames.length ? projectNames : current.projects,
@@ -1125,6 +1346,10 @@ function collectSettingsFromDom() {
     people: document.getElementById('set-people') ? uniqueCleanLines(document.getElementById('set-people').value, DEFAULT_PEOPLE) : current.people,
     titles: document.getElementById('set-titles') ? uniqueCleanLines(document.getElementById('set-titles').value, DEFAULT_TITLES) : current.titles,
     members: document.getElementById('settings-members-list') ? readMembersFromDom() : current.members,
+    access: {
+      ...current.access,
+      rolePages,
+    },
     defaultReviewer: {
       name: document.getElementById('set-reviewer-name')?.value || current.defaultReviewer.name || '',
       title: document.getElementById('set-reviewer-title')?.value || current.defaultReviewer.title || '',
@@ -1181,13 +1406,35 @@ function validateSettingsDraft(draft) {
     if(name && projectNameSet.has(name)) errors.push(`Duplicate project name: ${project.name}`);
     if(name) projectNameSet.add(name);
   });
+  const activeProjectsInUse = new Set();
+  (typeof loadResources === 'function' ? loadResources() : []).forEach(record => {
+    const isCurrent = ['filled','document'].includes(String(record?.status || '').toLowerCase());
+    if(!isCurrent) return;
+    if(record?.project) activeProjectsInUse.add(String(record.project).trim().toLowerCase());
+    (record?.projectCodes || []).forEach(code => {
+      if(code?.project) activeProjectsInUse.add(String(code.project).trim().toLowerCase());
+    });
+  });
+  (typeof loadResourceMaster === 'function' ? loadResourceMaster() : []).forEach(person => {
+    const status = String(person?.status || 'active').toLowerCase();
+    if(status === 'inactive' || status === 'offboarded') return;
+    if(person?.currentProject) activeProjectsInUse.add(String(person.currentProject).trim().toLowerCase());
+  });
+  activeProjectsInUse.forEach(project => {
+    if(project && !projectNameSet.has(project)) errors.push(`Cannot remove project with active employees: ${project}`);
+  });
   if(!Array.isArray(draft.resource?.levels) || !draft.resource.levels.length) errors.push('Resource needs at least one Level option.');
   draft.members.forEach(member => {
     if(!member.name) errors.push('Every member needs a name.');
     if(!member.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(member.email)) errors.push(`Invalid email for ${member.name || 'member'}.`);
     if(emailSet.has(member.email)) errors.push(`Duplicate member email: ${member.email}`);
     emailSet.add(member.email);
-    if(!draft.resource.roles[member.role]) errors.push(`${member.name || member.email} has an unknown role.`);
+    const assignedRoles = Array.isArray(member.roles) && member.roles.length ? member.roles : [member.role].filter(Boolean);
+    if(!assignedRoles.length) errors.push(`${member.name || member.email} needs at least one role.`);
+    assignedRoles.forEach(role => {
+      const canonicalRole = SETTINGS_ACCESS_API?.normalizeRoleKey ? SETTINGS_ACCESS_API.normalizeRoleKey(role) : role;
+      if(!canonicalRole || !SETTINGS_FUNCTIONAL_ROLES[canonicalRole]) errors.push(`${member.name || member.email} has an unknown role.`);
+    });
     if(!member.projectScope.length) errors.push(`${member.name || member.email} needs at least one project scope.`);
   });
   Object.entries(draft.resource.roles).forEach(([key, role]) => {
@@ -1212,4 +1459,24 @@ function saveSettings() {
   renderSettings(SETTINGS_ACTIVE_TAB);
   showSettingsToast('Settings saved locally.', 'ok');
   return next;
+}
+
+// Keep the browser script testable with the repository's Node.js runner.
+if(typeof module === 'object' && module.exports) {
+  module.exports = {
+    DEFAULT_PROJECTS,
+    DEFAULT_PROJECT_MASTER,
+    DEFAULT_RESOURCE_ROLE_CONFIG,
+    SETTINGS_PROJECT_COLORS,
+    activeProjectNamesFromMaster,
+    mergeRoleConfig,
+    normalizeMember,
+    normalizeProjectMaster,
+    normalizeProjectMasterItem,
+    normalizeSettings,
+    settingsProjectFallbackColor,
+    settingsProjectResourceUsage,
+    uniqueCleanLines,
+    validateSettingsDraft,
+  };
 }

@@ -191,19 +191,56 @@ function resourceLevels() {
   return [...new Set(levels.map(l => String(l).trim()).filter(Boolean))];
 }
 function projectMasterItem(projectName) {
-  const name = String(projectName || '').trim().toLowerCase();
+  const name = String(projectName || '').trim();
   if(!name || typeof loadSettings !== 'function') return null;
-  return (loadSettings().projectMaster || []).find(p =>
-    String(p.name || '').trim().toLowerCase() === name ||
-    String(p.code || '').trim().toLowerCase() === name
-  ) || null;
+  const key = projectMatchKey(name);
+  return (loadSettings().projectMaster || []).find(p => {
+    const keys = [
+      p.name,
+      p.code,
+      p.project,
+      p.projectCode,
+      p.id,
+    ].map(projectMatchKey).filter(Boolean);
+    return keys.includes(key);
+  }) || null;
+}
+function projectMatchKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9ก-๙]+/g, '');
+}
+function projectMasterItemForCode(row) {
+  if(typeof loadSettings !== 'function') return null;
+  const master = loadSettings().projectMaster || [];
+  const orgId = String(row?.organizationProjectId || row?.organization_project_id || '').trim();
+  if(orgId) {
+    const byId = master.find(p => [p.id, p.organizationProjectId, p.organization_project_id]
+      .map(v => String(v || '').trim())
+      .filter(Boolean)
+      .includes(orgId));
+    if(byId) return byId;
+  }
+  return projectMasterItem(row?.project);
+}
+const RES_PROJECT_FALLBACK_COLORS = ['#8dd7cf', '#f7c6d9', '#ffd166', '#a7c7e7', '#cdb4db', '#b7e4c7', '#f4a261', '#90dbf4'];
+function projectFallbackColor(projectName) {
+  const text = String(projectName || '').trim();
+  if(!text) return RES_PROJECT_FALLBACK_COLORS[0];
+  let hash = 0;
+  for(let i = 0; i < text.length; i++) hash = ((hash * 31) + text.charCodeAt(i)) >>> 0;
+  return RES_PROJECT_FALLBACK_COLORS[hash % RES_PROJECT_FALLBACK_COLORS.length];
 }
 function projectAccentColor(projectName) {
-  if(window.PMO_RESOURCE_FLOW?.resolveProjectAccentColor) {
-    return window.PMO_RESOURCE_FLOW.resolveProjectAccentColor(projectName, loadSettings().projectMaster || []);
-  }
   const color = String(projectMasterItem(projectName)?.color || '').trim();
-  return /^#[0-9a-f]{6}$/i.test(color) ? color : '#8dd7cf';
+  if(/^#[0-9a-f]{6}$/i.test(color)) return color;
+  if(window.PMO_RESOURCE_FLOW?.resolveProjectAccentColor && typeof loadSettings === 'function') {
+    const resolved = window.PMO_RESOURCE_FLOW.resolveProjectAccentColor(projectName, loadSettings().projectMaster || []);
+    if(/^#[0-9a-f]{6}$/i.test(resolved) && resolved.toLowerCase() !== '#8dd7cf') return resolved;
+  }
+  return projectFallbackColor(projectName);
 }
 function projectTextColor(hex) {
   if(window.PMO_RESOURCE_FLOW?.projectTextColor) return window.PMO_RESOURCE_FLOW.projectTextColor(hex);
@@ -217,6 +254,49 @@ function projectTextColor(hex) {
 function projectPill(projectName, label=projectName) {
   const color = projectAccentColor(projectName);
   return `<span class="badge" style="font-size:10px;background:${color};color:${projectTextColor(color)};border-color:${color};white-space:nowrap">${esc(label || '-')}</span>`;
+}
+function projectCodeMasterItem(code, project='') {
+  const codeKey = String(code || '').trim().toLowerCase();
+  const projectKey = String(project || '').trim().toLowerCase();
+  if(!codeKey) return null;
+  return loadProjectCodeMaster().find(row =>
+    String(row.code || '').trim().toLowerCase() === codeKey &&
+    (!projectKey || String(row.project || '').trim().toLowerCase() === projectKey)
+  ) || loadProjectCodeMaster().find(row => String(row.code || '').trim().toLowerCase() === codeKey) || null;
+}
+function projectCodeAccentColor(code, project='') {
+  const meta = projectCodeMasterItem(code, project);
+  const color = String(meta?.color || '').trim();
+  if(/^#[0-9a-f]{6}$/i.test(color)) return color;
+  return projectAccentColor(meta?.project || project || code);
+}
+function projectCodePill(code, project='', label='') {
+  const meta = projectCodeMasterItem(code, project);
+  const color = projectCodeAccentColor(code, project);
+  const text = label || [meta?.code || code, meta?.project || project].filter(Boolean).join(' / ') || '-';
+  return `<span class="badge" style="font-size:10px;background:${color};color:${projectTextColor(color)};border-color:${color};white-space:nowrap">${esc(text)}</span>`;
+}
+function projectMasterDisplay(projectName) {
+  const master = projectMasterItem(projectName);
+  return {
+    key: master?.id || master?.code || master?.name || projectName || '-',
+    name: master?.name || master?.code || projectName || '-',
+  };
+}
+function allocationProjectLabel(item) {
+  return String(projectMasterDisplay(item?.project || item?.code || '-').name || '-').trim() || '-';
+}
+function allocationProjectPill(item) {
+  const label = allocationProjectLabel(item);
+  return item?.source === 'Project Code'
+    ? projectCodePill(item.code, item.project, label)
+    : projectPill(item.project, label);
+}
+function allocationProjectSummary(items) {
+  return (items || []).map(a => {
+    const code = a.source === 'Project Code' && a.code ? ` / ${a.code}` : '';
+    return `${allocationProjectLabel(a)}${code}: ${a.allocation}%`;
+  }).join(' / ');
 }
 function currentRequesterName() {
   const session = typeof pmoCurrentSession === 'function' ? pmoCurrentSession() : null;
@@ -234,9 +314,7 @@ function knownResourceProjects(records=[]) {
 function normalizeProjectCode(row, index=0) {
   const code = String(row.code || row.projectCode || row['Project Code'] || '').trim();
   const project = String(row.project || row.Project || '').trim();
-  const orgProject = typeof loadSettings === 'function'
-    ? (loadSettings().projectMaster || []).find(p => String(p.name || '').toLowerCase() === project.toLowerCase() || String(p.code || '').toLowerCase() === project.toLowerCase())
-    : null;
+  const orgProject = projectMasterItem(project);
   return {
     id: String(row.id || code || `${project}-${index}`).replace(/\s+/g, '-'),
     organizationProjectId: String(row.organizationProjectId || row.organization_project_id || orgProject?.id || '').trim(),
@@ -244,6 +322,7 @@ function normalizeProjectCode(row, index=0) {
     project,
     type: String(row.type || row.Type || '').trim(),
     code,
+    color: String(row.color || row.Color || row.projectColor || row.project_color || '').trim(),
     startDate: String(row.startDate || row.start || row.Start || '').slice(0, 10),
     endDate: String(row.endDate || row.end || row.End || '').slice(0, 10),
     status: String(row.status || row.Status || 'Active').trim() || 'Active',
@@ -290,6 +369,7 @@ function normalizeResourceMaster(row={}, index=0) {
     employmentType: String(row.employmentType || row.employment_type || row.hiringType || row.hiring_type || '').trim(),
     sourceCompany: String(row.sourceCompany || row.source_company || row.transferFrom || row.transfer_from || '').trim(),
     currentProject: String(row.currentProject || row.current_project || row.project || '').trim(),
+    photoUrl: String(row.photoUrl || row.photo_url || '').trim(),
     status: String(row.status || row.resourceStatus || row.resource_status || 'active').trim().toLowerCase() || 'active',
     onboardDate: String(row.onboardDate || row.onboard_date || '').slice(0, 10),
     offboardDate: String(row.offboardDate || row.offboard_date || row.endDate || row.end_date || '').slice(0, 10),
@@ -312,6 +392,7 @@ function resourceMasterFromRequest(r) {
     level: r.level,
     employmentType: r.hiringType,
     currentProject: r.project,
+    photoUrl: r.photoUrl,
     status,
     onboardDate: canHaveOnboardDate(r.status) ? r.onboardDate : '',
     offboardDate: r.offboardDate || r.endDate,
@@ -397,7 +478,7 @@ async function saveResourceMasterAsync(data) {
   storeResourceMaster(exists ? list.map(m => (m.id === exists.id ? saved : m)) : [...list, saved]);
   if(typeof checkSupa === 'function' && await checkSupa()) {
     try {
-      await supaFetch('resource_master','POST',{
+      const payload = {
         id: saved.id,
         employee_code: saved.employeeCode || null,
         resource_name: saved.resourceName || null,
@@ -411,13 +492,27 @@ async function saveResourceMasterAsync(data) {
         employment_type: saved.employmentType || null,
         source_company: saved.sourceCompany || null,
         current_project: saved.currentProject || null,
+        photo_url: saved.photoUrl || null,
         resource_status: ['active','inactive','offboarded'].includes(saved.status) ? saved.status : 'active',
         onboard_date: saved.onboardDate || null,
         offboard_date: saved.offboardDate || null,
         note: saved.note || null,
         created_at: saved.createdAt,
         updated_at: saved.updatedAt,
-      },'?on_conflict=id');
+      };
+      for(;;) {
+        try {
+          await supaFetch('resource_master','POST', payload, '?on_conflict=id');
+          break;
+        } catch(e) {
+          const msg = String(e.message || '');
+          if(msg.includes('photo_url') && Object.prototype.hasOwnProperty.call(payload, 'photo_url')) {
+            delete payload.photo_url;
+            continue;
+          }
+          throw e;
+        }
+      }
     } catch(e) { console.warn('Resource master save failed; keeping local copy', e.message); }
   }
   return saved;
@@ -447,6 +542,13 @@ function projectCodeByValue(code, project='') {
 }
 function currentRole() {
   const session = typeof pmoCurrentSession === 'function' ? pmoCurrentSession() : null;
+  if(typeof pmoEffectiveRoles === 'function' && window.PMO_ACCESS?.primaryResourceRole) {
+    const functionalRole = window.PMO_ACCESS.primaryResourceRole(pmoEffectiveRoles(session));
+    if(functionalRole && resourceRoles()[functionalRole]) {
+      _role = functionalRole;
+      return _role;
+    }
+  }
   const sessionRole = session?.role || '';
   if(sessionRole && resourceRoles()[sessionRole]) {
     _role = sessionRole;
@@ -519,6 +621,25 @@ function resourceSettings() {
   const s = typeof loadSettings === 'function' ? loadSettings() : null;
   return s?.resource || null;
 }
+function withFunctionalResourceRoles(roles) {
+  if(!window.PMO_ACCESS?.ROLE_TEMPLATES || !window.PMO_ACCESS?.resourceProfileForRole) return roles;
+  const next = roles;
+  Object.keys(window.PMO_ACCESS.ROLE_TEMPLATES).forEach(roleKey => {
+    const profile = window.PMO_ACCESS.resourceProfileForRole(roleKey);
+    const profileKey = window.PMO_ACCESS.ROLE_TEMPLATES[roleKey]?.resourceProfile || 'user';
+    const transitionSeed = profileKey === 'pmo' ? next.pmo : profileKey === 'bbik' ? next.bbik : ['user','project_manager'].includes(profileKey) ? next.user : null;
+    const configurableSeed = ['pmo','bbik','user'].includes(profileKey) ? next[profileKey] : null;
+    next[roleKey] = {
+      label: configurableSeed?.label || profile.label || window.PMO_ACCESS.roleLabel(roleKey),
+      note: configurableSeed?.note || profile.note || window.PMO_ACCESS.ROLE_TEMPLATES[roleKey]?.description || '',
+      scope: configurableSeed?.scope || profile.scope || 'selected-project',
+      tabs: Array.isArray(configurableSeed?.tabs) && configurableSeed.tabs.length ? [...configurableSeed.tabs] : Array.isArray(profile.tabs) && profile.tabs.length ? [...profile.tabs] : ['request'],
+      permissions: { ...(configurableSeed?.permissions || profile.permissions || {}) },
+      transitions: JSON.parse(JSON.stringify(transitionSeed?.transitions || {})),
+    };
+  });
+  return next;
+}
 function resourceRoles() {
   const configured = resourceSettings()?.roles;
   if(configured) {
@@ -537,12 +658,12 @@ function resourceRoles() {
     }
     if(next.user) next.user.tabs = (next.user.tabs || ['request']).filter(tab => tab !== 'dashboard');
     if(next.pmo) next.pmo.tabs = (next.pmo.tabs || ['request','people','timeline','transfer','code']).filter(tab => tab !== 'dashboard');
-    return next;
+    return withFunctionalResourceRoles(next);
   }
   if(window.PMO_RESOURCE_FLOW?.createDefaultResourceRoles) {
-    return window.PMO_RESOURCE_FLOW.createDefaultResourceRoles(RES_ROLES);
+    return withFunctionalResourceRoles(window.PMO_RESOURCE_FLOW.createDefaultResourceRoles(RES_ROLES));
   }
-  return Object.fromEntries(Object.entries(RES_ROLES).map(([key, label]) => [key, {
+  return withFunctionalResourceRoles(Object.fromEntries(Object.entries(RES_ROLES).map(([key, label]) => [key, {
     label,
     note: '',
     scope: key === 'user' ? 'selected-project' : key === 'bbik' ? 'bbik-pipeline' : 'all',
@@ -562,7 +683,7 @@ function resourceRoles() {
       importProjectCodes: key === 'pmo',
     },
     transitions: Object.fromEntries(Object.entries(STATUS_FLOW).map(([status, byRole]) => [status, byRole[key] || []])),
-  }]));
+  }])));
 }
 function roleConfig(role=currentRole()) {
   return resourceRoles()[role] || resourceRoles().pmo || { label: RES_ROLES[role] || role, permissions: {}, transitions: {}, tabs: ['request'], scope: 'all' };
@@ -657,6 +778,15 @@ function employeeEnglishName(r) {
 }
 function employeeThaiName(r) {
   return (r.resourceNameTh || r.resourceName || '').trim();
+}
+function hasThaiText(value) {
+  return /[\u0E00-\u0E7F]/.test(String(value || ''));
+}
+function employeeEditThaiName(r) {
+  return hasThaiText(r.resourceNameTh) ? String(r.resourceNameTh || '').trim() : '';
+}
+function employeeEditEnglishName(r) {
+  return (r.resourceNameEn || (!hasThaiText(r.resourceNameTh) ? r.resourceNameTh : '') || r.resourceName || '').trim();
 }
 function resourceEmployeeCode(r) {
   return (r.employeeCode || '').trim();
@@ -1025,6 +1155,9 @@ function timelineRoleLabel(key) {
 function timelineTypeLabel(key) {
   return window.PMO_RESOURCE_FLOW?.employeeTypeLabel ? window.PMO_RESOURCE_FLOW.employeeTypeLabel(key) : ({ direct:'DHC', secondment:'SEC', subcon:'Sub Con', dhc:'DHC', sec:'SEC', other:'Other' })[key] || key || 'Other';
 }
+function employeeTypeLabel(key) {
+  return timelineTypeLabel(key);
+}
 function timelineItemWindow(groups) {
   const starts = groups.flatMap(g => g.items.map(i => parseDay(i.startDate))).filter(Boolean);
   const ends = groups.flatMap(g => g.items.map(i => parseDay(i.endDate))).filter(Boolean);
@@ -1110,6 +1243,7 @@ async function loadResourcesAsync() {
         transferFrom: r.transfer_from, projectCodes: r.project_codes||[],
         resourceMasterId: r.resource_master_id,
         resourceName: r.resource_name, resourceNameTh: r.resource_name_th, resourceNameEn: r.resource_name_en, employeeCode: r.employee_code,
+        photoUrl: r.photo_url,
         primaryProjectCode: r.primary_project_code, allocationPercent: r.allocation_percent,
         onboardDate: r.onboard_date, offboardDate: r.offboard_date,
         activityLog: r.activity_log||[],
@@ -1149,6 +1283,7 @@ async function saveResourceAsync(data) {
         transfer_from: saved.transferFrom||null, project_codes: saved.projectCodes||[],
         resource_master_id: saved.resourceMasterId||null,
         resource_name: saved.resourceName||null, resource_name_th: saved.resourceNameTh||null, resource_name_en: saved.resourceNameEn||null, employee_code: saved.employeeCode||null,
+        photo_url: saved.photoUrl || null,
         primary_project_code: saved.primaryProjectCode||null,
         allocation_percent: saved.allocationPercent == null ? null : clampAlloc(saved.allocationPercent),
         onboard_date: saved.onboardDate||null, offboard_date: saved.offboardDate||null,
@@ -1167,6 +1302,10 @@ async function saveResourceAsync(data) {
           }
           if(msg.includes('cancel_reason') && Object.prototype.hasOwnProperty.call(payload, 'cancel_reason')) {
             delete payload.cancel_reason;
+            continue;
+          }
+          if(msg.includes('photo_url') && Object.prototype.hasOwnProperty.call(payload, 'photo_url')) {
+            delete payload.photo_url;
             continue;
           }
           throw e;
@@ -1345,6 +1484,51 @@ let _resSortAsc = false;
 let _resTab  = 'request';   // request | people | timeline | allocation | transfer | code | movement
 let _resView = 'all';       // chip key (request tab)
 let _resTimelineYear = new Date().getFullYear();
+const RES_PEOPLE_VIEW_KEY = 'orbit-pmo-resource-people-view-v2';
+let _resPeopleView = (() => {
+  try { return localStorage.getItem(RES_PEOPLE_VIEW_KEY) === 'table' ? 'table' : 'cards'; }
+  catch(e) { return 'cards'; }
+})();
+
+function activeResourceTab() {
+  return document.querySelector('#res-tab-bar .res-tab.is-active, #res-tab-bar .res-tab.active')?.getAttribute('data-tab') || _resTab;
+}
+
+function setPeopleDirectoryView(view) {
+  _resPeopleView = view === 'cards' ? 'cards' : 'table';
+  try { localStorage.setItem(RES_PEOPLE_VIEW_KEY, _resPeopleView); } catch(e) {}
+  _resTab = 'people';
+  _renderResourceUI(loadResources(), { preserveResourceFilters: true });
+  window.setTimeout(() => {
+    if(activeResourceTab() !== 'people' || currentPeopleDirectoryView() !== 'cards') return;
+    if(document.querySelector('.res-people-card')) return;
+    renderPeopleView(applyResourceSearch(visibleToRole(loadResources(), currentRole())));
+  }, 0);
+}
+window.setPeopleDirectoryView = setPeopleDirectoryView;
+
+function ensurePeopleCardHost() {
+  const table = document.getElementById('res-table-body')?.closest('table');
+  const tableCard = table?.closest('.card');
+  if(!tableCard) return null;
+  let host = document.getElementById('res-people-card-host');
+  if(!host) {
+    host = document.createElement('div');
+    host.id = 'res-people-card-host';
+    host.className = 'card res-people-card-host';
+    host.style.display = 'none';
+    tableCard.insertAdjacentElement('beforebegin', host);
+  }
+  return host;
+}
+
+function setPeopleCardMode(enabled) {
+  const table = document.getElementById('res-table-body')?.closest('table');
+  const tableCard = table?.closest('.card');
+  const host = ensurePeopleCardHost();
+  if(host) host.style.display = enabled ? '' : 'none';
+  if(tableCard) tableCard.style.display = enabled ? 'none' : '';
+}
 
 
 // â”€â”€ Table columns (config-driven: à¸«à¸±à¸§à¸•à¸²à¸£à¸²à¸‡ + à¹à¸–à¸§ à¹ƒà¸Šà¹‰à¸•à¸±à¸§à¹€à¸”à¸µà¸¢à¸§à¸à¸±à¸™) â”€â”€
@@ -1366,7 +1550,6 @@ function resColumns() {
     { key:'onboard', label:'Onboard Date', cell:r=>`<span style="font-size:11px">${effectiveOnboardDate(r)?shortDate(effectiveOnboardDate(r)):'-'}</span>` },
     { key:'updated',  label:'Updated', cell:r=>`<span style="font-size:11px;color:var(--text-3)">${r.updatedAt?shortDate(String(r.updatedAt).slice(0,10)):'-'}</span>` },
     { key:'status',   label:'Status', cell:r=>{ const s=RES_STATUS[r.status]||{label:r.status,cls:'badge-gray'}; return `<span class="badge ${s.cls}" style="font-size:10px;white-space:nowrap">${esc(s.label)}</span>`; } },
-    { key:'action',   label:'', th:'text-align:center', td:'text-align:center', cell:r=>`<button class="btn-sm" style="font-size:11px;padding:3px 10px;white-space:nowrap" onclick="event.stopPropagation();openResDetail('${r.id}')" title="Manage">Manage</button>` },
   );
   return C;
 }
@@ -1389,7 +1572,7 @@ function renderResourceSearchNow() {
 }
 
 
-function setResTab(t)  { _resTab = t; _resPage = 1; _renderResourceUI(loadResources()); }
+function setResTab(t)  { _resTab = t; _resPage = 1; _renderResourceUI(loadResources(), { forceTab:t }); }
 function setResView(v) { _resView = v; _resPage = 1; _renderResourceUI(loadResources()); }
 
 
@@ -1647,7 +1830,44 @@ function ensureResChrome() {
       .res-filter-option span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .res-filter-option em{font-style:normal;color:var(--text-3);font-size:11px}
       .res-filter-empty{padding:12px;color:var(--text-3);font-size:12px;text-align:center}
+      .res-people-view-toggle{display:inline-flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border-md);border-radius:999px;background:color-mix(in srgb,var(--surface-2) 82%,var(--surface));box-shadow:inset 0 1px 0 rgba(255,255,255,.04);margin-left:auto}
+      .res-people-view-toggle button{height:28px;min-width:44px;padding:0 12px;border:0;border-radius:999px;background:transparent;color:var(--text-3);font-family:inherit;font-size:11px;font-weight:800;cursor:pointer;transition:background .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease}
+      .res-people-view-toggle button:hover{color:var(--text);background:color-mix(in srgb,var(--blue) 7%,transparent)}
+      .res-people-view-toggle button:focus-visible{outline:0;box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}
+      .res-people-view-toggle button.is-active{background:var(--surface);color:var(--blue);box-shadow:0 2px 8px rgba(15,23,42,.12)}
+      .res-people-card-host{padding:14px!important;overflow:visible!important}
+      .res-people-card-empty{text-align:center;padding:34px;color:var(--text-3);font-size:12px}
+      .res-people-card-shell{padding:14px;background:var(--bg);border-top:1px solid var(--border)}
+      .res-people-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+      .res-people-card{position:relative;min-height:250px;padding:14px 14px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);box-shadow:0 1px 0 rgba(255,255,255,.04) inset;display:flex;flex-direction:column;gap:10px}
+      .res-people-card-top{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:22px}
+      .res-people-more{width:28px;height:28px;padding:0!important;justify-content:center;color:var(--text-3)}
+      .res-avatar{width:58px;height:58px;border-radius:50%;margin:0 auto;display:grid;place-items:center;background:linear-gradient(135deg,#8dd7cf,#a7c7e7);border:4px solid color-mix(in srgb,var(--blue) 12%,var(--surface));color:#0f172a;font-size:18px;font-weight:900;overflow:hidden}
+      .res-avatar img{width:100%;height:100%;object-fit:cover}
+      .res-people-name{text-align:center;font-size:13px;font-weight:800;color:var(--text);line-height:1.2;min-height:16px}
+      .res-people-role{text-align:center;font-size:11px;color:var(--text-3);line-height:1.25;min-height:14px}
+      .res-people-info{border:1px solid var(--border);border-radius:7px;background:var(--surface-2);padding:8px;display:grid;gap:5px;font-size:11px;color:var(--text-2);min-height:76px}
+      .res-people-line{display:flex;align-items:center;gap:6px;min-width:0}
+      .res-people-line b{font-weight:800;color:var(--text);min-width:42px}
+      .res-people-line span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .res-people-project-line{align-items:flex-start}
+      .res-people-project-tags{display:flex!important;flex-wrap:wrap;gap:4px;white-space:normal!important;overflow:visible!important;text-overflow:clip!important;line-height:1.45}
+      .res-people-footer{margin-top:auto;display:flex;align-items:center;justify-content:flex-start;gap:8px;font-size:10px;color:var(--text-3)}
       .res-cell-clip{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      #res-table-body .res-clickable-row{cursor:pointer}
+      #res-table-body .res-clickable-row:hover td{background:color-mix(in srgb,var(--blue) 5%,var(--surface))}
+      #res-table-body .res-clickable-row:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+      .res-row-actions{display:inline-flex;align-items:center;justify-content:center;gap:5px;width:100%}
+      .res-icon-btn{width:32px;height:32px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border-md);border-radius:6px;background:var(--surface);color:var(--text-2);box-shadow:none}
+      .res-icon-btn svg{width:14px;height:14px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+      .res-icon-btn:hover{border-color:var(--blue);background:var(--blue-50)!important;color:var(--blue)!important}
+      .res-icon-btn.is-danger:hover{border-color:color-mix(in srgb,var(--red) 44%,var(--border-md));background:var(--red-50)!important;color:var(--red)!important}
+      .res-project-group-row td{padding:0!important;background:var(--surface-2)!important;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+      .res-project-group{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:38px;padding:8px 14px;border-left:5px solid var(--project-color);background:color-mix(in srgb,var(--project-color) 10%,var(--surface));color:var(--text)}
+      .res-project-group-main{display:flex;align-items:center;gap:8px;min-width:0}
+      .res-project-swatch{width:12px;height:12px;border-radius:4px;background:var(--project-color);box-shadow:0 0 0 1px color-mix(in srgb,var(--project-color) 72%,var(--border-md))}
+      .res-project-group-name{font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .res-project-group-meta{font-size:11px;color:var(--text-3);white-space:nowrap}
       @keyframes res-filter-tick{0%{transform:scale(.985);background:color-mix(in srgb,var(--blue) 10%,transparent)}55%{transform:scale(1.018);background:color-mix(in srgb,var(--blue) 14%,transparent)}100%{transform:scale(1);background:transparent}}
       #view-resource{background:color-mix(in srgb,var(--surface) 96%,transparent);border:1px solid var(--border-md);border-radius:8px;padding:0 12px 12px;box-shadow:0 14px 42px rgba(0,0,0,.12);overflow:visible}
       #res-chrome{margin:0 -12px 12px;padding:0;background:color-mix(in srgb,var(--surface-2) 84%,var(--surface));border-bottom:1px solid var(--border-md);border-radius:8px 8px 0 0}
@@ -1677,10 +1897,12 @@ function ensureResChrome() {
       #res-pagination{padding:10px 0 0!important}
       .res-form-grid-3{grid-template-columns:repeat(3,minmax(0,1fr))!important}
       .res-form-grid-3 .ri{width:100%}
+      .res-form-grid-3 .pmo-select{width:100%;line-height:1}
+      .res-form-grid-3 .pmo-select-trigger{width:100%}
       @media (max-width:980px){.res-form-grid-3{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
       @media (max-width:640px){.res-form-grid-3{grid-template-columns:1fr!important}}
       @media (max-width:1100px){.res-timeline-toolbar{justify-content:stretch}.res-timeline-toolbar-controls{width:100%}}
-      @media (max-width:820px){.res-timeline-cell{--timeline-person-width:150px;--timeline-grid-min-width:864px}.res-timeline-toolbar{align-items:start}.res-timeline-toolbar-controls{grid-template-columns:1fr 1fr}.res-timeline-tools{grid-column:1/-1;justify-content:flex-start}.res-timeline-wrap{max-height:none}.res-request-filters{align-items:flex-start}#res-filter-dropdowns{width:100%}.res-filter-menu{flex:1 1 180px}.res-filter-trigger{width:100%}#view-resource>.filter-row{flex-wrap:wrap!important}#view-resource>.filter-row #res-search{flex-basis:100%}}
+      @media (max-width:820px){.res-timeline-cell{--timeline-person-width:150px;--timeline-grid-min-width:864px}.res-timeline-toolbar{align-items:start}.res-timeline-toolbar-controls{grid-template-columns:1fr 1fr}.res-timeline-tools{grid-column:1/-1;justify-content:flex-start}.res-timeline-wrap{max-height:none}.res-request-filters{align-items:flex-start}#res-filter-dropdowns{width:100%}.res-filter-menu{flex:1 1 180px}.res-filter-trigger{width:100%}.res-people-view-toggle{margin-left:0}#view-resource>.filter-row{flex-wrap:wrap!important}#view-resource>.filter-row #res-search{flex-basis:100%}}
     `;
     document.head.appendChild(st);
   }
@@ -1722,6 +1944,11 @@ function ensureResChrome() {
 }
 
 function renderResourceTable(cols, rows, emptyMsg) {
+  if((_resTab === 'people' || activeResourceTab() === 'people') && typeof currentPeopleDirectoryView === 'function' && currentPeopleDirectoryView() === 'cards') {
+    renderPeopleCards(rows || []);
+    return;
+  }
+  setPeopleCardMode(false);
   const tbody = document.getElementById('res-table-body');
   if(!tbody) return;
   const table = tbody.closest('table');
@@ -1737,17 +1964,35 @@ function renderResourceTable(cols, rows, emptyMsg) {
   if(!rows.length) {
     tbody.innerHTML = `<tr><td colspan="${cols.length}" style="text-align:center;padding:34px;color:var(--text-3)">${emptyMsg}</td></tr>`;
   } else {
-    tbody.innerHTML = rows.map(r =>
-      `<tr ${r.requestId?`style="cursor:pointer" onclick="openResDetail('${r.requestId}')"`:''}>${cols.map(c=>`<td style="${c.td||''}">${c.cell(r)}</td>`).join('')}</tr>`
-    ).join('');
+    tbody.innerHTML = rows.map(r => {
+      if(r.__group) return `<tr class="res-project-group-row"><td colspan="${cols.length}">${r.html || ''}</td></tr>`;
+      return `<tr ${r.requestId?`style="cursor:pointer" onclick="openResDetail('${r.requestId}')"`:''}>${cols.map(c=>`<td style="${c.td||''}">${c.cell(r)}</td>`).join('')}</tr>`;
+    }).join('');
   }
   const pagEl = document.getElementById('res-pagination');
-  if(pagEl) pagEl.innerHTML = `<span style="font-size:12px;color:var(--text-3)">${rows.length} rows</span>`;
+  if(pagEl) {
+    const rowCount = rows.filter(r => !r.__group).length;
+    pagEl.innerHTML = `<span style="font-size:12px;color:var(--text-3)">${rowCount} rows</span>`;
+  }
 }
 
 function resourceSearchTextForRecord(r) {
   const projectCodes = (r.projectCodes||[]).map(c => `${c.project || ''} ${c.code || ''} ${c.allocation || ''}`).join(' ');
   return `${r.project || ''} ${r.position || ''} ${r.level || ''} ${r.hiringType || ''} ${resourcePersonName(r)} ${resourceEmployeeCode(r)} ${primaryProjectCode(r)} ${projectCodes}`.toLowerCase();
+}
+
+const RES_ACTION_ICONS = {
+  edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+  delete: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>',
+};
+
+function resourceActionButton(kind, label, onClick) {
+  const danger = kind === 'delete' ? ' is-danger' : '';
+  return `<button type="button" class="btn-sm res-icon-btn${danger}" title="${esc(label)}" aria-label="${esc(label)}" onclick="event.stopPropagation();${onClick}">${RES_ACTION_ICONS[kind] || ''}</button>`;
+}
+
+function resourceActionGroup(buttons) {
+  return `<span class="res-row-actions">${buttons.filter(Boolean).join('')}</span>`;
 }
 
 function applyResourceSearch(list) {
@@ -1860,6 +2105,84 @@ function renderResourceDashboard(base) {
   if(pagEl) pagEl.innerHTML = `<span style="font-size:12px;color:var(--text-3)">${queue.length} open action items</span>`;
 }
 
+function employeeInitials(row) {
+  const source = String(row.personEn || row.personTh || row.employeeCode || '').trim();
+  const parts = source.split(/\s+/).filter(Boolean);
+  return (parts.length >= 2 ? `${parts[0][0]}${parts[1][0]}` : source.slice(0, 2) || '?').toUpperCase();
+}
+
+function renderPeopleViewToggle() {
+  const el = document.getElementById('res-filter-dropdowns');
+  if(!el) return;
+  const existing = document.getElementById('res-people-view-toggle');
+  if(existing) {
+    existing.querySelectorAll('[data-people-view]').forEach(btn => {
+      btn.classList.toggle('is-active', btn.dataset.peopleView === _resPeopleView);
+    });
+    return;
+  }
+  el.insertAdjacentHTML('beforeend', `
+    <div id="res-people-view-toggle" class="res-people-view-toggle" aria-label="Employee directory view">
+      <button type="button" data-people-view="table" title="Table view" class="${_resPeopleView==='table'?'is-active':''}" onclick="window.setPeopleDirectoryView('table');return false">Table</button>
+      <button type="button" data-people-view="cards" title="Card view" class="${_resPeopleView==='cards'?'is-active':''}" onclick="window.setPeopleDirectoryView('cards');return false">Cards</button>
+    </div>`);
+}
+
+function currentPeopleDirectoryView() {
+  const active = document.querySelector('#res-people-view-toggle [data-people-view].is-active')?.dataset.peopleView;
+  let stored = '';
+  try { stored = localStorage.getItem(RES_PEOPLE_VIEW_KEY) || ''; } catch(e) {}
+  if(stored === 'cards' || stored === 'table') _resPeopleView = stored;
+  else if(active === 'cards' || active === 'table') _resPeopleView = active;
+  return _resPeopleView === 'cards' ? 'cards' : 'table';
+}
+
+function renderPeopleCard(row) {
+  const status = employeeDirectoryStatusBadge(row);
+  const avatar = row.photoUrl
+    ? `<img src="${esc(row.photoUrl)}" alt="">`
+    : esc(employeeInitials(row));
+  const projects = row.projects.length ? allocationProjectSummary(row.projects) : '-';
+  const projectTags = row.projects.length
+    ? row.projects.map(allocationProjectPill).join(' ')
+    : '<span style="color:var(--text-3)">-</span>';
+  const typeLabel = employeeTypeLabel(row.employeeType);
+  const joined = row.startDate ? shortDate(row.startDate) : '-';
+  const canOpen = !!row.requestId;
+  return `
+    <article class="res-people-card">
+      <div class="res-people-card-top">
+        ${status}
+        <button class="btn-sm res-people-more" type="button" title="Edit employee" ${canOpen?`onclick="openResDetail('${esc(row.requestId)}','edit')"`:'disabled'}>...</button>
+      </div>
+      <div class="res-avatar">${avatar}</div>
+      <div>
+        <div class="res-people-name">${esc(row.personEn || row.personTh || '-')}</div>
+        <div class="res-people-role">${esc(row.position || row.level || '-')}</div>
+      </div>
+      <div class="res-people-info">
+        <div class="res-people-line"><b>#</b><span>${esc(row.employeeCode || '-')}</span></div>
+        <div class="res-people-line"><b>Type</b><span>${esc(typeLabel || '-')}</span></div>
+        <div class="res-people-line"><b>Team</b><span>${esc(row.team || '-')}</span></div>
+        <div class="res-people-line res-people-project-line"><b>Project</b><span class="res-people-project-tags" title="${esc(projects)}">${projectTags}</span></div>
+      </div>
+      <div class="res-people-footer">
+        <span>Joined ${esc(joined)}</span>
+      </div>
+    </article>`;
+}
+
+function renderPeopleCards(rows) {
+  const host = ensurePeopleCardHost();
+  if(!host) return;
+  setPeopleCardMode(true);
+  host.innerHTML = rows.length
+    ? `<div class="res-people-card-grid">${rows.map(renderPeopleCard).join('')}</div>`
+    : `<div class="res-people-card-empty">No employee records match the selected filters.</div>`;
+  const pagEl = document.getElementById('res-pagination');
+  if(pagEl) pagEl.innerHTML = `<span style="font-size:12px;color:var(--text-3)">${rows.length} people</span>`;
+}
+
 function renderPeopleView(base) {
   const masters = loadResourceMaster();
   const masterRows = masters.length
@@ -1877,10 +2200,17 @@ function renderPeopleView(base) {
   const rows = masterRows.map(({ master, related, requestId }) => {
     const allocs = allocationRows(related, { includeInactive:true, activeOnly:true, asOf:todayISO });
     const allocationByProject = [...allocs.reduce((map, a) => {
-      const key = a.project || '-';
-      map.set(key, (map.get(key) || 0) + clampAlloc(a.allocation));
+      const masterProject = projectMasterDisplay(a.project || '-');
+      const key = `project:${String(masterProject.key || masterProject.name).toLowerCase()}`;
+      const current = map.get(key) || { project:masterProject.name, code:'', source:a.source || '', allocation:0, codes:[] };
+      current.allocation += clampAlloc(a.allocation);
+      current.project = masterProject.name || current.project || a.project || '-';
+      if(a.code) current.codes.push(a.code);
+      current.code = current.code || a.code || '';
+      current.source = current.source === 'Project Code' || a.source === 'Project Code' ? 'Project Code' : (current.source || a.source || '');
+      map.set(key, current);
       return map;
-    }, new Map()).entries()].map(([project, allocation]) => ({ project, allocation: Math.min(100, allocation) }));
+    }, new Map()).values()].map(item => ({ ...item, allocation: Math.min(100, item.allocation) }));
     return {
       requestId,
       personTh: master.resourceNameTh || master.resourceName,
@@ -1889,6 +2219,7 @@ function renderPeopleView(base) {
       position: master.position || '',
       level: master.level || '',
       team: master.resourceTeam || '',
+      photoUrl: master.photoUrl || related[0]?.photoUrl || '',
       employeeType: window.PMO_RESOURCE_FLOW?.employeeTypeKey ? window.PMO_RESOURCE_FLOW.employeeTypeKey(master.employmentType) : hiringKind(master.employmentType),
       projects: allocationByProject,
       totalAllocation: allocationByProject.reduce((sum,a)=>sum+a.allocation,0),
@@ -1899,13 +2230,20 @@ function renderPeopleView(base) {
   }).sort((a,b)=>String(a.personTh||a.personEn).localeCompare(String(b.personTh||b.personEn)));
   const filterDefs = renderResourceDropdownFilters(rows);
   const filteredRows = applyResourceDropdownFilters(rows, filterDefs);
+  renderPeopleViewToggle();
+  if(currentPeopleDirectoryView() === 'cards') {
+    renderPeopleViewToggle();
+    renderPeopleCards(filteredRows);
+    return;
+  }
+  renderPeopleViewToggle();
   renderResourceTable([
     { label:'Employee Code', th:'width:118px', cell:r=>`<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-2);font-weight:700">${esc(r.employeeCode||'-')}</span>` },
     { label:'ชื่อ-นามสกุล', th:'width:17%', cell:r=>`<strong class="res-cell-clip" title="${esc(r.personTh||'-')}">${esc(r.personTh||'-')}</strong>` },
     { label:'Name - Surname', th:'width:17%', cell:r=>r.personEn ? `<span class="res-cell-clip" title="${esc(r.personEn)}">${esc(r.personEn)}</span>` : '<span style="color:var(--text-3)">-</span>' },
     { label:'Position', th:'width:15%', cell:r=>`<span class="res-cell-clip" title="${esc(r.position||'-')}">${esc(r.position||'-')}</span>` },
     { label:'Level', th:'width:72px', cell:r=>r.level ? `<span class="badge badge-gray" style="font-size:10px">${esc(r.level)}</span>` : '-' },
-    { label:'Current Allocation', th:'width:25%', cell:r=>r.projects.length ? `<span class="res-cell-clip">${r.projects.map(a=>projectPill(a.project, `${a.project}: ${a.allocation}%`)).join(' ')}</span>` : '-' },
+    { label:'Current Project', th:'width:25%', cell:r=>r.projects.length ? `<span class="res-cell-clip" title="${esc(allocationProjectSummary(r.projects))}">${r.projects.map(allocationProjectPill).join(' ')}</span>` : '-' },
     { label:'Status', th:'width:128px', cell:r=>employeeDirectoryStatusBadge(r) },
   ], filteredRows, 'No employee records match the selected filters.');
 }
@@ -2073,39 +2411,108 @@ function renderTransferView(base) {
     { label:'Last Day', cell:r=>`<span style="font-size:11px">${r.lastDay?shortDate(r.lastDay):'-'}</span>` },
     { label:'New Project Code', cell:r=>esc(r.code||'-') },
     { label:'Supervisor', cell:r=>esc(r.supervisor||'-') },
-    { label:'Action', td:'text-align:center;white-space:nowrap', cell:r=> {
+    { label:'Action', th:'width:96px;text-align:center', td:'width:96px;text-align:center;white-space:nowrap', cell:r=> {
       const role = currentRole();
       if(r.kind === 'Project Code') return canProjectCode(role)
-        ? `<button class="btn-sm" onclick="event.stopPropagation();openTransferEntry('', '${r.requestId}', 'code', '${r.codeIndex}')">Edit</button> <button class="btn-sm" style="color:var(--red)" onclick="event.stopPropagation();deleteProjectCode('${r.requestId}', ${r.codeIndex})">Delete</button>`
+        ? resourceActionGroup([
+            resourceActionButton('edit', 'Edit project code assignment', `openTransferEntry('', '${r.requestId}', 'code', '${r.codeIndex}')`),
+            resourceActionButton('delete', 'Delete project code assignment', `deleteProjectCode('${r.requestId}', ${r.codeIndex})`),
+          ])
         : '<span style="font-size:11px;color:var(--text-3)">View only</span>';
       return canTransfer(role)
-        ? `<button class="btn-sm" onclick="event.stopPropagation();openTransferEntry('${r.requestId}', '', 'transfer')">Edit</button> ${canDelete(role)?`<button class="btn-sm" style="color:var(--red)" onclick="event.stopPropagation();deleteResource('${r.requestId}')">Delete</button>`:''}`
+        ? resourceActionGroup([
+            resourceActionButton('edit', 'Edit transfer assignment', `openTransferEntry('${r.requestId}', '', 'transfer')`),
+            canDelete(role) ? resourceActionButton('delete', 'Delete transfer assignment', `deleteResource('${r.requestId}')`) : '',
+          ])
         : '<span style="font-size:11px;color:var(--text-3)">View only</span>';
     } },
   ], rows, 'No employee assignment records yet. Click + New Assignment to add transfer or project code.');
 }
 
 function renderProjectCodeView(base) {
-  const assignments = new Map();
-  (base||[]).forEach(r => (r.projectCodes||[]).forEach(c => {
-    const key = String(c.code||'').trim().toLowerCase();
-    if(!key) return;
-    assignments.set(key, (assignments.get(key)||0) + 1);
-  }));
-  const rows = loadProjectCodeMaster().map(c => ({
+  const masterOrder = new Map(organizationProjects().map((project, index) => [String(project).trim().toLowerCase(), index]));
+  const projectCodes = loadProjectCodeMaster().map(c => ({
     ...c,
-    assigned: assignments.get(String(c.code||'').trim().toLowerCase()) || 0,
-  })).sort((a,b)=>`${a.status} ${a.project} ${a.code}`.localeCompare(`${b.status} ${b.project} ${b.code}`));
+    projectMaster: projectMasterItemForCode(c),
+  })).sort((a,b)=>{
+    const aProject = String(a.project || '').trim().toLowerCase();
+    const bProject = String(b.project || '').trim().toLowerCase();
+    const aAssigned = !!a.projectMaster;
+    const bAssigned = !!b.projectMaster;
+    if(aAssigned !== bAssigned) return aAssigned ? -1 : 1;
+    const aOrder = masterOrder.has(aProject) ? masterOrder.get(aProject) : 9999;
+    const bOrder = masterOrder.has(bProject) ? masterOrder.get(bProject) : 9999;
+    if(aOrder !== bOrder) return aOrder - bOrder;
+    return `${a.project} ${a.status} ${a.code}`.localeCompare(`${b.project} ${b.status} ${b.code}`);
+  });
+  const groupedRows = [];
+  let currentGroup = null;
+  projectCodes.forEach(row => {
+    const project = row.project || 'Unmapped Project';
+    const masterAssigned = !!row.projectMaster;
+    const groupKey = masterAssigned ? `project:${project}` : 'not-assigned';
+    if(groupKey !== currentGroup) {
+      currentGroup = groupKey;
+      const projectRows = projectCodes.filter(item => (item.projectMaster ? `project:${item.project || 'Unmapped Project'}` : 'not-assigned') === groupKey);
+      const activeCount = projectRows.filter(item => String(item.status || '').toLowerCase() === 'active').length;
+      const color = masterAssigned ? projectAccentColor(project) : '#94a3b8';
+      const groupName = masterAssigned ? project : 'Not assigned';
+      const unassignedProjects = masterAssigned ? '' : ` / ${new Set(projectRows.map(item => item.project).filter(Boolean)).size} project${new Set(projectRows.map(item => item.project).filter(Boolean)).size === 1 ? '' : 's'}`;
+      groupedRows.push({
+        __group: true,
+        html: `
+          <div class="res-project-group" style="--project-color:${color}">
+            <div class="res-project-group-main">
+              <span class="res-project-swatch" aria-hidden="true"></span>
+              <span class="res-project-group-name">${esc(groupName)}</span>
+            </div>
+            <span class="res-project-group-meta">${projectRows.length} code${projectRows.length === 1 ? '' : 's'} / ${activeCount} active${unassignedProjects} / ${masterAssigned ? 'assigned to Project Master' : 'not assigned to Project Master'}</span>
+          </div>`,
+      });
+    }
+    groupedRows.push(row);
+  });
 
   renderResourceTable([
-    { label:'Project', cell:r=>`<strong>${esc(r.project||'-')}</strong>${r.type?`<div style="font-size:11px;color:var(--text-3)">${esc(r.type)}</div>`:''}` },
+    { label:'Project / Type', cell:r=>!r.projectMaster
+      ? `<strong>${esc(r.project||'-')}</strong>${r.type?`<div style="font-size:11px;color:var(--text-3);margin-top:2px">${esc(r.type)}</div>`:''}`
+      : (r.type ? `<span style="font-size:11px;color:var(--text-3)">${esc(r.type)}</span>` : '<span style="font-size:11px;color:var(--text-3)">-</span>') },
     { label:'Project Code', cell:r=>esc(r.code||'-') },
     { label:'Start', cell:r=>`<span style="font-size:11px">${r.startDate?shortDate(String(r.startDate).slice(0,10)):'-'}</span>` },
     { label:'End', cell:r=>`<span style="font-size:11px">${r.endDate?shortDate(String(r.endDate).slice(0,10)):'-'}</span>` },
-    { label:'Status', cell:r=>`<span class="badge ${String(r.status).toLowerCase()==='active'?'badge-green':'badge-amber'}">${esc(r.status||'-')}</span>` },
+    { label:'Status', th:'width:92px', cell:r=>{
+      const statusKey = String(r.status || '').toLowerCase();
+      const statusCls = statusKey === 'active' ? 'badge-green' : statusKey === 'pending' ? 'badge-amber' : 'badge-gray';
+      return `<span class="badge ${statusCls}">${esc(r.status||'-')}</span>`;
+    } },
+    { label:'Project Master', th:'width:118px', cell:r=>{
+      const assigned = !!r.projectMaster;
+      return `<span class="badge ${assigned?'badge-blue':'badge-gray'}" title="${assigned ? 'Project exists in Project Master' : 'Project was not found in Project Master'}">${assigned?'Assigned':'Not assigned'}</span>`;
+    } },
     { label:'PM Owner', cell:r=>esc(r.pmOwner||'-') },
-    { label:'Action', td:'text-align:center;white-space:nowrap', cell:r=> canProjectCode(currentRole()) ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectCodeMasterEntry('${esc(r.id)}')">Edit</button> <button class="btn-sm" style="color:var(--red)" onclick="event.stopPropagation();deleteProjectCodeMaster('${esc(r.id)}')">Delete</button>` : '<span style="font-size:11px;color:var(--text-3)">View only</span>' },
-  ], rows, 'No Project Code master data yet. Import Project Codes first.');
+    { label:'Action', th:'width:96px;text-align:center', td:'width:96px;text-align:center;white-space:nowrap', cell:r=> canProjectCode(currentRole()) ? resourceActionGroup([
+      resourceActionButton('edit', 'Edit project code', `openProjectCodeMasterEntry('${esc(r.id)}')`),
+      resourceActionButton('delete', 'Delete project code', `deleteProjectCodeMaster('${esc(r.id)}')`),
+    ]) : '<span style="font-size:11px;color:var(--text-3)">View only</span>' },
+  ], groupedRows, 'No Project Code master data yet. Import Project Codes first.');
+  const unassignedCount = projectCodes.filter(row => !row.projectMaster).length;
+  const pagEl = document.getElementById('res-pagination');
+  if(pagEl && unassignedCount && canProjectCode(currentRole())) {
+    pagEl.innerHTML += `
+      <button class="btn-sm" type="button" onclick="syncResourceProjectMasterFromCodes()" title="Create/update Project Master entries from Project Code rows">Sync Project Master</button>
+      <span style="font-size:12px;color:var(--text-3)">${unassignedCount} project code${unassignedCount === 1 ? '' : 's'} not assigned to Project Master</span>`;
+  }
+}
+
+function syncResourceProjectMasterFromCodes() {
+  if(typeof syncProjectMasterFromProjectCodes !== 'function') {
+    resourceError('Project Master sync is not available. Open Settings > Project Master and use Sync from Project Code.');
+    return;
+  }
+  syncProjectMasterFromProjectCodes();
+  _projectCodeCache = null;
+  renderResource();
+  resourceToast('Project Master synced from Project Codes.', 'ok');
 }
 
 function ensureProjectCodeMasterModal() {
@@ -2228,6 +2635,11 @@ function renderMovementView(base) {
 function _renderResourceUI(allRaw, options = {}) {
   const role = currentRole();
   if(_resTab === 'allocation' || _resTab === 'movement') _resTab = 'timeline';
+  if(options.forceTab && canViewResourceTab(role, options.forceTab)) _resTab = options.forceTab;
+  else {
+    const domTabBeforeSync = document.querySelector('#res-tab-bar .res-tab.is-active, #res-tab-bar .res-tab.active')?.getAttribute('data-tab') || '';
+    if(domTabBeforeSync && domTabBeforeSync !== _resTab && canViewResourceTab(role, domTabBeforeSync)) _resTab = domTabBeforeSync;
+  }
 
 
   // â”€â”€ Sync tab bar â”€â”€
@@ -2285,6 +2697,7 @@ function _renderResourceUI(allRaw, options = {}) {
   const subcon = activeBase.filter(r => hiringKind(r.hiringType)==='subcon').length;
   const kpiEl = document.getElementById('res-kpi');
   if(kpiEl) kpiEl.style.display = _resTab === 'request' ? 'grid' : 'none';
+  if(_resTab !== 'people') setPeopleCardMode(false);
   if(kpiEl) {
     const cards = role === 'bbik'
       ? [
@@ -2357,6 +2770,11 @@ function _renderResourceUI(allRaw, options = {}) {
     renderMovementView(searchedBase);
     return;
   }
+  if(activeResourceTab() === 'people') {
+    _resTab = 'people';
+    renderPeopleView(searchedBase);
+    return;
+  }
 
 
   // â”€â”€ Search (facet dropdowns are rendered above the table) â”€â”€
@@ -2406,7 +2824,8 @@ function _renderResourceUI(allRaw, options = {}) {
   } else {
     tbody.innerHTML = slice.map((r, rowIndex) => {
       const absoluteIndex = ((_resPage - 1) * RES_PER_PAGE) + rowIndex;
-      return `<tr style="cursor:pointer" onclick="openResDetail('${r.id}')">${cols.map(c=>`<td style="${c.td||''}">${c.cell(r, { index:absoluteIndex, rowIndex })}</td>`).join('')}</tr>`;
+      const rowLabel = [r.project, r.position].filter(Boolean).join(' - ') || r.id;
+      return `<tr class="res-clickable-row" tabindex="0" data-request-id="${esc(r.id)}" aria-label="Open request details: ${esc(rowLabel)}" onclick="openResDetail(this.dataset.requestId)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openResDetail(this.dataset.requestId)}">${cols.map(c=>`<td style="${c.td||''}">${c.cell(r, { index:absoluteIndex, rowIndex })}</td>`).join('')}</tr>`;
     }
     ).join('');
   }
@@ -3282,6 +3701,7 @@ function ensureEmployeeEditModal() {
       <input type="hidden" id="emp-edit-id">
       <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px">
         <div class="fg"><label>Name - Surname *</label><input id="emp-edit-name" class="ri" autocomplete="off"></div>
+        <div class="fg"><label>ชื่อ-นามสกุล</label><input id="emp-edit-name-th" class="ri" autocomplete="off" placeholder="Optional"></div>
         <div class="fg"><label>Nickname</label><input id="emp-edit-nickname" class="ri" autocomplete="off" placeholder="Optional"></div>
         <div class="fg"><label>Employee Code</label><input id="emp-edit-code" class="ri" readonly style="background:var(--bg);cursor:default"></div>
         <div class="fg"><label>Position</label><input id="emp-edit-position" class="ri" autocomplete="off"></div>
@@ -3302,7 +3722,8 @@ function openEmployeeEdit(id) {
   if(!r) return;
   ensureEmployeeEditModal();
   document.getElementById('emp-edit-id').value = id;
-  document.getElementById('emp-edit-name').value = resourcePersonName(r) || '';
+  document.getElementById('emp-edit-name').value = employeeEditEnglishName(r) || resourcePersonName(r) || '';
+  document.getElementById('emp-edit-name-th').value = employeeEditThaiName(r) || '';
   document.getElementById('emp-edit-nickname').value = r.nickname || '';
   document.getElementById('emp-edit-code').value = resourceEmployeeCode(r) || '';
   document.getElementById('emp-edit-position').value = r.position || '';
@@ -3317,10 +3738,12 @@ async function saveEmployeeEdit() {
   if(!r) return;
   const name = document.getElementById('emp-edit-name')?.value?.trim() || '';
   if(!name) { resourceError('Name - Surname is required.'); return; }
+  const nameTh = document.getElementById('emp-edit-name-th')?.value?.trim() || '';
   await saveResourceAsync({
     ...r,
     resourceName: name,
-    resourceNameTh: name,
+    resourceNameEn: name,
+    resourceNameTh: nameTh,
     nickname: document.getElementById('emp-edit-nickname')?.value?.trim() || '',
     position: document.getElementById('emp-edit-position')?.value?.trim() || r.position,
     level: document.getElementById('emp-edit-level')?.value || r.level,
@@ -3328,6 +3751,27 @@ async function saveEmployeeEdit() {
   });
   closeEmployeeEdit();
   renderResource();
+  resourceToast('Employee updated.', 'ok');
+}
+async function saveEmployeeDetailEdit() {
+  const id = document.getElementById('res-detail-edit-id')?.value || '';
+  const r = loadResources().find(x => x.id === id);
+  if(!r) return;
+  const name = document.getElementById('res-detail-edit-name')?.value?.trim() || '';
+  if(!name) { resourceError('Name - Surname is required.'); return; }
+  const nameTh = document.getElementById('res-detail-edit-name-th')?.value?.trim() || '';
+  await saveResourceAsync({
+    ...r,
+    resourceName: name,
+    resourceNameEn: name,
+    resourceNameTh: nameTh,
+    nickname: document.getElementById('res-detail-edit-nickname')?.value?.trim() || '',
+    position: document.getElementById('res-detail-edit-position')?.value?.trim() || r.position,
+    level: document.getElementById('res-detail-edit-level')?.value || r.level,
+    photoUrl: document.getElementById('res-detail-edit-photo')?.value?.trim() || '',
+  });
+  renderResource();
+  openResDetail(id);
   resourceToast('Employee updated.', 'ok');
 }
 
@@ -3528,8 +3972,41 @@ function ensureDetailDrawer() {
     st.textContent = `
       #res-drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .2s;z-index:1099}
       #res-drawer-overlay.open{opacity:1;pointer-events:auto}
-      #resource-detail-drawer{position:fixed;top:0;right:0;height:100vh;width:440px;max-width:92vw;background:var(--surface,#fff);border-left:1px solid var(--border,#e5e7eb);box-shadow:-8px 0 24px rgba(0,0,0,.12);transform:translateX(100%);visibility:hidden;transition:transform .22s ease,visibility 0s linear .22s;z-index:1100;overflow:auto}
-      #resource-detail-drawer.open{transform:translateX(0);visibility:visible;transition-delay:0s}`;
+      #resource-detail-drawer{position:fixed;top:0;right:0;height:100vh;width:min(560px,96vw)!important;max-width:96vw!important;padding:24px;box-sizing:border-box;background:var(--surface,#fff);border-left:1px solid var(--border,#e5e7eb);box-shadow:-8px 0 24px rgba(0,0,0,.12);transform:translateX(100%);visibility:hidden;transition:transform .22s ease,visibility 0s linear .22s;z-index:1100;overflow-x:hidden;overflow-y:auto}
+      #resource-detail-drawer.open{transform:translateX(0);visibility:visible;transition-delay:0s}
+      .res-detail-drawer-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+      .res-detail-hero{display:grid;grid-template-columns:116px minmax(0,1fr) auto;gap:16px;align-items:center;margin-bottom:16px}
+      .res-detail-avatar{width:104px;height:104px;border-radius:50%;display:grid;place-items:center;overflow:hidden;background:linear-gradient(135deg,#8dd7cf,#a7c7e7);border:5px solid color-mix(in srgb,var(--blue) 12%,var(--surface));font-size:28px;font-weight:900;color:#0f172a;box-shadow:0 10px 28px color-mix(in srgb,var(--blue) 12%,transparent)}
+      .res-detail-avatar.is-clickable{cursor:pointer;transition:transform .16s ease,box-shadow .16s ease}
+      .res-detail-avatar.is-clickable:hover{transform:translateY(-1px);box-shadow:0 14px 34px color-mix(in srgb,var(--blue) 18%,transparent)}
+      .res-detail-avatar img{width:100%;height:100%;object-fit:cover}
+      .res-detail-title{font-size:15px;font-weight:800;line-height:1.2;color:var(--text)}
+      .res-detail-sub{font-size:12px;color:var(--text-3);margin-top:3px;line-height:1.35}
+      .res-detail-photo-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+      .res-detail-section{border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:12px;margin-bottom:12px}
+      .res-detail-section.is-muted{background:var(--bg)}
+      .res-detail-section-title{font-size:11px;font-weight:800;color:var(--text-2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.25px}
+      .res-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+      .res-detail-field span{display:block;font-size:11px;color:var(--text-3);line-height:1.2}
+      .res-detail-field strong{display:block;font-size:12px;color:var(--text);margin-top:3px;line-height:1.35}
+      .res-detail-edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+      .res-detail-edit-grid .fg{gap:4px;min-width:0}
+      .res-detail-edit-grid .fg label{font-size:11px;color:var(--text-3)}
+      .res-detail-edit-grid .fg input,.res-detail-edit-grid .fg select{height:34px;font-size:12px}
+      .res-detail-edit-grid .pmo-select{width:100%;min-width:0;max-width:100%;height:34px;line-height:1}
+      .res-detail-edit-grid .pmo-select-trigger{width:100%;min-width:0;max-width:100%;height:34px;min-height:34px;border-radius:8px;font-size:12px}
+      .res-detail-code-row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:8px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);margin-bottom:6px;font-size:12px}
+      .res-detail-note{background:var(--bg);border-radius:7px;padding:10px;font-size:12px;white-space:pre-wrap;color:var(--text-2);line-height:1.55}
+      .res-detail-actions{position:sticky;bottom:0;display:flex;gap:8px;flex-wrap:wrap;background:var(--surface);border-top:1px solid var(--border);padding:12px 0 0;margin-top:16px}
+      .res-photo-preview{position:fixed;inset:0;z-index:2400;display:flex;align-items:center;justify-content:center;padding:28px;background:rgba(0,0,0,.72)}
+      .res-photo-preview img{max-width:min(720px,92vw);max-height:86vh;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55);object-fit:contain;background:#000}
+      .res-photo-preview button{position:absolute;right:24px;top:20px}
+      @media (max-width:520px){
+        #resource-detail-drawer{width:100vw!important;max-width:100vw!important;padding:18px}
+        .res-detail-hero{grid-template-columns:88px minmax(0,1fr) auto;gap:12px}
+        .res-detail-avatar{width:80px;height:80px;font-size:24px}
+        .res-detail-edit-grid{grid-template-columns:minmax(0,1fr)}
+      }`;
     document.head.appendChild(st);
   }
   if(!document.getElementById('res-drawer-overlay')) {
@@ -3543,22 +4020,23 @@ function ensureDetailDrawer() {
   dr.id = 'resource-detail-drawer';
   dr.setAttribute('aria-hidden', 'true');
   dr.innerHTML = `
-    <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
-      <span style="font-size:14px;font-weight:700">Detail</span>
-      <button class="btn-sm" onclick="closeResDetail()" style="font-size:16px">x</button>
+    <div class="res-detail-drawer-header">
+      <span style="font-size:14px;font-weight:700">Resource Request Detail</span>
+      <button class="btn-sm" onclick="closeResDetail()" style="padding:4px 10px">&#x2715;</button>
     </div>
-    <div id="res-detail-body" style="padding:20px"></div>`;
+    <div id="res-detail-body"></div>`;
   document.body.appendChild(dr);
 }
 
 
-function openResDetail(id) {
+function openResDetail(id, mode='view') {
   ensureDetailDrawer();
   const r = loadResources().find(x=>x.id===id);
   if(!r) return;
   const role = currentRole();
   const s = RES_STATUS[r.status]||{label:r.status,cls:'badge-gray'};
   const showWorkflowActions = _resTab !== 'people';
+  const isEmployeeEdit = mode === 'edit';
 
 
   const log = (r.activityLog||[]).slice().reverse().map(l=>
@@ -3573,44 +4051,81 @@ function openResDetail(id) {
 
   const codes = (r.projectCodes||[]);
   const codesHtml = codes.length
-    ? `<div style="font-size:12px;font-weight:700;margin:14px 0 6px;color:var(--text-2)">Project Codes (Multi-allocation)</div>
-       <div style="font-size:12px;margin-bottom:6px;color:var(--text-3)">Primary project: <strong>${esc(r.project)}</strong></div>` +
-      codes.map(c=>`<div style="display:flex;justify-content:space-between;padding:6px 8px;border:1px solid var(--border);border-radius:6px;margin-bottom:4px;font-size:12px">
-        <span><strong>${esc(c.code||'-')}</strong> / ${esc(c.project)}${c.note?` <span style="color:var(--text-3)">/ ${esc(c.note)}</span>`:''}</span>
-        <span class="badge badge-teal" style="font-size:9px">${esc(String(c.allocation||0))}%</span></div>`).join('')
-    : '';
+    ? codes.map(c=>`<div class="res-detail-code-row">
+        <span><strong>${esc(c.project||'-')}</strong><br><span style="color:var(--text-3)">${esc(c.code||'-')}${c.note?` / ${esc(c.note)}`:''}</span></span>
+        <span class="badge badge-teal" style="font-size:10px">${esc(String(c.allocation||0))}%</span>
+      </div>`).join('')
+    : '<div style="font-size:12px;color:var(--text-3)">No extra project code allocation.</div>';
+  const metaFields = [
+    ['Level', r.level],
+    ['Employment Type', hiringMeta(r.hiringType).fullLabel],
+    ['Start Date', r.startDate ? shortDate(r.startDate) : '-'],
+    ['End Date', resourceEndDate(r) ? shortDate(resourceEndDate(r)) : '-'],
+    ['Request Date', r.requestDate ? shortDate(r.requestDate) : '-'],
+    ['Onboard Date', effectiveOnboardDate(r) ? shortDate(effectiveOnboardDate(r)) : '-'],
+    ['Requester', r.requesterName || '-'],
+    ['Transfer From', r.transferFrom || '-'],
+  ];
+  const employeeEditHtml = `
+    <div class="res-detail-section">
+      <div class="res-detail-section-title">Edit Employee</div>
+      <input type="hidden" id="res-detail-edit-id" value="${esc(r.id)}">
+      <div class="res-detail-edit-grid">
+        <div class="fg"><label>Name - Surname *</label><input id="res-detail-edit-name" class="ri" autocomplete="off" value="${esc(employeeEditEnglishName(r) || resourcePersonName(r) || '')}"></div>
+        <div class="fg"><label>ชื่อ-นามสกุล</label><input id="res-detail-edit-name-th" class="ri" autocomplete="off" value="${esc(employeeEditThaiName(r) || '')}" placeholder="Optional"></div>
+        <div class="fg"><label>Nickname</label><input id="res-detail-edit-nickname" class="ri" autocomplete="off" value="${esc(r.nickname||'')}"></div>
+        <div class="fg"><label>Employee Code</label><input id="res-detail-edit-code" class="ri" readonly value="${esc(resourceEmployeeCode(r)||'')}"></div>
+        <div class="fg"><label>Position</label><input id="res-detail-edit-position" class="ri" autocomplete="off" value="${esc(r.position||'')}"></div>
+        <div class="fg"><label for="res-detail-edit-level">Level</label><select id="res-detail-edit-level" class="ri">${resourceLevels().map(l=>`<option ${r.level===l?'selected':''}>${esc(l)}</option>`).join('')}</select></div>
+        <div class="fg"><label>Photo URL</label><input id="res-detail-edit-photo" class="ri" autocomplete="off" value="${esc(r.photoUrl||'')}"></div>
+      </div>
+    </div>`;
 
 
   document.getElementById('res-detail-body').innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <input id="res-detail-photo-input" type="file" accept="image/*" style="display:none" onchange="handleResourcePhotoUpload(this)">
+    <div class="res-detail-hero">
+      <div class="res-detail-avatar ${r.photoUrl ? 'is-clickable' : ''}" ${r.photoUrl ? `onclick="openResourcePhotoPreview('${esc(r.id)}')"` : ''} title="${r.photoUrl ? 'View larger photo' : ''}">${resourceDetailAvatar(r)}</div>
       <div>
-        <div style="font-size:15px;font-weight:700">${esc(r.position)}</div>
-        <div style="font-size:12px;color:var(--text-2)">${esc(r.project)}</div>
+        <div class="res-detail-title">${esc(resourcePersonName(r)||r.position||'-')}</div>
+        <div class="res-detail-sub">${esc(r.position||'-')}<br>${esc(r.project||'-')}</div>
+        <div class="res-detail-photo-actions">
+          <button class="btn-sm" type="button" onclick="triggerResourcePhotoUpload('${esc(r.id)}')">Upload Photo</button>
+          ${r.photoUrl ? `<button class="btn-sm" type="button" onclick="removeResourcePhoto('${esc(r.id)}')">Remove</button>` : ''}
+          ${!isEmployeeEdit && _resTab === 'people' ? `<button class="btn-sm" type="button" onclick="openResDetail('${esc(r.id)}','edit')">Edit</button>` : ''}
+        </div>
       </div>
       <span class="badge ${s.cls}">${s.label}</span>
     </div>
-    <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;margin-bottom:14px;font-size:12px">
-      <div style="font-weight:700;margin-bottom:6px">Actual Resource</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div><span style="color:var(--text-3)">Resource</span><br><strong>${esc(resourcePersonName(r)||'-')}</strong></div>
-        <div><span style="color:var(--text-3)">Employee Code</span><br><strong>${esc(resourceEmployeeCode(r)||'-')}</strong></div>
-        <div><span style="color:var(--text-3)">Project Code</span><br><strong>${esc(primaryProjectCode(r)||'-')}</strong></div>
-        <div><span style="color:var(--text-3)">Primary Allocation</span><br><strong>${primaryAllocation(r)}%</strong></div>
+    ${isEmployeeEdit ? employeeEditHtml : ''}
+    <div class="res-detail-section is-muted">
+      <div class="res-detail-section-title">Actual Resource</div>
+      <div class="res-detail-grid">
+        ${resourceDetailField('Employee Code', resourceEmployeeCode(r)||'-')}
+        ${resourceDetailField('Primary Project Code', primaryProjectCode(r)||'-')}
+        ${resourceDetailField('Primary Allocation', `${primaryAllocation(r)}%`)}
+        ${resourceDetailField('Project', r.project||'-')}
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;font-size:12px">
-      ${[['Level',r.level],['Employment Type',hiringMeta(r.hiringType).fullLabel],
-         ['Start Date',r.startDate?shortDate(r.startDate):'-'],['End Date',resourceEndDate(r)?shortDate(resourceEndDate(r)):'-'],
-         ['Request Date',r.requestDate?shortDate(r.requestDate):'-'],['Onboard Date',effectiveOnboardDate(r)?shortDate(effectiveOnboardDate(r)):'-'],
-         ['Requester',r.requesterName||'-'],['Transfer From',r.transferFrom||'-']
-        ].map(([k,v])=>`<div><span style="color:var(--text-3)">${k}</span><br><strong>${esc(String(v))}</strong></div>`).join('')}
+    <div class="res-detail-section">
+      <div class="res-detail-section-title">Assignment</div>
+      <div class="res-detail-grid">
+        ${metaFields.map(([k,v]) => resourceDetailField(k, v)).join('')}
+      </div>
     </div>
-    ${codesHtml}
+    <div class="res-detail-section">
+      <div class="res-detail-section-title">Project Codes</div>
+      <div style="font-size:12px;margin-bottom:8px;color:var(--text-3)">Primary project: <strong>${esc(r.project)}</strong></div>
+      ${codesHtml}
+    </div>
     ${r.cancelReason?`<div style="background:color-mix(in srgb,var(--red) 8%,var(--surface));border:1px solid color-mix(in srgb,var(--red) 24%,var(--border));border-radius:var(--r-sm);padding:10px;font-size:12px;margin:16px 0"><strong>Cancel Reason:</strong> ${esc(r.cancelReason)}</div>`:''}
-    ${r.remark?`<div style="background:var(--bg);border-radius:var(--r-sm);padding:10px;font-size:12px;margin:16px 0;white-space:pre-wrap">${esc(r.remark)}</div>`:''}
-    <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--text-2)">Activity Log</div>
-    ${log || '<div style="color:var(--text-3);font-size:12px">No activity log</div>'}
-    <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+    ${r.remark?`<div class="res-detail-section"><div class="res-detail-section-title">Notes</div><div class="res-detail-note">${esc(r.remark)}</div></div>`:''}
+    <div class="res-detail-section">
+      <div class="res-detail-section-title">Activity Log</div>
+      ${log || '<div style="color:var(--text-3);font-size:12px">No activity log</div>'}
+    </div>
+    <div class="res-detail-actions">
+      ${isEmployeeEdit ? `<button class="btn-primary" type="button" onclick="saveEmployeeDetailEdit()">Save</button><button class="btn-ghost" type="button" onclick="openResDetail('${esc(r.id)}')">Cancel</button>` : ''}
       ${(canEditPending(role)&&r.status==='pending')?`<button class="btn-sm" onclick="openResModal('${r.id}');closeResDetail()">Edit</button>`:''}
       ${(canRecruit(role)&&r.status==='approved')?`<button class="btn-sm" style="color:var(--blue)" onclick="bbikAccept('${r.id}');closeResDetail()">Accept</button>`:''}
       ${(showWorkflowActions && allowedStatusChoicesForRecord(r,role).length)?`<button class="btn-sm" onclick="openResStatus('${r.id}');closeResDetail()">Change Status</button>`:''}
@@ -3640,6 +4155,73 @@ function closeResDetail() {
   document.getElementById('res-drawer-overlay')?.classList.remove('open');
 }
 
+function resourceInitials(r) {
+  const source = String(resourcePersonName(r) || r.resourceNameEn || r.employeeCode || r.id || '').trim();
+  const parts = source.split(/\s+/).filter(Boolean);
+  return (parts.length >= 2 ? `${parts[0][0]}${parts[1][0]}` : source.slice(0, 2) || '?').toUpperCase();
+}
+function resourceDetailAvatar(r) {
+  return r.photoUrl
+    ? `<img src="${esc(r.photoUrl)}" alt="">`
+    : esc(resourceInitials(r));
+}
+function openResourcePhotoPreview(id) {
+  const r = loadResources().find(x => x.id === id);
+  if(!r?.photoUrl) return;
+  document.getElementById('resource-photo-preview')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'resource-photo-preview';
+  modal.className = 'res-photo-preview';
+  modal.innerHTML = `
+    <button class="btn-sm" type="button" onclick="document.getElementById('resource-photo-preview')?.remove()">x</button>
+    <img src="${esc(r.photoUrl)}" alt="${esc(resourcePersonName(r) || 'Employee photo')}">`;
+  modal.addEventListener('click', event => {
+    if(event.target === modal) modal.remove();
+  });
+  document.body.appendChild(modal);
+}
+function resourceDetailField(label, value) {
+  return `<div class="res-detail-field"><span>${esc(label)}</span><strong>${esc(String(value || '-'))}</strong></div>`;
+}
+function triggerResourcePhotoUpload(id) {
+  const input = document.getElementById('res-detail-photo-input');
+  if(!input) return;
+  input.dataset.resourceId = id;
+  input.value = '';
+  input.click();
+}
+async function handleResourcePhotoUpload(input) {
+  const id = input?.dataset?.resourceId || '';
+  const file = input?.files?.[0];
+  if(!id || !file) return;
+  if(!/^image\//i.test(file.type)) { resourceError('Please upload an image file.'); return; }
+  if(file.size > 900 * 1024) { resourceError('Image is too large. Please use an image under 900 KB.'); return; }
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Image read failed'));
+    reader.readAsDataURL(file);
+  }).catch(err => {
+    resourceError(err?.message || 'Image read failed');
+    return '';
+  });
+  if(!dataUrl) return;
+  const r = loadResources().find(x => x.id === id);
+  if(!r) return;
+  await saveResourceAsync({ ...r, photoUrl:dataUrl });
+  openResDetail(id);
+  renderResource();
+  resourceToast('Photo uploaded.', 'ok');
+}
+async function removeResourcePhoto(id) {
+  const r = loadResources().find(x => x.id === id);
+  if(!r) return;
+  await saveResourceAsync({ ...r, photoUrl:'' });
+  openResDetail(id);
+  renderResource();
+  resourceToast('Photo removed.', 'ok');
+}
+
 
 // â”€â”€ Export (CSV, role-scoped) â”€â”€
 function exportResourceCsv() {
@@ -3657,6 +4239,13 @@ function exportResourceCsv() {
 
 // Close modals on backdrop
 document.addEventListener('click', e => {
+  const peopleViewBtn = e.target.closest?.('[data-people-view]');
+  if(peopleViewBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    setPeopleDirectoryView(peopleViewBtn.dataset.peopleView);
+    return;
+  }
   if(!e.target.closest('.res-filter-menu')) closeResourceFilterMenus();
   if(e.target===document.getElementById('resource-modal')) closeResModal();
   if(e.target===document.getElementById('resource-status-modal')) closeResStatus();

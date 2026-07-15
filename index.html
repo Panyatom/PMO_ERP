@@ -38,6 +38,11 @@
   --r:           10px;
   --r-sm:        6px;
   --sidebar-w:   196px;
+  --sidebar-rail-w: 64px;
+  --sidebar-pill-w: 48px;
+  --sidebar-pill-h: 28px;
+  --chrome-gutter: 22px;
+  --chrome-control-r: 8px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -66,14 +71,27 @@ body {
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: hidden;
+  position: relative;
+  z-index: 30;
+  transition: width .24s cubic-bezier(.22, 1, .36, 1), box-shadow .22s ease;
 }
 .sb-logo {
-  padding: 16px 14px 14px;
+  height: 58px;
+  min-height: 58px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 9px;
+  width: var(--sidebar-w);
+  overflow: hidden;
+  transition: width .22s cubic-bezier(.22, 1, .36, 1), padding .22s ease;
+}
+.sb-logo > div:not(.sb-dot) {
+  flex-shrink: 0;
+  white-space: nowrap;
+  transition: opacity .14s ease, transform .22s cubic-bezier(.22, 1, .36, 1);
 }
 .sb-dot {
   width: 34px; height: 34px;
@@ -89,7 +107,14 @@ body {
 .sb-brand { font-size: 12px; font-weight: 600; color: var(--text); line-height: 1.3; }
 .sb-brand-sub { font-size: 10px; color: var(--text-3); font-weight: 400; }
 
-.sb-nav { padding: 10px 8px; flex: 1; }
+.sb-nav {
+  padding: 12px 8px;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  width: var(--sidebar-w);
+  transition: width .22s cubic-bezier(.22, 1, .36, 1), padding .22s ease;
+}
 .sb-section {
   font-size: 9px; font-weight: 600;
   color: var(--text-3);
@@ -97,22 +122,31 @@ body {
   text-transform: uppercase;
   padding: 0 8px;
   margin: 12px 0 4px;
+  white-space: nowrap;
+  transition: opacity .14s ease, transform .22s cubic-bezier(.22, 1, .36, 1);
 }
 .sb-section:first-child { margin-top: 0; }
 
 .sb-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 7px 8px;
-  border-radius: var(--r-sm);
+  width: calc(var(--sidebar-w) - 16px);
+  min-height: var(--sidebar-pill-h);
+  padding: 7px 10px;
+  border-radius: var(--chrome-control-r);
   cursor: pointer;
   color: var(--text-2);
   font-size: 12px;
   font-weight: 500;
-  margin-bottom: 1px;
-  transition: background .12s, color .12s;
+  margin-bottom: 5px;
+  transition: background-color .12s, border-color .12s, box-shadow .12s, color .16s ease;
   user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
 }
-.sb-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: .7; }
+.sb-item svg {
+  width: 16px; height: 16px; flex-shrink: 0; opacity: .74;
+  transition: opacity .12s, transform .22s cubic-bezier(.22, 1, .36, 1);
+}
 .sb-item:hover { background: var(--bg); color: var(--text); }
 .sb-item:hover svg { opacity: 1; }
 .sb-item.active { background: var(--blue-50); color: var(--blue-800); }
@@ -124,22 +158,30 @@ body {
   border-radius: 10px;
   background: var(--amber-50);
   color: var(--amber);
+  transition: opacity .14s ease, transform .22s cubic-bezier(.22, 1, .36, 1);
 }
 
 .sb-sub { margin-left: 4px; }
 .sb-sub-item {
   display: flex; align-items: center; gap: 7px;
-  padding: 5px 8px 5px 20px;
-  border-radius: var(--r-sm);
+  width: calc(var(--sidebar-w) - 20px);
+  min-height: var(--sidebar-pill-h);
+  padding: 6px 8px 6px 20px;
+  border-radius: var(--chrome-control-r);
   cursor: pointer;
   color: var(--text-3);
   font-size: 11px;
-  margin-bottom: 1px;
+  margin-bottom: 5px;
   border-left: 2px solid transparent;
-  transition: all .12s;
+  transition: background-color .12s, border-color .12s, box-shadow .12s, color .16s ease;
   user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
 }
-.sb-sub-item svg { width: 13px; height: 13px; flex-shrink: 0; }
+.sb-sub-item svg {
+  width: 15px; height: 15px; flex-shrink: 0;
+  transition: opacity .12s, transform .22s cubic-bezier(.22, 1, .36, 1);
+}
 .sb-sub-item:hover { background: var(--bg); color: var(--text-2); }
 .sb-sub-item.active {
   color: var(--blue);
@@ -152,11 +194,15 @@ body {
   font-size: 9px; font-weight: 700;
   padding: 1px 6px; border-radius: 10px;
   background: var(--amber-50); color: var(--amber);
+  transition: opacity .14s ease, transform .22s cubic-bezier(.22, 1, .36, 1);
 }
 
 .sb-footer {
   padding: 8px;
   border-top: 1px solid var(--border);
+  width: var(--sidebar-w);
+  overflow: hidden;
+  transition: width .22s cubic-bezier(.22, 1, .36, 1);
 }
 .sb-user {
   display: flex; align-items: center; gap: 8px;
@@ -176,6 +222,92 @@ body {
 .sb-uname { font-size: 12px; font-weight: 600; color: var(--text); }
 .sb-urole { font-size: 10px; color: var(--text-3); }
 
+.sidebar.collapsed {
+  width: var(--sidebar-rail-w);
+  overflow: visible;
+}
+.sidebar.collapsed .sb-logo,
+.sidebar.collapsed .sb-nav,
+.sidebar.collapsed .sb-footer {
+  width: var(--sidebar-rail-w);
+  background: transparent;
+  position: relative;
+  z-index: 1;
+}
+.sidebar.collapsed::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--sidebar-rail-w);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  pointer-events: none;
+  z-index: 0;
+  transition: width .22s cubic-bezier(.22, 1, .36, 1), box-shadow .22s ease;
+}
+.sidebar.collapsed:hover .sb-logo,
+.sidebar.collapsed:focus-within .sb-logo,
+.sidebar.collapsed:hover .sb-nav,
+.sidebar.collapsed:focus-within .sb-nav,
+.sidebar.collapsed:hover .sb-footer,
+.sidebar.collapsed:focus-within .sb-footer {
+  width: var(--sidebar-w);
+  background: transparent;
+}
+.sidebar.collapsed:hover::before,
+.sidebar.collapsed:focus-within::before {
+  width: var(--sidebar-w);
+  box-shadow: 18px 10px 40px rgba(15, 23, 42, .16);
+}
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-logo {
+  border-bottom-color: transparent;
+}
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-logo > div:not(.sb-dot) {
+  opacity: 0;
+  transform: translateX(-6px);
+  pointer-events: none;
+}
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-brand,
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-brand-sub,
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-section,
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-badge {
+  opacity: 0;
+  transform: translateX(-6px);
+  pointer-events: none;
+}
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-item,
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-sub-item {
+  color: transparent;
+}
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-item svg {
+  color: var(--text-2);
+  opacity: .76;
+  transform: translateX(5px);
+}
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-sub-item svg {
+  color: var(--text-2);
+  opacity: .76;
+  transform: translateX(-8px);
+}
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-item:hover,
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-sub-item:hover {
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+}
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-item.active,
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-sub-item.active {
+  background: color-mix(in srgb, var(--blue) 14%, var(--surface));
+  border-color: var(--blue-100);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 10%, transparent);
+}
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-item.active svg,
+.sidebar.collapsed:not(:hover):not(:focus-within) .sb-sub-item.active svg {
+  color: var(--blue-800);
+  opacity: 1;
+}
+.sidebar.collapsed:not(:hover):not(:focus-within) .theme-toggle {
+  border-color: transparent;
+}
+
 /* ── MAIN ── */
 .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 
@@ -184,16 +316,19 @@ body {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 20px;
+  padding: 0 var(--chrome-gutter);
   flex-shrink: 0;
 }
 .topbar-left { display: flex; align-items: center; gap: 10px; }
+body.sidebar-is-collapsed .topbar-left {
+  gap: 12px;
+}
 .topbar-title { font-size: 14px; font-weight: 600; color: var(--text); }
 .topbar-crumb { font-size: 12px; color: var(--text-3); }
 .topbar-right { display: flex; align-items: center; gap: 8px; }
 .topbar-btn {
-  width: 32px; height: 32px;
-  border-radius: var(--r-sm);
+  width: 34px; height: 34px;
+  border-radius: var(--chrome-control-r);
   border: 1px solid var(--border-md);
   background: transparent;
   cursor: pointer;
@@ -203,12 +338,38 @@ body {
 }
 .topbar-btn:hover { background: var(--bg); }
 .topbar-btn svg { width: 16px; height: 16px; }
+.sidebar-toggle {
+  position: relative;
+  margin-left: -2px;
+}
+body.sidebar-is-collapsed .sidebar-toggle {
+  margin-left: 2px;
+}
+.sidebar-toggle svg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transition: opacity .14s ease, transform .18s ease;
+  transform: translate(-50%, -50%) scale(1);
+}
+.sidebar-toggle .sidebar-toggle-closed {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.82);
+}
+body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-open {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.82);
+}
+body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
 
 /* ── CONTENT ── */
 .content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 20px var(--chrome-gutter);
 }
 
 /* ── VIEWS ── */
@@ -778,13 +939,14 @@ svg.icon { display: inline-block; vertical-align: middle; }
 /* ── Cost Dashboard Sub-tabs ── */
 .cost-tab-bar { display:flex; align-items:flex-end; justify-content:space-between; border-bottom:1px solid rgba(0,0,0,0.12); margin-bottom:0; }
 #cost-subtab-bar { display:flex; gap:4px; }
-.cost-stab, .tab-btn, .pend-tab-btn { height:40px;padding:0 15px;font-size:12px;font-weight:800;font-family:inherit;border:1px solid transparent;border-bottom:none;border-radius:7px 7px 0 0;background:rgba(148,163,184,.10);color:#5F5E5A;cursor:pointer;position:relative;opacity:.68;white-space:nowrap; }
+.cost-stab, .tab-btn, .pend-tab-btn { height:40px;padding:0 15px;font-size:12px;font-weight:800;font-family:inherit;border:1px solid transparent;border-bottom:none;border-radius:var(--chrome-control-r) var(--chrome-control-r) 0 0;background:rgba(148,163,184,.10);color:#5F5E5A;cursor:pointer;position:relative;opacity:.68;white-space:nowrap; }
 .cost-stab:hover, .tab-btn:hover, .pend-tab-btn:hover { background:rgba(148,163,184,.18);color:#1C1C1A;opacity:1; }
-.cost-stab.active, .tab-btn.active, .pend-tab-btn.active { background:#FFFFFF;color:#0f172a;border-color:rgba(255,255,255,.92);font-weight:800;box-shadow:0 -1px 0 #fff inset,0 -2px 0 #185FA5,0 8px 20px rgba(0,0,0,.18);opacity:1; }
+.cost-stab.active, .tab-btn.active, .pend-tab-btn.active { background:#FFFFFF;color:#0f172a;border-color:rgba(255,255,255,.92);font-weight:800;box-shadow:0 -1px 0 #fff inset,0 -2px 0 #185FA5,0 6px 16px rgba(0,0,0,.14);opacity:1; }
 .cost-stab.active::after, .tab-btn.active::after, .pend-tab-btn.active::after { content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;background:#FFFFFF; }
-.cost-tab-panel { border:1px solid rgba(0,0,0,0.12); border-top:none; border-radius:0 6px 6px 6px; padding:14px; background:#FFFFFF; margin-bottom:14px; }
+.cost-tab-panel { border:1px solid rgba(0,0,0,0.12); border-top:none; border-radius:0 var(--chrome-control-r) var(--chrome-control-r) var(--chrome-control-r); padding:14px; background:#FFFFFF; margin-bottom:14px; }
 </style>
-<link rel="stylesheet" href="theme.css?v=0.1.4">
+<link rel="stylesheet" href="theme.css?v=0.1.15">
+<link rel="stylesheet" href="styles/components.css?v=0.1.1">
 <script>
   (function () {
     try {
@@ -819,63 +981,77 @@ svg.icon { display: inline-block; vertical-align: middle; }
         Memo
       </div>
       <div class="sb-sub" id="memo-sub">
-        <div class="sb-sub-item active" onclick="swView('create',this,'Create Memo')">
+        <div class="sb-sub-item active" data-page-access="create" onclick="swView('create',this,'Create Memo')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Create Memo
         </div>
-        <div class="sb-sub-item" onclick="swView('pending',this,'Pending Approval')">
+        <div class="sb-sub-item" data-page-access="pending" onclick="swView('pending',this,'Pending Approval')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           Pending Approval
           <span class="sb-badge">2</span>
         </div>
-        <div class="sb-sub-item" onclick="swView('history',this,'Memo History')">
+        <div class="sb-sub-item" data-page-access="history" onclick="swView('history',this,'Memo History')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/></svg>
           History
         </div>
       </div>
 
       <div class="sb-section">Dashboard & Monitor</div>
-      <div class="sb-item" onclick="swView('budget',this,'Budget & Spend')">
+      <div class="sb-item" data-page-access="budget" onclick="swView('budget',this,'Budget & Spend')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         Budget & Spend
       </div>
-      <div class="sb-item" onclick="swView('cost',this,'OPEX & Forecast')">
+      <div class="sb-item" data-page-access="cost" onclick="swView('cost',this,'OPEX & Forecast')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
         OPEX & Forecast
       </div>
-      <div class="sb-item" onclick="swView('license',this,'License Management')">
+      <div class="sb-item" data-page-access="license" onclick="swView('license',this,'License Management')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
         License Management
       </div>
-      <div class="sb-item" onclick="swView('device',this,'Device Management')">
+      <div class="sb-item" data-page-access="device" onclick="swView('device',this,'Device Management')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
         Device Management
       </div>
 
       <div class="sb-section">Resource</div>
-      <div class="sb-item" onclick="swView('resource',this,'Resource Management')">
+      <div class="sb-item" data-page-access="resource" onclick="swView('resource',this,'Resource Management')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Resource
       </div>
 
       <div class="sb-section">System</div>
-      <div class="sb-item" onclick="swView('log',this,'Transaction Log')">
+      <div class="sb-item" data-page-access="log" onclick="swView('log',this,'Transaction Log')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 2 5-6"/><circle cx="7" cy="14" r="1"/><circle cx="10" cy="11" r="1"/><circle cx="13" cy="13" r="1"/><circle cx="18" cy="7" r="1"/></svg>
         Transaction Log
       </div>
-      <div class="sb-item" onclick="swView('settings',this,'Settings')">
+      <div class="sb-item" data-page-access="settings" onclick="swView('settings',this,'Settings')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Settings
       </div>
     </div>
 
-    <div class="sb-footer"></div>
+    <div class="sb-footer">
+      <button class="theme-toggle" id="theme-toggle" type="button" onclick="toggleTheme()" aria-label="Toggle light and dark mode" aria-pressed="true" title="Light / Dark mode">
+        <span class="theme-toggle-track" aria-hidden="true">
+          <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
+          <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.2 15.3A8.7 8.7 0 0 1 8.7 3.8 8.8 8.8 0 1 0 20.2 15.3Z"/></svg>
+          <span class="theme-toggle-cloud"></span>
+          <span class="theme-toggle-thumb"></span>
+        </span>
+        <span class="theme-toggle-label">Dark</span>
+      </button>
+    </div>
   </div>
 
   <!-- ════════ MAIN ════════ -->
   <div class="main">
     <div class="topbar">
       <div class="topbar-left">
+        <button class="topbar-btn sidebar-toggle" id="sidebar-toggle" type="button" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Collapse sidebar" aria-expanded="true">
+          <svg class="sidebar-toggle-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/><path d="M15 10l-2 2 2 2"/></svg>
+          <svg class="sidebar-toggle-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/><path d="M13 10l2 2-2 2"/></svg>
+        </button>
         <div class="topbar-title" id="page-title">Create Memo</div>
       </div>
       <div class="topbar-right">
@@ -883,7 +1059,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
           <span class="auth-status-dot" aria-hidden="true"></span>
           <span class="auth-status-text">Sign in</span>
         </button>
-        <button class="theme-toggle" id="theme-toggle" type="button" onclick="toggleTheme()" aria-label="เปลี่ยนเป็นโหมดสว่าง" aria-pressed="true" title="สลับ Light / Dark mode">
+        <button class="theme-toggle-topbar" id="theme-toggle-topbar" type="button" aria-hidden="true" tabindex="-1">
           <span class="theme-toggle-track" aria-hidden="true">
             <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
             <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.2 15.3A8.7 8.7 0 0 1 8.7 3.8 8.8 8.8 0 1 0 20.2 15.3Z"/></svg>
@@ -1700,7 +1876,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
             </label>
             <div id="po-visible-count" style="font-size:11px;color:var(--text-3)"></div>
             <div class="filter-actions">
-              <button class="btn-export" onclick="exportPurchaseOrdersCSV()">⬇ Export PO</button>
+              <button class="btn-export" data-permission="device.export" onclick="exportPurchaseOrdersCSV()">⬇ Export PO</button>
             </div>
           </div>
           <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;-webkit-overflow-scrolling:touch">
@@ -1759,16 +1935,16 @@ svg.icon { display: inline-block; vertical-align: middle; }
             <option value="Orbit Digital">Orbit Digital</option>
           </select></span>
           <div class="filter-actions">
-            <button class="btn-export" onclick="exportDeviceCsv()">
+            <button class="btn-export" data-permission="device.export" onclick="exportDeviceCsv()">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export CSV
             </button>
-            <button class="btn-sm" onclick="downloadTemplate('device')">⬇ Template</button>
-            <button class="btn-sm" onclick="importBulk('device')">
+            <button class="btn-sm" data-permission="device.export" onclick="downloadTemplate('device')">⬇ Template</button>
+            <button class="btn-sm" data-permission="device.manage" onclick="importBulk('device')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Import Excel
             </button>
-            <button class="btn-primary" onclick="openDeviceModal()">
+            <button class="btn-primary" data-permission="device.manage" onclick="openDeviceModal()">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add Device
             </button>
@@ -2068,8 +2244,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
       </div>
 
       <!-- ════ RESOURCE: Detail Drawer ════ -->
-      <div id="resource-detail-drawer" aria-hidden="true" style="position:fixed;top:0;right:0;width:420px;max-width:95vw;height:100vh;background:var(--surface);box-shadow:-4px 0 24px rgba(0,0,0,0.12);transition:transform 0.25s ease;overflow-y:auto;padding:24px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div id="resource-detail-drawer" aria-hidden="true">
+        <div class="res-detail-drawer-header">
           <span style="font-size:14px;font-weight:700">Resource Request Detail</span>
           <button class="btn-sm" onclick="closeResDetail()" style="padding:4px 10px">✕</button>
         </div>
@@ -2090,20 +2266,21 @@ svg.icon { display: inline-block; vertical-align: middle; }
 <!-- Runtime environment config; generated locally/CI and intentionally not committed. -->
 <script src="config.js"></script>
 <!-- Auth/session facade: mock session now, OAuth-ready later. -->
-<script src="auth.js"></script>
+<script src="auth.js?v=0.2.0"></script>
+<script src="access_control.js?v=0.1.1"></script>
 <!-- Core: shared utils, storage, navigation, PDF -->
-<script src="app.js?v=0.1.8"></script>
+<script src="app.js?v=0.1.16"></script>
 <!-- Views -->
 <script src="views/create.js"></script>
 <script src="views/history.js"></script>
 <script src="views/pending.js"></script>
 <script src="views/budget.js?v=0.1.1"></script>
 <script src="views/license.js"></script>
-<script src="views/device.js"></script>
+<script src="views/device.js?v=0.1.1"></script>
 <script src="views/bulk_import.js?v=0.1.1"></script>
-<script src="views/settings.js?v=0.2.1"></script>
+<script src="views/settings.js?v=0.2.8"></script>
 <script src="views/resource_flow.js"></script>
-<script src="views/resource_module.js?v=0.5.2"></script>
+<script src="views/resource_module.js?v=0.5.33"></script>
 <script src="views/log.js"></script>
 <script src="views/cost.js?v=0.1.1"></script>
 <style>

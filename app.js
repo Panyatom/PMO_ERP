@@ -2614,12 +2614,65 @@ function closeNotifications() {
   panel?.setAttribute('aria-hidden', 'true');
 }
 
+const ACCESS_PAGE_TITLES = {
+  create:'Create Memo', pending:'Pending Approval', history:'Memo History', budget:'Budget & Spend',
+  cost:'OPEX & Forecast', license:'License Management', device:'Device Management',
+  resource:'Resource Management', log:'Transaction Log', settings:'Settings',
+};
+
+function canOpenPage(id) {
+  return typeof pmoCanViewPage !== 'function' || pmoCanViewPage(id);
+}
+
+function applyAccessVisibility() {
+  document.querySelectorAll('[data-page-access]').forEach(node => {
+    const allowed = canOpenPage(node.dataset.pageAccess);
+    node.hidden = !allowed;
+    node.setAttribute('aria-hidden', String(!allowed));
+  });
+  document.querySelectorAll('[data-permission]').forEach(node => {
+    const allowed = typeof pmoCan !== 'function' || pmoCan(node.dataset.permission);
+    node.hidden = !allowed;
+    node.setAttribute('aria-hidden', String(!allowed));
+  });
+
+  const memoVisible = ['create','pending','history'].some(canOpenPage);
+  const memoNav = document.getElementById('nav-memo');
+  const memoSub = document.getElementById('memo-sub');
+  if(memoNav) memoNav.hidden = !memoVisible;
+  if(memoSub) memoSub.hidden = !memoVisible;
+
+  document.querySelectorAll('.sb-section').forEach(section => {
+    let sibling = section.nextElementSibling;
+    let hasVisiblePage = false;
+    while(sibling && !sibling.classList.contains('sb-section')) {
+      if(sibling.matches('[data-page-access]') && !sibling.hidden) hasVisiblePage = true;
+      if(sibling.querySelector?.('[data-page-access]:not([hidden])')) hasVisiblePage = true;
+      sibling = sibling.nextElementSibling;
+    }
+    section.hidden = !hasVisiblePage;
+  });
+
+  const activeView = document.querySelector('.view.active');
+  const activeId = activeView?.id?.replace(/^view-/, '');
+  if(activeId && !canOpenPage(activeId)) {
+    const fallback = document.querySelector('[data-page-access]:not([hidden])');
+    if(fallback) swView(fallback.dataset.pageAccess, fallback, ACCESS_PAGE_TITLES[fallback.dataset.pageAccess] || 'PMO ERP');
+  }
+}
+
 // ── Navigation ──
 function swView(id, el, title) {
+  if(!canOpenPage(id)) {
+    console.warn(`Access denied for page: ${id}`);
+    return false;
+  }
+  const targetView = document.getElementById('view-'+id);
+  if(!targetView) return false;
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.sb-sub-item').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.sb-item').forEach(s => s.classList.remove('active'));
-  document.getElementById('view-'+id).classList.add('active');
+  targetView.classList.add('active');
   document.getElementById('page-title').textContent = title;
   if(el) el.classList.add('active');
   if(['create','pending','history'].includes(id)) document.getElementById('nav-memo').classList.add('active');
@@ -2632,10 +2685,14 @@ function swView(id, el, title) {
   if(id === 'settings') { if(typeof renderSettings==='function') renderSettings(); }
   if(id === 'resource') { if(typeof renderResource==='function') renderResource(); }
   if(id === 'cost') { if(typeof renderCost==='function') renderCost(); }
+  applyAccessVisibility();
+  return true;
 }
 function toggleMemoSub(el) {
   el.classList.add('active');
-  swView('create', document.querySelector('#memo-sub .sb-sub-item'), 'Create Memo');
+  const page = ['create','pending','history'].find(canOpenPage);
+  if(!page) return;
+  swView(page, document.querySelector(`[data-page-access="${page}"]`), ACCESS_PAGE_TITLES[page]);
 }
 
 // ── PDF ──
@@ -3398,11 +3455,22 @@ function _downloadCSV(filename, headers, rows) {
 }
 
 // ── Sidebar collapse ──────────────────────────────────────────────
+function syncSidebarToggle() {
+  const sb = document.querySelector('.sidebar');
+  const btn = document.getElementById('sidebar-toggle');
+  const collapsed = !!sb?.classList.contains('collapsed');
+  document.body?.classList.toggle('sidebar-is-collapsed', collapsed);
+  if (!btn) return;
+  btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  btn.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+  btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+}
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
   if (!sb) return;
   const collapsed = sb.classList.toggle('collapsed');
   try { localStorage.setItem('orbit-sb-collapsed', collapsed ? '1' : '0'); } catch(e) {}
+  syncSidebarToggle();
 }
 function initSidebarState() {
   const sb = document.querySelector('.sidebar');
@@ -3410,8 +3478,9 @@ function initSidebarState() {
   try {
     const savedState = localStorage.getItem('orbit-sb-collapsed');
     const compactScreen = window.matchMedia?.('(max-width: 700px)').matches;
-    if (savedState === '1' || (savedState === null && compactScreen)) sb.classList.add('collapsed');
+    if (savedState === '1' || savedState === null || compactScreen) sb.classList.add('collapsed');
   } catch(e) {}
+  syncSidebarToggle();
 }
 
 
@@ -3699,8 +3768,38 @@ function initDatePicker() {
 
 function closePmoSelects(except=null) {
   document.querySelectorAll('.pmo-select.is-open').forEach(el => {
-    if(el !== except) el.classList.remove('is-open');
+    if(el !== except) {
+      el.classList.remove('is-open');
+      el.querySelector('.pmo-select-trigger')?.setAttribute('aria-expanded', 'false');
+    }
   });
+}
+
+let PMO_SELECT_A11Y_SEQ = 0;
+
+function linkStablePmoSelectA11y(select, wrap) {
+  const trigger = wrap?.querySelector('.pmo-select-trigger');
+  const value = trigger?.querySelector('span');
+  const menu = wrap?.querySelector('.pmo-select-menu');
+  if(!trigger || !value || !menu) return;
+
+  const baseId = select.id
+    ? `pmo-select-${select.id}`
+    : (select.dataset.pmoA11yId || `pmo-select-${++PMO_SELECT_A11Y_SEQ}`);
+  select.dataset.pmoA11yId = baseId;
+  trigger.id = `${baseId}-trigger`;
+  value.id = `${baseId}-value`;
+  menu.id = `${baseId}-menu`;
+  trigger.setAttribute('aria-controls', menu.id);
+
+  const label = select.labels?.[0] || select.closest('.fg')?.querySelector('label');
+  if(label) {
+    if(!label.id) label.id = `${baseId}-label`;
+    label.htmlFor = trigger.id;
+    trigger.setAttribute('aria-labelledby', `${label.id} ${value.id}`);
+  } else {
+    trigger.setAttribute('aria-labelledby', value.id);
+  }
 }
 
 function renderPmoSelect(select) {
@@ -3724,6 +3823,9 @@ function renderPmoSelect(select) {
 }
 
 function enhancePmoSelect(select) {
+  // Native selects are more stable across drawers, settings grids, and modals.
+  // Keep this hook as a no-op so existing renderPmoSelect calls remain safe.
+  return;
   if(!select || select.multiple || select.dataset.nativeSelect === 'true') return;
   if(select.closest('.res-filter-menu')) return;
   if(select.dataset.pmoEnhanced === 'true') {
@@ -3732,6 +3834,9 @@ function enhancePmoSelect(select) {
   }
   const wrap = document.createElement('div');
   wrap.className = 'pmo-select';
+  if(select.style.width) wrap.style.width = select.style.width;
+  if(select.style.minWidth) wrap.style.minWidth = select.style.minWidth;
+  if(select.style.maxWidth) wrap.style.maxWidth = select.style.maxWidth;
   select.parentNode.insertBefore(wrap, select);
   wrap.appendChild(select);
   select.dataset.pmoEnhanced = 'true';
@@ -3776,6 +3881,134 @@ function enhancePmoSelects(root=document) {
   selects.forEach(enhancePmoSelect);
 }
 
+function renderStablePmoSelect(select) {
+  const wrap = select?.closest?.('.pmo-select');
+  if(!wrap) return;
+  const triggers = wrap.querySelectorAll('.pmo-select-trigger');
+  const menus = wrap.querySelectorAll('.pmo-select-menu');
+  triggers.forEach((node, index) => { if(index > 0) node.remove(); });
+  menus.forEach((node, index) => { if(index > 0) node.remove(); });
+  const button = wrap.querySelector('.pmo-select-trigger');
+  const menu = wrap.querySelector('.pmo-select-menu');
+  if(!button || !menu) return;
+  const selected = select.options[select.selectedIndex] || select.options[0];
+  button.disabled = select.disabled;
+  button.querySelector('span').textContent = selected ? selected.textContent.trim() : 'Select';
+  menu.innerHTML = Array.from(select.options).map((option, index) => `
+    <button type="button"
+      class="pmo-select-option ${option.selected ? 'is-selected' : ''}"
+      data-pmo-option-index="${index}"
+      role="option"
+      aria-selected="${option.selected ? 'true' : 'false'}"
+      ${option.disabled ? 'disabled' : ''}>
+      <span>${esc(option.textContent.trim())}</span>
+      ${option.selected ? '<b aria-hidden="true">✓</b>' : '<b aria-hidden="true"></b>'}
+    </button>
+  `).join('') || '<div class="pmo-select-empty">No values</div>';
+}
+
+function enhanceStablePmoSelect(select) {
+  if(!select || select.multiple || select.dataset.nativeSelect === 'true') return;
+  if(select.closest('.res-filter-menu')) return;
+  if(select.dataset.pmoEnhanced === 'true') {
+    renderStablePmoSelect(select);
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'pmo-select';
+  const computed = window.getComputedStyle(select);
+  const explicitWidth = select.style.width && select.style.width !== 'auto' && select.style.width !== '100%';
+  if(explicitWidth) wrap.style.width = select.style.width;
+  if(select.style.minWidth) wrap.style.minWidth = select.style.minWidth;
+  if(select.style.maxWidth) wrap.style.maxWidth = select.style.maxWidth;
+  if(select.style.height) wrap.style.height = select.style.height;
+  else if(computed.height && computed.height !== 'auto') wrap.style.minHeight = computed.height;
+
+  select.parentNode.insertBefore(wrap, select);
+  wrap.appendChild(select);
+  select.dataset.pmoEnhanced = 'true';
+  select.classList.add('pmo-select-native');
+  select.setAttribute('aria-hidden', 'true');
+  select.tabIndex = -1;
+  wrap.insertAdjacentHTML('beforeend', `
+    <button type="button" class="pmo-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+      <span></span><b aria-hidden="true">▾</b>
+    </button>
+    <div class="pmo-select-menu" role="listbox"></div>
+  `);
+
+  linkStablePmoSelectA11y(select, wrap);
+
+  const trigger = wrap.querySelector('.pmo-select-trigger');
+  const menu = wrap.querySelector('.pmo-select-menu');
+  const setOpen = open => {
+    wrap.classList.toggle('is-open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+    if(open) renderStablePmoSelect(select);
+  };
+
+  trigger.addEventListener('click', event => {
+    event.stopPropagation();
+    if(select.disabled) return;
+    const next = !wrap.classList.contains('is-open');
+    closePmoSelects(wrap);
+    setOpen(next);
+  });
+
+  trigger.addEventListener('keydown', event => {
+    if(select.disabled) return;
+    const key = event.key;
+    if(!['ArrowDown','ArrowUp','Home','End','Enter',' '].includes(key)) return;
+    event.preventDefault();
+    if(key === 'Enter' || key === ' ') {
+      closePmoSelects(wrap);
+      setOpen(!wrap.classList.contains('is-open'));
+      return;
+    }
+    const enabled = Array.from(select.options).filter(option => !option.disabled);
+    if(!enabled.length) return;
+    const current = select.options[select.selectedIndex];
+    const currentIndex = Math.max(0, enabled.indexOf(current));
+    let nextOption = current;
+    if(key === 'Home') nextOption = enabled[0];
+    if(key === 'End') nextOption = enabled[enabled.length - 1];
+    if(key === 'ArrowDown') nextOption = enabled[Math.min(currentIndex + 1, enabled.length - 1)];
+    if(key === 'ArrowUp') nextOption = enabled[Math.max(currentIndex - 1, 0)];
+    if(!nextOption) return;
+    select.value = nextOption.value;
+    select.dispatchEvent(new Event('input', { bubbles:true }));
+    select.dispatchEvent(new Event('change', { bubbles:true }));
+    renderStablePmoSelect(select);
+  });
+
+  menu.addEventListener('click', event => {
+    event.stopPropagation();
+    const optionBtn = event.target.closest('[data-pmo-option-index]');
+    if(!optionBtn || optionBtn.disabled) return;
+    const nextIndex = Number(optionBtn.dataset.pmoOptionIndex);
+    if(Number.isNaN(nextIndex)) return;
+    select.selectedIndex = nextIndex;
+    select.dispatchEvent(new Event('input', { bubbles:true }));
+    select.dispatchEvent(new Event('change', { bubbles:true }));
+    setOpen(false);
+    trigger.focus({ preventScroll:true });
+  });
+
+  select.addEventListener('change', () => renderStablePmoSelect(select));
+  renderStablePmoSelect(select);
+}
+
+renderPmoSelect = renderStablePmoSelect;
+enhancePmoSelect = enhanceStablePmoSelect;
+enhancePmoSelects = function(root=document) {
+  const scope = root instanceof Element || root instanceof Document ? root : document;
+  const selects = scope.matches?.('select.ri, .fg select')
+    ? [scope]
+    : [...scope.querySelectorAll('select.ri, .fg select')];
+  selects.forEach(enhanceStablePmoSelect);
+};
+
 function initCustomSelects() {
   enhancePmoSelects(document);
   document.addEventListener('click', event => {
@@ -3806,10 +4039,16 @@ function initCustomSelects() {
 
 // ── Init ──
 function initApp() {
+  initSidebarState();
   initMicroInteractions();
   initDatePicker();
   initCustomSelects();
   if(typeof initAuthSession === 'function') initAuthSession();
+  applyAccessVisibility();
+  window.addEventListener('pmo:session-change', () => {
+    applyAccessVisibility();
+    refreshNotifications();
+  });
   syncThemeControl();
   ['f-date','f-signdate','f-apprdate','sl-ratedate'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = todayISO;
@@ -3830,6 +4069,7 @@ function initApp() {
     typeof loadPurchaseOrdersAsync === 'function' ? loadPurchaseOrdersAsync() : Promise.resolve(),
     typeof initSettings === 'function' ? initSettings() : Promise.resolve(),
   ]).then(() => {
+    applyAccessVisibility();
     renderPendingMemos();
     renderHistoryMemos();
     refreshNotifications();
@@ -3842,4 +4082,18 @@ function initApp() {
     if(event.target.closest('#notification-panel, #notification-btn')) return;
     closeNotifications();
   });
+}
+
+// Expose focused master-data behavior to the Node.js test runner.
+if(typeof module === 'object' && module.exports) {
+  module.exports = {
+    findUserByName,
+    getApprovers,
+    getCanonicalProjectList,
+    getAuthorityLimit,
+    loadOrganizationProjectsAsync,
+    loadUserProfilesAsync,
+    normalizeOrganizationProject,
+    projectOptionsHtml,
+  };
 }
