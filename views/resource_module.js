@@ -1536,7 +1536,7 @@ function setPeopleCardMode(enabled) {
 function resColumns() {
   const C = [];
   if(showRequestId()) C.push({ key:'id', label:'ID', th:'padding-left:12px',
-    cell:r=>`<span style="font-family:monospace;font-size:11px;color:var(--text-3)">${esc(r.id)}</span>` });
+    cell:r=>`<span style="font-family:var(--font-mono);font-size:11px;color:var(--text-3)">${esc(r.id)}</span>` });
   C.push(
     { key:'no',       label:'No.', th:'padding-left:12px;width:86px', td:'padding-left:12px', cell:(r, ctx)=>`<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-2);font-weight:700">${esc(formatResourceRowNo(ctx?.index || 0))}</span>` },
     { key:'project',  label:'Project', cell:r=>`${projectPill(r.project)}${(r.projectCodes||[]).length?` <span class="badge badge-teal" style="font-size:9px">+${(r.projectCodes||[]).length} code</span>`:''}${isTransfer(r)?` <span class="badge badge-blue" style="font-size:9px">transfer</span>`:''}` },

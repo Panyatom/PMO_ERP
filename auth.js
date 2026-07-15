@@ -134,7 +134,7 @@
     const style = document.createElement('style');
     style.id = 'auth-session-style';
     style.textContent = `
-      .auth-status-chip{height:32px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface-2,var(--surface));color:var(--text-2);padding:0 10px;display:inline-flex;align-items:center;gap:7px;font:600 12px 'IBM Plex Sans Thai',sans-serif;cursor:pointer}
+      .auth-status-chip{height:32px;border:1px solid var(--border-md);border-radius:var(--r-sm);background:var(--surface-2,var(--surface));color:var(--text-2);padding:0 10px;display:inline-flex;align-items:center;gap:7px;font:600 12px var(--font-ui);cursor:pointer}
       .auth-status-chip:hover{background:var(--bg);color:var(--text)}
       .auth-status-dot{width:7px;height:7px;border-radius:50%;background:var(--amber)}
       .auth-status-chip.is-signed-in .auth-status-dot{background:var(--green)}

@@ -4,10 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PMO Dashboard — Orbit Digital</title>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <style>
 :root {
+  --font-ui:     'Anuphan', 'Noto Sans Thai', system-ui, sans-serif;
+  --font-mono:   'IBM Plex Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
   --blue:        #185fa5;
   --blue-50:     #efe6fb;
   --blue-100:    #B5D4F4;
@@ -49,7 +51,8 @@
 html, body { height: 100%; }
 
 body {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
+  font-synthesis: none;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
@@ -442,7 +445,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 .pmo-month-trigger {
   width: 100%; height: 32px; box-sizing: border-box;
   display: inline-flex; align-items: center; justify-content: space-between; gap: 8px;
-  font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; padding: 6px 10px;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
   background: var(--surface); color: var(--text); cursor: pointer;
@@ -559,7 +562,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 .fg { display: flex; flex-direction: column; gap: 4px; }
 .fg label { font-size: 11px; font-weight: 600; color: var(--text-2); letter-spacing: .1px; }
 .fg input, .fg select, .fg textarea {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px;
   padding: 7px 10px;
   border: 1px solid var(--border-md);
@@ -618,7 +621,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 .items-hdr span { font-size: 10px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .3px; }
 .item-row { display: grid; gap: 7px; align-items: center; margin-bottom: 6px; }
 .ri {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px;
   padding: 6px 9px;
   border: 1px solid var(--border-md);
@@ -646,7 +649,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 
 .add-btn {
   width: 100%; margin-top: 6px;
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; font-weight: 500;
   color: var(--blue);
   background: var(--blue-50);
@@ -681,7 +684,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 /* ── ACTIONS ── */
 .action-row { display: flex; gap: 8px; justify-content: flex-end; padding-top: 6px; }
 .btn-primary {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px; font-weight: 600;
   padding: 9px 20px;
   background: var(--blue);
@@ -694,7 +697,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 }
 .btn-primary:hover { background: var(--blue-800); }
 .btn-ghost {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px; font-weight: 500;
   padding: 9px 16px;
   background: transparent;
@@ -773,7 +776,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 }
 .pend-actions { display: flex; gap: 6px; }
 .btn-approve {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; font-weight: 600;
   padding: 6px 14px;
   background: var(--green-50); color: var(--green);
@@ -784,7 +787,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 }
 .btn-approve:hover { background: #C0DD97; }
 .btn-reject {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; font-weight: 500;
   padding: 6px 14px;
   background: var(--red-50); color: var(--red);
@@ -795,7 +798,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 }
 .btn-reject:hover { background: #F7C1C1; }
 .btn-sm {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px;
   padding: 6px 12px;
   background: transparent; color: var(--text-3);
@@ -812,7 +815,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 /* ── FILTER ROW ── */
 .filter-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
 .filter-row select {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; padding: 6px 10px;
   border: 1px solid var(--border-md);
   border-radius: var(--r-sm);
@@ -823,7 +826,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 /* Memo reference filters */
 .ms-wrap { position: relative; }
 .ms-trigger {
-  font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; padding: 6px 10px; min-width: 110px; max-width: 220px;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
   background: var(--surface); color: var(--text);
@@ -878,7 +881,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 .filter-toolbar input[type="text"].filter-search {
   width: 100%; min-width: 0;
   height: 38px; min-height: 38px; box-sizing: border-box;
-  font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; padding: 7px 10px;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
   background: var(--surface); color: var(--text); outline: none;
@@ -887,7 +890,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 .actual-spend-toolbar select,
 .filter-input,
 .filter-select {
-  font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; padding: 7px 10px; width: 100%; min-width: 0;
   height: 38px; min-height: 38px; box-sizing: border-box;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
@@ -901,7 +904,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 .filter-control input[type="date"],
 .filter-date,
 .filter-month {
-  font-family: 'IBM Plex Sans Thai', 'Noto Sans Thai', Sarabun, system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; padding: 7px 10px; width: 100%; min-width: 0;
   height: 38px; min-height: 38px; box-sizing: border-box;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
@@ -1100,7 +1103,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 }
 .load-more-bar button:hover { background: var(--bg); }
 .btn-export {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; font-weight: 500;
   padding: 6px 12px;
   background: var(--surface); color: var(--text-2);
@@ -1130,7 +1133,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 .bpool-table tbody tr:nth-child(even) td { background: var(--bg); }
 .filter-row input[type="search"],
 .filter-row input[type="text"] {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; padding: 6px 10px;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
   background: var(--surface); color: var(--text); outline: none;
@@ -1138,7 +1141,7 @@ body.sidebar-is-collapsed .sidebar-toggle .sidebar-toggle-closed {
 }
 .filter-row input[type="date"],
 .filter-row input[type="number"] {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px; padding: 6px 10px;
   border: 1px solid var(--border-md); border-radius: var(--r-sm);
   background: var(--surface); color: var(--text);
@@ -1258,8 +1261,8 @@ svg.icon { display: inline-block; vertical-align: middle; }
 .cost-stab.active::after, .tab-btn.active::after, .pend-tab-btn.active::after { content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;background:#FFFFFF; }
 .cost-tab-panel { border:1px solid rgba(0,0,0,0.12); border-top:none; border-radius:0 var(--chrome-control-r) var(--chrome-control-r) var(--chrome-control-r); padding:14px; background:#FFFFFF; margin-bottom:14px; }
 </style>
-<link rel="stylesheet" href="theme.css?v=0.1.15">
-<link rel="stylesheet" href="styles/components.css?v=0.3.0">
+<link rel="stylesheet" href="theme.css?v=0.1.16">
+<link rel="stylesheet" href="styles/components.css?v=0.3.1">
 <script>
   (function () {
     try {
@@ -2643,7 +2646,7 @@ svg.icon { display: inline-block; vertical-align: middle; }
     <div style="padding:14px 22px;background:var(--bg);border-bottom:1px solid var(--border)">
       <div style="display:grid;grid-template-columns:80px 1fr;gap:5px;font-size:12px">
         <span style="color:var(--text-3);font-weight:600;text-transform:uppercase;font-size:10px;padding-top:2px">MEMO</span>
-        <span id="approve-memo-no" style="font-family:monospace;font-weight:700;color:var(--text)"></span>
+        <span id="approve-memo-no" style="font-family:var(--font-mono);font-weight:600;color:var(--text)"></span>
         <span style="color:var(--text-3);font-weight:600;text-transform:uppercase;font-size:10px;padding-top:2px">PROJECT</span>
         <span id="approve-project" style="color:var(--text-2)"></span>
         <span style="color:var(--text-3);font-weight:600;text-transform:uppercase;font-size:10px;padding-top:2px">AMOUNT</span>

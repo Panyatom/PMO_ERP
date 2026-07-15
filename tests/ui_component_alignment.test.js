@@ -10,7 +10,7 @@ test('shared Resource-inspired UI layer is loaded and defines responsive contrac
   const index = read('index.html');
   const components = read('styles/components.css');
 
-  assert.match(index, /styles\/components\.css\?v=0\.3\.0/);
+  assert.match(index, /styles\/components\.css\?v=0\.3\.1/);
   assert.match(components, /--ui-control-h:\s*34px/);
   assert.match(components, /\.metric-row\s*\{[\s\S]*auto-fit/);
   assert.match(components, /@media \(max-width:\s*760px\)/);
@@ -18,6 +18,20 @@ test('shared Resource-inspired UI layer is loaded and defines responsive contrac
   assert.match(components, /\[id\$="-modal"\]/);
   assert.match(components, /#resource-detail-drawer\s*\{[\s\S]*position:\s*fixed/);
   assert.match(index, /class="history-tabs-scroll"/);
+});
+
+test('application typography uses Anuphan for UI and preserves IBM Plex for data and PDF', () => {
+  const index = read('index.html');
+  const theme = read('theme.css');
+  const components = read('styles/components.css');
+
+  assert.match(index, /family=Anuphan:wght@400;500;600;700/);
+  assert.match(index, /--font-ui:\s*'Anuphan'/);
+  assert.match(index, /--font-mono:\s*'IBM Plex Mono'/);
+  assert.match(index, /body\s*\{[\s\S]*?font-family:\s*var\(--font-ui\)/);
+  assert.match(index, /\.pdf-stage\s*\{[\s\S]*?font-family:\s*'IBM Plex Sans Thai'/);
+  assert.match(theme, /font:\s*500 11px var\(--font-ui\)/);
+  assert.match(components, /button,[\s\S]*?font-family:\s*var\(--font-ui\)/);
 });
 
 test('shared PMO modal classes are defined in the app and style reference', () => {

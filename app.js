@@ -4724,7 +4724,7 @@ async function downloadMemoPdf(data) {
     const loadingEl = document.createElement('div');
     loadingEl.id = 'pdf-loading-overlay';
     loadingEl.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center';
-    loadingEl.innerHTML = '<div style="background:#fff;border-radius:12px;padding:28px 36px;text-align:center;font-family:\'IBM Plex Sans Thai\',sans-serif">'
+    loadingEl.innerHTML = '<div style="background:#fff;border-radius:12px;padding:28px 36px;text-align:center;font-family:var(--font-ui)">'
       + '<div style="font-size:15px;font-weight:600;color:#185FA5;margin-bottom:8px">⏳ กำลังสร้าง PDF...</div>'
       + '<div id="pdf-loading-msg" style="font-size:12px;color:#666">กรุณารอสักครู่</div>'
       + '</div>';

@@ -1033,9 +1033,9 @@ function _renderDeviceTable() {
       </td>
       <td style="font-size:12px">${esc(platLbl)}</td>
       <td style="font-size:12px">${esc(typeLbl)}</td>
-      <td style="font-family:monospace;font-size:11px">${esc(d.assetIt||'—')}</td>
-      <td style="font-family:monospace;font-size:11px">${esc(d.assetTag||'—')}</td>
-      <td style="font-family:monospace;font-size:11px">${esc(d.serial||'—')}</td>
+      <td style="font-family:var(--font-mono);font-size:11px;font-weight:500">${esc(d.assetIt||'—')}</td>
+      <td style="font-family:var(--font-mono);font-size:11px;font-weight:500">${esc(d.assetTag||'—')}</td>
+      <td style="font-family:var(--font-mono);font-size:11px;font-weight:500">${esc(d.serial||'—')}</td>
       <td style="font-size:12px">
         ${esc(d.qaOwner||'—')}
       </td>

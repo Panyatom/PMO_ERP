@@ -1,4 +1,6 @@
 :root {
+  --font-ui:     'Anuphan', 'Noto Sans Thai', system-ui, sans-serif;
+  --font-mono:   'IBM Plex Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
   --blue:        #185FA5;
   --blue-50:     #E6F1FB;
   --blue-100:    #B5D4F4;
@@ -39,7 +41,8 @@
 html, body { height: 100%; }
 
 body {
-  font-family: 'IBM Plex Sans Thai', sans-serif;
+  font-family: var(--font-ui);
+  font-synthesis: none;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;

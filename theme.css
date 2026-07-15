@@ -216,7 +216,7 @@ body {
   justify-content: center;
   gap: 0;
   cursor: pointer;
-  font: 500 11px 'IBM Plex Sans Thai',sans-serif;
+  font: 500 11px var(--font-ui);
   box-shadow: 0 1px 0 rgba(255,255,255,.035) inset;
 }
 .theme-toggle:disabled { cursor: default; opacity: 1; }

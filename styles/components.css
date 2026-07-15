@@ -269,6 +269,14 @@ select.pmo-select:focus,
   --ui-focus-ring: 0 0 0 3px color-mix(in srgb, var(--blue) 16%, transparent);
 }
 
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-ui);
+  font-synthesis: none;
+}
+
 .main,
 .content,
 .view,
